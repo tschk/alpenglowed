@@ -1,4 +1,6 @@
-# Alpenglowed — Raycast-style bar launcher for Linux (Wayland)
+# Alpenglowed — alpenglow environment for desktop
+
+### Raycast-style bar launcher for Linux (Wayland)
 
 A GPU-accelerated launcher bar that IS the desktop. Summon with a hotkey (Super+Space), type to launch, search, calculate, or run commands. Time, date, battery, weather, CPU/GPU shown as pills in the bar. Windows managed as floating/tiled surfaces below.
 
