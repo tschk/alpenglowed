@@ -1,3 +1,5 @@
+extern crate crepuscularity_gpui as gpui;
+
 // Alpenglowed — Raycast-style bar launcher for Linux (Wayland)
 // The entire desktop is one GPUI window: status pills + text bar + results.
 // Summon: Super+Space. Type to launch apps, run commands, calculate.
@@ -10,11 +12,14 @@
 
 mod de;
 mod pills;
+mod plugin;
 mod runner;
 
-use gpui::prelude::*;
-use gpui::*;
-use runner::{Runner, RunnerAction, WindowMode};
+use crepuscularity_gpui::prelude::*;
+use crepuscularity_gpui::{actions, Bounds, KeyBinding, KeyDownEvent, Modifiers, WindowBounds};
+use plugin::PluginAction;
+use runner::{Runner, WindowMode};
+use std::process::Command;
 
 actions!(alpenglowed, [Quit, FocusBar, DefocusBar, Confirm]);
 
@@ -48,11 +53,17 @@ impl Alpenglowed {
         cx.notify();
     }
 
-    fn apply(&mut self, action: RunnerAction, cx: &mut Context<Self>) {
+    fn apply(&mut self, action: PluginAction, cx: &mut Context<Self>) {
         match action {
-            RunnerAction::SetWindowMode(mode) => self.mode = mode,
-            RunnerAction::Desktop(action) => de::run(&action),
-            RunnerAction::Launch(_) | RunnerAction::Shell(_) | RunnerAction::Calculator(_) => {}
+            PluginAction::SetWindowMode { mode } => self.mode = mode,
+            PluginAction::Desktop { action } => de::run(&action),
+            PluginAction::Launch { program } => {
+                let _ = Command::new(program).spawn();
+            }
+            PluginAction::Shell { command } => {
+                let _ = Command::new("sh").arg("-c").arg(command).spawn();
+            }
+            PluginAction::None => {}
         }
         cx.notify();
     }
@@ -142,22 +153,12 @@ impl Alpenglowed {
     }
 
     fn render_workspace(&self) -> impl IntoElement {
-        div().flex_1().bg(rgb(0x181818)).p(px(12.)).child(
-            div()
-                .w_full()
-                .h_full()
-                .rounded(px(6.))
-                .bg(match self.mode {
-                    WindowMode::Tiling => rgb(0x20262a),
-                    WindowMode::Floating => rgb(0x2a2420),
-                })
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_color(rgb(0xb8b8b8))
-                .text_size(px(14.))
-                .child(format!("{} mode", self.mode.label())),
-        )
+        let label = format!("{} mode", self.mode.label());
+        crepuscularity_gpui::view! {r#"
+            div flex-1 bg-zinc-900 p-3
+                div w-full h-full rounded bg-zinc-800 flex items-center justify-center text-sm text-zinc-300
+                    "{label}"
+        "#}
     }
 }
 
@@ -194,6 +195,16 @@ impl Render for Alpenglowed {
 fn main() {
     if std::env::args().any(|arg| arg == "--polybar") {
         println!("{}", de::DesktopState::detect("tiling").polybar());
+        return;
+    }
+    if std::env::args().any(|arg| arg == "--smoke-wayland") {
+        match de::smoke_wayland() {
+            Ok(()) => println!("wayland ok"),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
         return;
     }
 

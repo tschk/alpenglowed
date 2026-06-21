@@ -1,7 +1,10 @@
 use std::process::Command;
 use wayland_client::Connection;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DesktopAction {
     Lock,
     Logout,
@@ -27,6 +30,70 @@ pub enum DesktopAction {
 }
 
 impl DesktopAction {
+    pub fn all() -> &'static [Self] {
+        &[
+            Self::Lock,
+            Self::Logout,
+            Self::Reboot,
+            Self::Shutdown,
+            Self::Suspend,
+            Self::Hibernate,
+            Self::Terminal,
+            Self::Apps,
+            Self::Wifi,
+            Self::WifiOn,
+            Self::WifiOff,
+            Self::Audio,
+            Self::AudioMute,
+            Self::AudioUp,
+            Self::AudioDown,
+            Self::Display,
+            Self::Screenshot,
+            Self::Clipboard,
+            Self::Notifications,
+            Self::Processes,
+            Self::Files,
+        ]
+    }
+
+    pub fn title(&self) -> &'static str {
+        match self {
+            Self::Lock => "Lock",
+            Self::Logout => "Logout",
+            Self::Reboot => "Reboot",
+            Self::Shutdown => "Shutdown",
+            Self::Suspend => "Suspend",
+            Self::Hibernate => "Hibernate",
+            Self::Terminal => "Terminal",
+            Self::Apps => "Apps",
+            Self::Wifi => "Wi-Fi",
+            Self::WifiOn => "Wi-Fi On",
+            Self::WifiOff => "Wi-Fi Off",
+            Self::Audio => "Audio",
+            Self::AudioMute => "Mute Audio",
+            Self::AudioUp => "Audio Up",
+            Self::AudioDown => "Audio Down",
+            Self::Display => "Display",
+            Self::Screenshot => "Screenshot",
+            Self::Clipboard => "Clipboard",
+            Self::Notifications => "Notifications",
+            Self::Processes => "Processes",
+            Self::Files => "Files",
+        }
+    }
+
+    pub fn subtitle(&self) -> &'static str {
+        match self {
+            Self::Lock
+            | Self::Logout
+            | Self::Reboot
+            | Self::Shutdown
+            | Self::Suspend
+            | Self::Hibernate => "os action",
+            _ => "desktop action",
+        }
+    }
+
     pub fn commands(&self) -> &'static [(&'static str, &'static [&'static str])] {
         match self {
             Self::Lock => &[("loginctl", &["lock-session"])],
@@ -58,6 +125,26 @@ impl DesktopAction {
             Self::Files => &[("nnn", &[]), ("vifm", &[])],
         }
     }
+
+    pub fn resolve(&self) -> Option<ResolvedCommand> {
+        self.resolve_with(available)
+    }
+
+    pub fn resolve_with(&self, available: impl Fn(&str) -> bool) -> Option<ResolvedCommand> {
+        self.commands()
+            .iter()
+            .find(|(program, _)| available(program))
+            .map(|(program, args)| ResolvedCommand {
+                program: (*program).to_string(),
+                args: args.iter().map(expand_arg).collect(),
+            })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedCommand {
+    pub program: String,
+    pub args: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,14 +175,16 @@ impl DesktopState {
 }
 
 pub fn run(action: &DesktopAction) {
-    for (program, args) in action.commands() {
-        if !available(program) {
-            continue;
-        }
-        let args = args.iter().map(expand_arg);
-        let _ = Command::new(program).args(args).spawn();
-        return;
+    if let Some(command) = action.resolve() {
+        let _ = Command::new(command.program).args(command.args).spawn();
     }
+}
+
+pub fn smoke_wayland() -> Result<(), String> {
+    std::env::var("WAYLAND_DISPLAY").map_err(|_| "WAYLAND_DISPLAY is not set".to_string())?;
+    Connection::connect_to_env()
+        .map(|_| ())
+        .map_err(|error| format!("wayland connection failed: {error}"))
 }
 
 fn available(program: &str) -> bool {
@@ -137,5 +226,24 @@ mod tests {
         assert_eq!(DesktopAction::Reboot.commands()[0].0, "loginctl");
         assert_eq!(DesktopAction::Reboot.commands()[1].0, "reboot");
         assert_eq!(DesktopAction::Terminal.commands()[0].0, "foot");
+    }
+
+    #[test]
+    fn every_desktop_action_should_resolve_with_first_available_command() {
+        for action in DesktopAction::all() {
+            let first = action.commands()[0].0;
+            assert_eq!(
+                action.resolve_with(|program| program == first),
+                Some(ResolvedCommand {
+                    program: first.to_string(),
+                    args: action.commands()[0].1.iter().map(expand_arg).collect(),
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn desktop_action_should_report_missing_commands_without_spawning() {
+        assert_eq!(DesktopAction::Shutdown.resolve_with(|_| false), None);
     }
 }

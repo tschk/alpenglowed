@@ -1,0 +1,3 @@
+div flex-1 bg-zinc-900 p-3
+    div w-full h-full rounded bg-zinc-800 flex items-center justify-center text-sm text-zinc-300
+        "{label}"

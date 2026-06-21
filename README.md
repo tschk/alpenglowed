@@ -2,13 +2,13 @@
 
 ### Raycast-style bar launcher for Linux (Wayland)
 
-A GPU-accelerated launcher bar that IS the desktop. Summon with a hotkey (Super+Space), type to launch, search, calculate, or run commands. Time, date, battery, weather, CPU/GPU shown as pills in the bar. Windows managed as floating/tiled surfaces below.
+A GPU-accelerated launcher bar that IS the desktop. Summon with a hotkey (Super+Space), type to launch, search, calculate, run commands, or execute plugins. Time, date, battery, weather, CPU/GPU shown as pills in the bar. Windows managed as floating/tiled surfaces below.
 
 ## Philosophy
 
 The traditional desktop (wallpaper + icons + taskbar) is unnecessary. The only interface you need is a text bar that does everything: app launcher, calculator, shell, clipboard, file search, AI assistant. Status info (clock, battery, weather, CPU) lives in pills at the top of the bar.
 
-Alpenglowed is a single GPUI binary that runs fullscreen on top of a Wayland compositor (cage for now, smithay later).
+Alpenglowed is a single Crepuscularity GPUI binary that runs fullscreen on top of the Alpenglow Wayland stack.
 
 ## Architecture
 
@@ -31,8 +31,8 @@ Alpenglowed is a single GPUI binary that runs fullscreen on top of a Wayland com
           │ (Wayland protocol)
           ▼
 ┌──────────────────────────────┐
-│ cage (wlroots kiosk) /       │
-│ smithay compositor (future)  │
+│ Wayland compositor           │
+│ velox now, smithay target    │
 └──────────────────────────────┘
           │
           ▼
@@ -49,6 +49,7 @@ Alpenglowed is a single GPUI binary that runs fullscreen on top of a Wayland com
 - **Results**: fuzzy match PATH executables, run on Enter
 - **Shell**: type `> command` to run shell commands
 - **Calculator**: type math expressions, evaluate via `bc`
+- **Plugins**: built-in Rust plugins plus command plugins written in Rust, Crepus, or Bun/webcode
 - **Keybind**: Super+Space toggles focus in/out of the bar
 - **Dismiss**: Esc to unfocus; the bar stays visible but inactive
 
@@ -66,10 +67,11 @@ Alpenglowed is a single GPUI binary that runs fullscreen on top of a Wayland com
 - **Clipboard history**: store and search recent copies
 - **Emoji picker**: `:smile` → emoji search
 - **Web search**: `?query` → search DuckDuckGo
+- **Spotify**: MPRIS actions through `playerctl`
 
 ### Phase D — Compositor Built-in
 
-- Replace cage: use `smithay` crate as compositor backend in the same binary
+- Use `smithay` crate as compositor backend in the same binary
 - Direct DRM/KMS access
 - Remove Wayland dependency: one static binary controls the display directly
 - Embed terminal via `cosmic-text` + `alacritty_terminal` or similar
@@ -81,18 +83,14 @@ Alpenglowed is a single GPUI binary that runs fullscreen on top of a Wayland com
 cargo build --release
 SDKROOT=$(xcrun --show-sdk-path) cargo run    # macOS dev
 cargo run                                       # Linux dev
+cargo run -- --polybar                          # status output
+cargo run -- --smoke-wayland                    # Wayland connection smoke
 ```
 
-## Why not Rover?
+## Plugins
 
-Rover is a macOS launcher with SwiftUI and Apple Intelligence integration. Alpenglowed is:
-- Linux-native (Wayland, no macOS Cocoa/NSPanel)
-- Bar IS the desktop (always visible, not a popup panel)
-- Pills for system status at the bar top
-- Window management built in (floating/tiling)
-- No Apple Intelligence (offline AI via crepuscularity-lite V8 later)
-- Purpose-built for Alpenglow OS
+Plugins return launcher results as JSON. Built-ins are Rust. External command plugins can be Rust binaries, Bun/webcode, or Crepuscularity-backed tools that expose the same stdin/stdout protocol.
 
-## Why not Crepuscularity directly?
+`plugins/spotify` is a Bun webcode plugin for Spotify-compatible MPRIS players. `plugins/spotify-rust` is the Rust version. Both control the native machine through `playerctl`.
 
-Crepuscularity templates (`.crepus`) are great for content apps, but the bar desktop needs raw GPUI for pixel-level control of the bar layout, pill rendering, and window management. We use crepuscularity-gpui for the GPUI wrapper but write the app logic in plain Rust + GPUI.
+Rover is only a design reference for launcher/plugin ergonomics. Crepuscularity is the UI framework used here.

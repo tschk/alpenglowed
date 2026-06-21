@@ -1,0 +1,8 @@
+{
+  "id": "spotify-rust",
+  "name": "Spotify Rust",
+  "kind": "rust",
+  "command": ["cargo", "run", "--quiet", "--manifest-path", "Cargo.toml", "--"],
+  "matcher": "prefix",
+  "timeout_ms": 5000
+}

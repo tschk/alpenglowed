@@ -1,0 +1,8 @@
+{
+  "id": "spotify-webcode",
+  "name": "Spotify Webcode",
+  "kind": "webcode",
+  "command": ["bun", "spotify.js"],
+  "matcher": "prefix",
+  "timeout_ms": 1000
+}
