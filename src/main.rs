@@ -1,17 +1,6 @@
 extern crate crepuscularity_gpui as gpui;
 
-// Alpenglowed — Raycast-style bar launcher for Linux (Wayland)
-// The entire desktop is one GPUI window: status pills + text bar + results.
-// Summon: Super+Space. Type to launch apps, run commands, calculate.
-//
-// Architecture:
-//   Pills row (clock, battery, cpu, wifi, weather)
-//   Text bar: "> _"
-//   Results: fuzzy-matched apps / shell output / calculator
-//   Below: launched app windows managed by cage (Phase A) or built-in (Phase D)
-
 mod de;
-mod pills;
 mod plugin;
 mod runner;
 
@@ -23,26 +12,30 @@ use std::process::Command;
 
 actions!(alpenglowed, [Quit, FocusBar, DefocusBar, Confirm]);
 
+struct UiOptions {
+    status_bar: bool,
+}
+
 struct Alpenglowed {
     query: SharedString,
-    pills: Entity<pills::Pills>,
     focused: bool,
     mode: WindowMode,
     runner: Runner,
+    status_bar: bool,
 }
 
 impl Alpenglowed {
-    fn new(cx: &mut Context<Self>) -> Self {
+    fn new(status_bar: bool, _cx: &mut Context<Self>) -> Self {
         let mut runner = Runner::new();
         runner.query = "window".to_string();
         runner.update();
 
         Self {
             query: SharedString::from("window"),
-            pills: cx.new(pills::Pills::new),
             focused: true,
             mode: WindowMode::Tiling,
             runner,
+            status_bar,
         }
     }
 
@@ -69,14 +62,19 @@ impl Alpenglowed {
     }
 
     fn render_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let prompt = if self.focused { ">" } else { "." };
+
         div()
-            .w_full()
-            .h(px(48.))
-            .bg(rgb(0x222222))
+            .w(px(860.))
+            .h(px(60.))
+            .rounded(px(14.))
+            .bg(rgb(0x161616))
+            .border_1()
+            .border_color(rgb(0x2a2a2a))
             .flex()
             .items_center()
-            .px(px(16.))
-            .gap(px(8.))
+            .px(px(18.))
+            .gap(px(12.))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if !this.focused {
                     return;
@@ -109,31 +107,40 @@ impl Alpenglowed {
             }))
             .child(
                 div()
-                    .text_size(px(18.))
-                    .text_color(rgb(0x888888))
-                    .child("> "),
+                    .text_size(px(16.))
+                    .text_color(rgb(0x8f8f8f))
+                    .child(prompt),
             )
             .child(
                 div()
                     .flex_1()
                     .text_size(px(18.))
-                    .text_color(rgb(0xcccccc))
+                    .text_color(rgb(0xf1f1f1))
                     .child(self.query.clone()),
+            )
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(rgb(0x767676))
+                    .child(self.mode.label()),
             )
     }
 
     fn render_results(&self) -> impl IntoElement {
         div()
-            .flex()
-            .flex_col()
+            .w(px(860.))
             .gap(px(4.))
-            .p(px(12.))
+            .rounded(px(14.))
+            .bg(rgb(0x141414))
+            .border_1()
+            .border_color(rgb(0x242424))
+            .p(px(10.))
             .children(self.runner.results.iter().map(|result| {
                 div()
-                    .rounded(px(6.))
-                    .bg(rgb(0x242424))
+                    .rounded(px(10.))
+                    .bg(rgb(0x1d1d1d))
                     .px(px(12.))
-                    .py(px(8.))
+                    .py(px(10.))
                     .flex()
                     .items_center()
                     .gap(px(10.))
@@ -152,23 +159,60 @@ impl Alpenglowed {
             }))
     }
 
+    fn render_status_bar(&self) -> impl IntoElement {
+        let desktop = de::DesktopState::detect(self.mode.label());
+        let display = desktop.display.unwrap_or_else(|| "no-display".to_string());
+        let backend = if desktop.wayland {
+            "wayland"
+        } else {
+            "offline"
+        };
+
+        div()
+            .absolute()
+            .top(px(18.))
+            .left_1_2()
+            .ml(px(-160.))
+            .w(px(320.))
+            .h(px(34.))
+            .rounded(px(17.))
+            .bg(rgb(0x121212))
+            .border_1()
+            .border_color(rgb(0x242424))
+            .flex()
+            .items_center()
+            .justify_between()
+            .px(px(12.))
+            .text_size(px(12.))
+            .text_color(rgb(0xbcbcbc))
+            .child(self.mode.label())
+            .child(backend)
+            .child(display)
+    }
+
     fn render_workspace(&self) -> impl IntoElement {
-        let label = format!("{} mode", self.mode.label());
+        let mode_label = format!("{} mode", self.mode.label());
         crepuscularity_gpui::view! {r#"
-            div flex-1 bg-zinc-900 p-3
-                div w-full h-full rounded bg-zinc-800 flex items-center justify-center text-sm text-zinc-300
-                    "{label}"
+            div flex-1 bg-neutral-950 p-6
+                div w-full h-full rounded bg-neutral-900 border border-neutral-800
+                    div w-full h-full flex items-center justify-center
+                        div flex flex-col items-center gap-3
+                            div text-neutral-100 text-xl
+                                "alpenglowed"
+                            div text-neutral-400 text-sm
+                                "{mode_label}"
         "#}
     }
 }
 
 impl Render for Alpenglowed {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        let mut root = div()
             .size_full()
-            .bg(rgb(0x1a1a1a))
+            .bg(rgb(0x0f0f0f))
             .flex()
             .flex_col()
+            .relative()
             .key_context("alpenglowed")
             .on_action(cx.listener(|this, _: &FocusBar, _, cx| {
                 this.focused = true;
@@ -183,16 +227,33 @@ impl Render for Alpenglowed {
                     this.apply(action, cx);
                 }
             }))
-            // Pills row — always visible
-            .child(self.pills.clone())
-            // Bar + results
-            .child(self.render_bar(cx))
-            .child(self.render_results())
             .child(self.render_workspace())
+            .child(
+                div()
+                    .absolute()
+                    .top_1_2()
+                    .left_1_2()
+                    .ml(px(-430.))
+                    .mt(px(-180.))
+                    .w(px(860.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.))
+                    .child(self.render_bar(cx))
+                    .child(self.render_results()),
+            );
+
+        if self.status_bar {
+            root = root.child(self.render_status_bar());
+        }
+
+        root
     }
 }
 
 fn main() {
+    let options = UiOptions::from_env();
+
     if std::env::args().any(|arg| arg == "--polybar") {
         println!("{}", de::DesktopState::detect("tiling").polybar());
         return;
@@ -210,7 +271,7 @@ fn main() {
 
     ensure_wayland_display();
 
-    Application::new().run(|cx: &mut App| {
+    Application::new().run(move |cx: &mut App| {
         cx.bind_keys([
             KeyBinding::new("cmd-space", FocusBar, None),
             KeyBinding::new("escape", DefocusBar, None),
@@ -225,9 +286,24 @@ fn main() {
             ..Default::default()
         };
 
-        cx.open_window(window_options, |_window, cx| cx.new(Alpenglowed::new))
-            .unwrap();
+        let status_bar = options.status_bar;
+        cx.open_window(window_options, move |_window, cx| {
+            cx.new(|cx| Alpenglowed::new(status_bar, cx))
+        })
+        .unwrap();
     });
+}
+
+impl UiOptions {
+    fn from_env() -> Self {
+        let status_bar = std::env::args().any(|arg| arg == "--status-bar")
+            || matches!(
+                std::env::var("ALPENGLOWED_STATUS_BAR").as_deref(),
+                Ok("1" | "true" | "yes")
+            );
+
+        Self { status_bar }
+    }
 }
 
 fn ensure_wayland_display() {
