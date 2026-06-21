@@ -182,6 +182,11 @@ fn action_results(q: &str, matcher: &SkimMatcherV2) -> Vec<RunnerResult> {
             RunnerAction::Desktop(DesktopAction::Suspend),
         ),
         (
+            "Hibernate",
+            "os action",
+            RunnerAction::Desktop(DesktopAction::Hibernate),
+        ),
+        (
             "Terminal",
             "desktop action",
             RunnerAction::Desktop(DesktopAction::Terminal),
@@ -197,9 +202,44 @@ fn action_results(q: &str, matcher: &SkimMatcherV2) -> Vec<RunnerResult> {
             RunnerAction::Desktop(DesktopAction::Wifi),
         ),
         (
+            "Wi-Fi On",
+            "desktop action",
+            RunnerAction::Desktop(DesktopAction::WifiOn),
+        ),
+        (
+            "Wi-Fi Off",
+            "desktop action",
+            RunnerAction::Desktop(DesktopAction::WifiOff),
+        ),
+        (
             "Audio",
             "desktop action",
             RunnerAction::Desktop(DesktopAction::Audio),
+        ),
+        (
+            "Mute Audio",
+            "desktop action",
+            RunnerAction::Desktop(DesktopAction::AudioMute),
+        ),
+        (
+            "Audio Up",
+            "desktop action",
+            RunnerAction::Desktop(DesktopAction::AudioUp),
+        ),
+        (
+            "Audio Down",
+            "desktop action",
+            RunnerAction::Desktop(DesktopAction::AudioDown),
+        ),
+        (
+            "Display",
+            "desktop action",
+            RunnerAction::Desktop(DesktopAction::Display),
+        ),
+        (
+            "Screenshot",
+            "desktop action",
+            RunnerAction::Desktop(DesktopAction::Screenshot),
         ),
         (
             "Clipboard",
@@ -210,6 +250,16 @@ fn action_results(q: &str, matcher: &SkimMatcherV2) -> Vec<RunnerResult> {
             "Notifications",
             "desktop action",
             RunnerAction::Desktop(DesktopAction::Notifications),
+        ),
+        (
+            "Processes",
+            "desktop action",
+            RunnerAction::Desktop(DesktopAction::Processes),
+        ),
+        (
+            "Files",
+            "desktop action",
+            RunnerAction::Desktop(DesktopAction::Files),
         ),
     ]
     .into_iter()

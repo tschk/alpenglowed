@@ -8,24 +8,54 @@ pub enum DesktopAction {
     Reboot,
     Shutdown,
     Suspend,
+    Hibernate,
     Terminal,
     Apps,
     Wifi,
+    WifiOn,
+    WifiOff,
     Audio,
+    AudioMute,
+    AudioUp,
+    AudioDown,
+    Display,
+    Screenshot,
     Clipboard,
     Notifications,
+    Processes,
+    Files,
 }
 
 impl DesktopAction {
-    pub fn command(&self) -> Option<(&'static str, &'static [&'static str])> {
+    pub fn commands(&self) -> &'static [(&'static str, &'static [&'static str])] {
         match self {
-            Self::Lock => Some(("loginctl", &["lock-session"])),
-            Self::Logout => Some(("loginctl", &["terminate-user", "$USER"])),
-            Self::Reboot => Some(("systemctl", &["reboot"])),
-            Self::Shutdown => Some(("systemctl", &["poweroff"])),
-            Self::Suspend => Some(("systemctl", &["suspend"])),
-            Self::Terminal => Some(("foot", &[])),
-            Self::Apps | Self::Wifi | Self::Audio | Self::Clipboard | Self::Notifications => None,
+            Self::Lock => &[("loginctl", &["lock-session"])],
+            Self::Logout => &[("loginctl", &["terminate-user", "$USER"])],
+            Self::Reboot => &[("loginctl", &["reboot"]), ("reboot", &[])],
+            Self::Shutdown => &[("loginctl", &["poweroff"]), ("poweroff", &[])],
+            Self::Suspend => &[("loginctl", &["suspend"]), ("zzz", &[])],
+            Self::Hibernate => &[("loginctl", &["hibernate"])],
+            Self::Terminal => &[("foot", &[]), ("alacritty", &[]), ("xterm", &[])],
+            Self::Apps => &[("alpenglowed", &["--polybar"])],
+            Self::Wifi => &[("iwctl", &[]), ("nmtui", &[])],
+            Self::WifiOn => &[(
+                "iwctl",
+                &["adapter", "phy0", "set-property", "Powered", "on"],
+            )],
+            Self::WifiOff => &[(
+                "iwctl",
+                &["adapter", "phy0", "set-property", "Powered", "off"],
+            )],
+            Self::Audio => &[("alsamixer", &[]), ("pavucontrol", &[])],
+            Self::AudioMute => &[("wpctl", &["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"])],
+            Self::AudioUp => &[("wpctl", &["set-volume", "@DEFAULT_AUDIO_SINK@", "5%+"])],
+            Self::AudioDown => &[("wpctl", &["set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"])],
+            Self::Display => &[("wlr-randr", &[]), ("arandr", &[])],
+            Self::Screenshot => &[("grim", &["$HOME/Pictures/alpenglow-screenshot.png"])],
+            Self::Clipboard => &[("cliphist", &["list"])],
+            Self::Notifications => &[("makoctl", &["mode", "-t", "do-not-disturb"])],
+            Self::Processes => &[("top", &[])],
+            Self::Files => &[("nnn", &[]), ("vifm", &[])],
         }
     }
 }
@@ -58,17 +88,33 @@ impl DesktopState {
 }
 
 pub fn run(action: &DesktopAction) {
-    let Some((program, args)) = action.command() else {
-        return;
-    };
-    let args = args.iter().map(|arg| {
-        if *arg == "$USER" {
-            std::env::var("USER").unwrap_or_default()
-        } else {
-            (*arg).to_string()
+    for (program, args) in action.commands() {
+        if !available(program) {
+            continue;
         }
-    });
-    let _ = Command::new(program).args(args).spawn();
+        let args = args.iter().map(expand_arg);
+        let _ = Command::new(program).args(args).spawn();
+        return;
+    }
+}
+
+fn available(program: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| dir.join(program).is_file())
+}
+
+fn expand_arg(arg: &&'static str) -> String {
+    if *arg == "$USER" {
+        std::env::var("USER").unwrap_or_default()
+    } else if let Some(rest) = arg.strip_prefix("$HOME/") {
+        std::env::var("HOME")
+            .map(|home| format!("{home}/{rest}"))
+            .unwrap_or_else(|_| (*arg).to_string())
+    } else {
+        (*arg).to_string()
+    }
 }
 
 #[cfg(test)]
@@ -84,5 +130,12 @@ mod tests {
         };
 
         assert_eq!(state.polybar(), "alpenglowed tiling no-wayland wayland-1");
+    }
+
+    #[test]
+    fn desktop_actions_should_offer_alpenglow_first_fallbacks() {
+        assert_eq!(DesktopAction::Reboot.commands()[0].0, "loginctl");
+        assert_eq!(DesktopAction::Reboot.commands()[1].0, "reboot");
+        assert_eq!(DesktopAction::Terminal.commands()[0].0, "foot");
     }
 }
