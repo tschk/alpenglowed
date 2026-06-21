@@ -18,6 +18,7 @@ actions!(alpenglowed, [Quit, FocusBar, DefocusBar, Confirm]);
 #[derive(Clone, Copy)]
 struct UiOptions {
     status_bar: bool,
+    open_settings: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -639,7 +640,11 @@ fn main() {
         })
         .unwrap();
 
-        focus_or_open_launcher(&desktop, cx);
+        if options.open_settings {
+            open_or_focus_settings(&desktop, cx);
+        } else {
+            focus_or_open_launcher(&desktop, cx);
+        }
     });
 }
 
@@ -650,8 +655,12 @@ impl UiOptions {
                 std::env::var("ALPENGLOWED_STATUS_BAR").as_deref(),
                 Ok("1" | "true" | "yes")
             );
+        let open_settings = std::env::args().any(|arg| arg == "--open-settings");
 
-        Self { status_bar }
+        Self {
+            status_bar,
+            open_settings,
+        }
     }
 }
 
