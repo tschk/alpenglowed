@@ -160,7 +160,7 @@ impl WorkspaceWindow {
                                 div text-[#6fbf7f] text-[13px]
                                     "$ {query}"
                                 div text-[#4a7153] text-xs
-                                    "{subtitle}"
+                                    "{mode_label}"
         "#}
     }
 }
@@ -353,6 +353,23 @@ impl SettingsWindow {
             .child(label)
             .on_click(move |_, _, cx| on_click(&desktop, cx))
     }
+
+    fn desktop_action_button(
+        &self,
+        label: &'static str,
+        action: de::DesktopAction,
+    ) -> impl IntoElement {
+        self.action_button(label, move |desktop, cx| {
+            desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Desktop {
+                        action: action.clone(),
+                    },
+                    cx,
+                );
+            });
+        })
+    }
 }
 
 impl Render for SettingsWindow {
@@ -368,30 +385,33 @@ impl Render for SettingsWindow {
 
         div().size_full().bg(rgb(0x101010)).child(
             crepuscularity_gpui::view! {r#"
-                div size-full bg-neutral-950 p-5
-                    div w-full h-full rounded bg-neutral-900 border border-neutral-800 p-5 flex flex-col gap-5
+                div size-full bg-[#050705] p-5
+                    div w-full h-full rounded-[8px] bg-[#08110a] border border-[#17311d] p-5 flex flex-col gap-5
                         div flex items-center justify-between
                             div flex flex-col gap-1
-                                div text-neutral-100 text-xl
+                                div text-[#d9f7df] text-xl
                                     "Settings"
-                                div text-neutral-400 text-sm
-                                    "Desktop, launcher, and window controls"
-                            div text-neutral-500 text-xs
+                                div text-[#7fa98a] text-sm
+                                    "Desktop, launcher, modes, and system actions"
+                            div text-[#6fbf7f] text-xs
                                 "{desktop.mode.label()}"
                         div flex flex-col gap-3
-                            div text-neutral-300 text-sm
+                            div text-[#8ab693] text-sm
                                 "Windows"
                         div flex flex-col gap-3
-                            div text-neutral-300 text-sm
+                            div text-[#8ab693] text-sm
                                 "Interface"
-                            div text-neutral-500 text-xs
+                            div text-[#4a7153] text-xs
                                 "Status bar is {status_bar}"
                         div flex flex-col gap-3
-                            div text-neutral-300 text-sm
+                            div text-[#8ab693] text-sm
                                 "Launcher"
                         div flex flex-col gap-3
-                            div text-neutral-300 text-sm
+                            div text-[#8ab693] text-sm
                                 "Desktop actions"
+                        div flex flex-col gap-3
+                            div text-[#8ab693] text-sm
+                                "Session"
             "#}
             .child(
                 div()
@@ -437,36 +457,42 @@ impl Render for SettingsWindow {
                     .left(px(36.))
                     .flex()
                     .gap(px(8.))
-                    .child(self.action_button("Lock", |desktop, cx| {
-                        desktop.update(cx, |desktop, cx| {
-                            desktop.apply(
-                                PluginAction::Desktop {
-                                    action: de::DesktopAction::Lock,
-                                },
-                                cx,
-                            );
-                        });
-                    }))
-                    .child(self.action_button("Terminal", |desktop, cx| {
-                        desktop.update(cx, |desktop, cx| {
-                            desktop.apply(
-                                PluginAction::Desktop {
-                                    action: de::DesktopAction::Terminal,
-                                },
-                                cx,
-                            );
-                        });
-                    }))
-                    .child(self.action_button("Files", |desktop, cx| {
-                        desktop.update(cx, |desktop, cx| {
-                            desktop.apply(
-                                PluginAction::Desktop {
-                                    action: de::DesktopAction::Files,
-                                },
-                                cx,
-                            );
-                        });
-                    })),
+                    .child(self.desktop_action_button("Lock", de::DesktopAction::Lock))
+                    .child(self.desktop_action_button("Terminal", de::DesktopAction::Terminal))
+                    .child(self.desktop_action_button("Files", de::DesktopAction::Files))
+                    .child(
+                        self.desktop_action_button(
+                            "Screenshot",
+                            de::DesktopAction::Screenshot,
+                        ),
+                    )
+                    .child(
+                        self.desktop_action_button(
+                            "Clipboard",
+                            de::DesktopAction::Clipboard,
+                        ),
+                    ),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(px(474.))
+                    .left(px(36.))
+                    .flex()
+                    .gap(px(8.))
+                    .child(self.desktop_action_button("Wi-Fi", de::DesktopAction::Wifi))
+                    .child(
+                        self.desktop_action_button(
+                            "Notifications",
+                            de::DesktopAction::Notifications,
+                        ),
+                    )
+                    .child(self.desktop_action_button("Logout", de::DesktopAction::Logout))
+                    .child(self.desktop_action_button("Suspend", de::DesktopAction::Suspend))
+                    .child(self.desktop_action_button("Reboot", de::DesktopAction::Reboot))
+                    .child(
+                        self.desktop_action_button("Shutdown", de::DesktopAction::Shutdown),
+                    ),
             ),
         )
     }
@@ -551,7 +577,7 @@ fn settings_window_options(cx: &App) -> WindowOptions {
     WindowOptions {
         app_id: Some("alpenglowed-settings".into()),
         titlebar: Some(TitlebarOptions::default()),
-        window_bounds: Some(WindowBounds::centered(size(px(720.), px(540.)), cx)),
+        window_bounds: Some(WindowBounds::centered(size(px(900.), px(640.)), cx)),
         kind: WindowKind::PopUp,
         is_resizable: false,
         ..Default::default()
@@ -632,16 +658,16 @@ fn managed_window_bounds(role: DesktopWindowRole, mode: WindowMode, cx: &App) ->
     match mode {
         WindowMode::Tiling => match role {
             DesktopWindowRole::Primary => {
-                WindowBounds::Windowed(bounds(point(px(32.), px(32.)), size(px(1080.), px(760.))))
+                WindowBounds::Windowed(bounds(point(px(24.), px(24.)), size(px(780.), px(720.))))
             }
             DesktopWindowRole::Secondary => {
-                WindowBounds::Windowed(bounds(point(px(1144.), px(32.)), size(px(520.), px(760.))))
+                WindowBounds::Windowed(bounds(point(px(836.), px(24.)), size(px(420.), px(720.))))
             }
         },
         WindowMode::Floating => match role {
-            DesktopWindowRole::Primary => WindowBounds::centered(size(px(980.), px(720.)), cx),
+            DesktopWindowRole::Primary => WindowBounds::centered(size(px(900.), px(680.)), cx),
             DesktopWindowRole::Secondary => {
-                WindowBounds::Windowed(bounds(point(px(1060.), px(120.)), size(px(460.), px(560.))))
+                WindowBounds::Windowed(bounds(point(px(760.), px(96.)), size(px(420.), px(520.))))
             }
         },
     }
