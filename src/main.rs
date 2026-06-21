@@ -6,8 +6,8 @@ mod runner;
 
 use crepuscularity_gpui::prelude::*;
 use crepuscularity_gpui::{
-    actions, size, AnyWindowHandle, Bounds, EventEmitter, KeyBinding, KeyDownEvent, Modifiers,
-    TitlebarOptions, WindowBounds, WindowKind, WindowOptions,
+    actions, bounds, point, size, AnyWindowHandle, EventEmitter, KeyBinding, KeyDownEvent,
+    Modifiers, TitlebarOptions, WindowBounds, WindowKind, WindowOptions,
 };
 use plugin::PluginAction;
 use runner::{Runner, WindowMode};
@@ -31,6 +31,8 @@ struct DesktopModel {
     mode: WindowMode,
     status_bar: bool,
     runner: Runner,
+    primary: Option<AnyWindowHandle>,
+    secondary: Option<AnyWindowHandle>,
     launcher: Option<AnyWindowHandle>,
     settings: Option<AnyWindowHandle>,
 }
@@ -48,6 +50,8 @@ impl DesktopModel {
             mode: WindowMode::Tiling,
             status_bar: options.status_bar,
             runner,
+            primary: None,
+            secondary: None,
             launcher: None,
             settings: None,
         }
@@ -62,7 +66,10 @@ impl DesktopModel {
 
     fn apply(&mut self, action: PluginAction, cx: &mut Context<Self>) {
         match action {
-            PluginAction::SetWindowMode { mode } => self.mode = mode,
+            PluginAction::SetWindowMode { mode } => {
+                self.mode = mode;
+                reopen_managed_windows(&cx.entity(), cx);
+            }
             PluginAction::OpenSettings => {}
             PluginAction::Desktop { action } => de::run(&action),
             PluginAction::Launch { program } => {
@@ -89,17 +96,23 @@ impl DesktopModel {
 
 struct WorkspaceWindow {
     desktop: Entity<DesktopModel>,
+    role: DesktopWindowRole,
 }
 
 impl WorkspaceWindow {
-    fn new(desktop: Entity<DesktopModel>, options: UiOptions, cx: &mut Context<Self>) -> Self {
+    fn new(
+        desktop: Entity<DesktopModel>,
+        role: DesktopWindowRole,
+        options: UiOptions,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.subscribe(&desktop, |_, _, _: &DesktopEvent, cx| {
             cx.notify();
         })
         .detach();
 
         let _ = options;
-        Self { desktop }
+        Self { desktop, role }
     }
 
     fn render_status_bar(&self, cx: &App) -> impl IntoElement {
@@ -115,7 +128,7 @@ impl WorkspaceWindow {
         };
 
         crepuscularity_gpui::view! {r#"
-            div absolute top-5 left-1/2 ml-[-160px] w-[320px] h-[34px] rounded-[17px] bg-neutral-950 border border-neutral-800 flex items-center justify-between px-3 text-[12px] text-neutral-300
+            div absolute top-5 left-1/2 ml-[-190px] w-[380px] h-[34px] rounded-[8px] bg-[#08110a] border border-[#17311d] flex items-center justify-between px-3 text-[12px] text-[#8ab693]
                 "{desktop.mode.label()}"
                 "{backend}"
                 "{display}"
@@ -125,16 +138,29 @@ impl WorkspaceWindow {
     fn render_workspace(&self, cx: &App) -> impl IntoElement {
         let desktop = self.desktop.read(cx);
         let mode_label = format!("{} mode", desktop.mode.label());
+        let title = self.role.title();
+        let subtitle = self.role.subtitle();
+        let query = desktop.query.clone();
 
         crepuscularity_gpui::view! {r#"
-            div flex-1 bg-neutral-950 p-6
-                div w-full h-full rounded bg-neutral-900 border border-neutral-800
-                    div w-full h-full flex items-center justify-center
-                        div flex flex-col items-center gap-3
-                            div text-neutral-100 text-xl
-                                "alpenglowed"
-                            div text-neutral-400 text-sm
+            div flex-1 bg-[#050705] p-4
+                div w-full h-full rounded-[8px] bg-[#08110a] border border-[#17311d]
+                    div w-full h-full flex flex-col
+                        div h-[34px] border-b border-[#17311d] flex items-center justify-between px-3
+                            div text-[#6fbf7f] text-[12px]
+                                "{title}"
+                            div text-[#4a7153] text-[11px]
                                 "{mode_label}"
+                        div flex-1 flex items-center justify-center
+                            div flex flex-col items-center gap-3
+                                div text-[#d9f7df] text-xl
+                                    "{title}"
+                                div text-[#7fa98a] text-sm
+                                    "{subtitle}"
+                                div text-[#6fbf7f] text-[13px]
+                                    "$ {query}"
+                                div text-[#4a7153] text-xs
+                                    "{subtitle}"
         "#}
     }
 }
@@ -208,12 +234,18 @@ impl LauncherWindow {
         let desktop = self.desktop.read(cx);
 
         crepuscularity_gpui::view! {r#"
-            div w-[860px] h-[60px] rounded-[14px] bg-neutral-950 border border-neutral-800 flex items-center px-[18px] gap-3
-                div text-[16px] text-neutral-500
-                    ">"
-                div flex-1 text-[18px] text-neutral-100
+            div w-[860px] h-[60px] rounded-[8px] bg-[#08110a] border border-[#17311d] flex items-center px-[18px] gap-3
+                div text-[13px] text-[#6fbf7f]
+                    "user@alpenglowed"
+                div text-[16px] text-[#3e5e45]
+                    ":"
+                div text-[16px] text-[#a6d9b1]
+                    "~"
+                div text-[16px] text-[#6fbf7f]
+                    "$"
+                div flex-1 text-[18px] text-[#d9f7df]
                     "{desktop.query}"
-                div text-[12px] text-neutral-500
+                div text-[12px] text-[#6fbf7f]
                     "{desktop.mode.label()}"
         "#}
     }
@@ -224,15 +256,15 @@ impl LauncherWindow {
         div()
             .w(px(860.))
             .gap(px(4.))
-            .rounded(px(14.))
-            .bg(rgb(0x141414))
+            .rounded(px(8.))
+            .bg(rgb(0x08110a))
             .border_1()
-            .border_color(rgb(0x242424))
+            .border_color(rgb(0x17311d))
             .p(px(10.))
             .children(desktop.runner.results.iter().map(|result| {
                 div()
-                    .rounded(px(10.))
-                    .bg(rgb(0x1d1d1d))
+                    .rounded(px(6.))
+                    .bg(rgb(0x0d180f))
                     .px(px(12.))
                     .py(px(10.))
                     .flex()
@@ -240,14 +272,20 @@ impl LauncherWindow {
                     .gap(px(10.))
                     .child(
                         div()
+                            .text_size(px(12.))
+                            .text_color(rgb(0x6fbf7f))
+                            .child("$"),
+                    )
+                    .child(
+                        div()
                             .text_size(px(14.))
-                            .text_color(rgb(0xf2f2f2))
+                            .text_color(rgb(0xd9f7df))
                             .child(result.title.clone()),
                     )
                     .child(
                         div()
                             .text_size(px(12.))
-                            .text_color(rgb(0x8d8d8d))
+                            .text_color(rgb(0x6a8d72))
                             .child(result.subtitle.clone()),
                     )
             }))
@@ -276,6 +314,7 @@ impl SettingsWindow {
         _cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let desktop = self.desktop.clone();
+        let desktop_for_reopen = self.desktop.clone();
         let bg = if active { rgb(0x29453a) } else { rgb(0x1f1f1f) };
         let fg = if active { rgb(0xf3fff7) } else { rgb(0xd5d5d5) };
 
@@ -291,6 +330,7 @@ impl SettingsWindow {
             .on_click(move |_, _, cx| {
                 desktop.update(cx, |desktop, cx| {
                     desktop.mode = mode.clone();
+                    reopen_managed_windows(&desktop_for_reopen, cx);
                     desktop.changed(cx);
                 });
             })
@@ -494,15 +534,6 @@ impl Render for LauncherWindow {
     }
 }
 
-fn workspace_window_options(cx: &App) -> WindowOptions {
-    WindowOptions {
-        app_id: Some("alpenglowed".into()),
-        titlebar: None,
-        window_bounds: Some(WindowBounds::Maximized(Bounds::maximized(None, cx))),
-        ..Default::default()
-    }
-}
-
 fn launcher_window_options(cx: &App) -> WindowOptions {
     WindowOptions {
         app_id: Some("alpenglowed-launcher".into()),
@@ -542,6 +573,136 @@ fn open_launcher_window(desktop: &Entity<DesktopModel>, cx: &mut App) -> AnyWind
         desktop.changed(cx);
     });
     any_handle
+}
+
+#[derive(Clone, Copy)]
+enum DesktopWindowRole {
+    Primary,
+    Secondary,
+}
+
+impl DesktopWindowRole {
+    fn title(self) -> &'static str {
+        match self {
+            Self::Primary => "Desktop",
+            Self::Secondary => "Windows",
+        }
+    }
+
+    fn subtitle(self) -> &'static str {
+        match self {
+            Self::Primary => "keyboard workspace",
+            Self::Secondary => "parallel surface",
+        }
+    }
+
+    fn app_id(self) -> &'static str {
+        match self {
+            Self::Primary => "alpenglowed",
+            Self::Secondary => "alpenglowed-secondary",
+        }
+    }
+
+    fn handle(self, desktop: &DesktopModel) -> &Option<AnyWindowHandle> {
+        match self {
+            Self::Primary => &desktop.primary,
+            Self::Secondary => &desktop.secondary,
+        }
+    }
+
+    fn set_handle(self, desktop: &mut DesktopModel, handle: Option<AnyWindowHandle>) {
+        match self {
+            Self::Primary => desktop.primary = handle,
+            Self::Secondary => desktop.secondary = handle,
+        }
+    }
+}
+
+fn managed_window_options(role: DesktopWindowRole, mode: WindowMode, cx: &App) -> WindowOptions {
+    WindowOptions {
+        app_id: Some(role.app_id().into()),
+        titlebar: Some(TitlebarOptions::default()),
+        window_bounds: Some(managed_window_bounds(role, mode, cx)),
+        is_resizable: true,
+        ..Default::default()
+    }
+}
+
+fn managed_window_bounds(role: DesktopWindowRole, mode: WindowMode, cx: &App) -> WindowBounds {
+    match mode {
+        WindowMode::Tiling => match role {
+            DesktopWindowRole::Primary => {
+                WindowBounds::Windowed(bounds(point(px(32.), px(32.)), size(px(1080.), px(760.))))
+            }
+            DesktopWindowRole::Secondary => {
+                WindowBounds::Windowed(bounds(point(px(1144.), px(32.)), size(px(520.), px(760.))))
+            }
+        },
+        WindowMode::Floating => match role {
+            DesktopWindowRole::Primary => WindowBounds::centered(size(px(980.), px(720.)), cx),
+            DesktopWindowRole::Secondary => {
+                WindowBounds::Windowed(bounds(point(px(1060.), px(120.)), size(px(460.), px(560.))))
+            }
+        },
+    }
+}
+
+fn open_managed_window(
+    desktop: &Entity<DesktopModel>,
+    role: DesktopWindowRole,
+    options: UiOptions,
+    cx: &mut App,
+) -> AnyWindowHandle {
+    let mode = desktop.read(cx).mode.clone();
+    let desktop_entity = desktop.clone();
+    let handle = cx
+        .open_window(
+            managed_window_options(role, mode, cx),
+            move |_window, cx| cx.new(|cx| WorkspaceWindow::new(desktop_entity, role, options, cx)),
+        )
+        .unwrap();
+    let any_handle: AnyWindowHandle = handle.into();
+    desktop.update(cx, |desktop, cx| {
+        role.set_handle(desktop, Some(any_handle));
+        desktop.changed(cx);
+    });
+    any_handle
+}
+
+fn close_managed_window(
+    desktop: &Entity<DesktopModel>,
+    role: DesktopWindowRole,
+    cx: &mut App,
+) -> bool {
+    let Some(handle) = *role.handle(desktop.read(cx)) else {
+        return false;
+    };
+    let closed = handle
+        .update(cx, |_, window, _| {
+            window.remove_window();
+        })
+        .is_ok();
+    desktop.update(cx, |desktop, _| {
+        role.set_handle(desktop, None);
+    });
+    closed
+}
+
+fn reopen_managed_windows(desktop: &Entity<DesktopModel>, cx: &mut App) {
+    close_managed_window(desktop, DesktopWindowRole::Primary, cx);
+    close_managed_window(desktop, DesktopWindowRole::Secondary, cx);
+    open_managed_window(
+        desktop,
+        DesktopWindowRole::Primary,
+        UiOptions::from_env(),
+        cx,
+    );
+    open_managed_window(
+        desktop,
+        DesktopWindowRole::Secondary,
+        UiOptions::from_env(),
+        cx,
+    );
 }
 
 fn open_settings_window(desktop: &Entity<DesktopModel>, cx: &mut App) -> AnyWindowHandle {
@@ -634,11 +795,8 @@ fn main() {
         ]);
 
         let desktop = cx.new(|_| DesktopModel::new(options));
-        let workspace = desktop.clone();
-        cx.open_window(workspace_window_options(cx), move |_window, cx| {
-            cx.new(|cx| WorkspaceWindow::new(workspace, options, cx))
-        })
-        .unwrap();
+        open_managed_window(&desktop, DesktopWindowRole::Primary, options, cx);
+        open_managed_window(&desktop, DesktopWindowRole::Secondary, options, cx);
 
         if options.open_settings {
             open_or_focus_settings(&desktop, cx);
