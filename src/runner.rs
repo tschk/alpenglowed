@@ -3,6 +3,7 @@
 use crate::de::DesktopAction;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
+use std::cmp::Reverse;
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
@@ -122,7 +123,7 @@ impl Runner {
                 }
             }
         }
-        self.results.sort_by(|a, b| b.score.cmp(&a.score));
+        self.results.sort_by_key(|result| Reverse(result.score));
         self.results.truncate(15);
     }
 
