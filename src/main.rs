@@ -8,7 +8,7 @@ mod session;
 use crepuscularity_gpui::prelude::*;
 use crepuscularity_gpui::{
     actions, bounds, point, size, AnyWindowHandle, EventEmitter, KeyBinding, KeyDownEvent,
-    Modifiers, TitlebarOptions, WindowBounds, WindowKind, WindowOptions,
+    Modifiers, WindowBounds, WindowKind, WindowOptions,
 };
 use plugin::PluginAction;
 use runner::{Runner, WindowMode};
@@ -140,7 +140,7 @@ impl WorkspaceWindow {
         };
 
         crepuscularity_gpui::view! {r#"
-            div absolute top-5 left-1/2 ml-[-190px] w-[380px] h-[34px] rounded-[8px] bg-[#08110a] border border-[#17311d] flex items-center justify-between px-3 text-[12px] text-[#8ab693]
+            div absolute top-5 left-1/2 ml-[-190px] w-[380px] h-[34px] rounded-[6px] bg-[#050505] border border-[#2a2a2a] flex items-center justify-between px-3 text-[12px] text-[#cfcfcf]
                 "{desktop.mode.label()}"
                 "{backend}"
                 "{display}"
@@ -156,24 +156,71 @@ impl WorkspaceWindow {
         let query = desktop.query.clone();
 
         crepuscularity_gpui::view! {r#"
-            div flex-1 bg-[#050705] p-4
-                div w-full h-full rounded-[8px] bg-[#08110a] border border-[#17311d]
+            div flex-1 bg-[#050505] p-4
+                div w-full h-full rounded-[6px] bg-[#080808] border border-[#252525]
                     div w-full h-full flex flex-col
-                        div h-[34px] border-b border-[#17311d] flex items-center justify-between px-3
-                            div text-[#6fbf7f] text-[12px]
+                        div h-[28px] border-b border-[#252525] flex items-center justify-between px-3
+                            div text-[#dcdcdc] text-[12px]
                                 "{title}"
-                            div text-[#4a7153] text-[11px]
+                            div text-[#9a9a9a] text-[11px]
                                 "{mode_label}"
                         div flex-1 flex items-center justify-center
                             div flex flex-col items-center gap-3
-                                div text-[#d9f7df] text-xl
+                                div text-[#f0f0f0] text-xl
                                     "{title}"
-                                div text-[#7fa98a] text-sm
+                                div text-[#b8b8b8] text-sm
                                     "{subtitle}"
-                                div text-[#6fbf7f] text-[13px]
+                                div text-[#f0f0f0] text-[13px]
                                     "$ {query}"
-                                div text-[#4a7153] text-xs
+                                div text-[#8d8d8d] text-xs
                                     "{mode_label}"
+        "#}
+    }
+}
+
+struct CompanionWindow {
+    desktop: Entity<DesktopModel>,
+}
+
+impl CompanionWindow {
+    fn new(desktop: Entity<DesktopModel>, cx: &mut Context<Self>) -> Self {
+        cx.subscribe(&desktop, |_, _, _: &DesktopEvent, cx| {
+            cx.notify();
+        })
+        .detach();
+        Self { desktop }
+    }
+}
+
+impl Render for CompanionWindow {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let desktop = self.desktop.read(cx);
+        let session_status = if desktop.session_control {
+            "compositor session"
+        } else {
+            "local shell"
+        };
+
+        crepuscularity_gpui::view! {r#"
+            div size-full bg-[#050505] p-4
+                div w-full h-full rounded-[6px] bg-[#080808] border border-[#252525] p-4 flex flex-col gap-4
+                    div flex items-center justify-between
+                        div text-[#f0f0f0] text-[14px]
+                            "Actions"
+                        div text-[#9a9a9a] text-[11px]
+                            "{desktop.mode.label()}"
+                    div flex flex-col gap-2 text-[12px] text-[#d0d0d0]
+                        div "Enter  run result"
+                        div "Esc    close bar"
+                        div "Cmd-Space focus bar"
+                        div "Cmd-Q  quit shell"
+                    div flex flex-col gap-2 pt-2 border-t border-[#252525]
+                        div text-[#b8b8b8] text-[12px]
+                            "Session"
+                        div text-[#8d8d8d] text-[12px]
+                            "{session_status}"
+                        div text-[#8d8d8d] text-[12px]
+                            "Use the bar for quit, settings, shell, and desktop actions."
         "#}
     }
 }
@@ -247,18 +294,18 @@ impl LauncherWindow {
         let desktop = self.desktop.read(cx);
 
         crepuscularity_gpui::view! {r#"
-            div w-[860px] h-[60px] rounded-[8px] bg-[#08110a] border border-[#17311d] flex items-center px-[18px] gap-3
-                div text-[13px] text-[#6fbf7f]
+            div w-[860px] h-[60px] rounded-[6px] bg-[#050505] border border-[#2a2a2a] flex items-center px-[18px] gap-3
+                div text-[13px] text-[#d0d0d0]
                     "user@alpenglowed"
-                div text-[16px] text-[#3e5e45]
+                div text-[16px] text-[#8e8e8e]
                     ":"
-                div text-[16px] text-[#a6d9b1]
+                div text-[16px] text-[#f0f0f0]
                     "~"
-                div text-[16px] text-[#6fbf7f]
+                div text-[16px] text-[#f0f0f0]
                     "$"
-                div flex-1 text-[18px] text-[#d9f7df]
+                div flex-1 text-[18px] text-[#ffffff]
                     "{desktop.query}"
-                div text-[12px] text-[#6fbf7f]
+                div text-[12px] text-[#b8b8b8]
                     "{desktop.mode.label()}"
         "#}
     }
@@ -269,15 +316,15 @@ impl LauncherWindow {
         div()
             .w(px(860.))
             .gap(px(4.))
-            .rounded(px(8.))
-            .bg(rgb(0x08110a))
+            .rounded(px(6.))
+            .bg(rgb(0x050505))
             .border_1()
-            .border_color(rgb(0x17311d))
+            .border_color(rgb(0x2a2a2a))
             .p(px(10.))
             .children(desktop.runner.results.iter().map(|result| {
                 div()
                     .rounded(px(6.))
-                    .bg(rgb(0x0d180f))
+                    .bg(rgb(0x111111))
                     .px(px(12.))
                     .py(px(10.))
                     .flex()
@@ -286,19 +333,19 @@ impl LauncherWindow {
                     .child(
                         div()
                             .text_size(px(12.))
-                            .text_color(rgb(0x6fbf7f))
+                            .text_color(rgb(0xb8b8b8))
                             .child("$"),
                     )
                     .child(
                         div()
                             .text_size(px(14.))
-                            .text_color(rgb(0xd9f7df))
+                            .text_color(rgb(0xf0f0f0))
                             .child(result.title.clone()),
                     )
                     .child(
                         div()
                             .text_size(px(12.))
-                            .text_color(rgb(0x6a8d72))
+                            .text_color(rgb(0x8d8d8d))
                             .child(result.subtitle.clone()),
                     )
             }))
@@ -327,8 +374,8 @@ impl SettingsWindow {
         _cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let desktop = self.desktop.clone();
-        let bg = if active { rgb(0x29453a) } else { rgb(0x1f1f1f) };
-        let fg = if active { rgb(0xf3fff7) } else { rgb(0xd5d5d5) };
+        let bg = if active { rgb(0xf0f0f0) } else { rgb(0x1a1a1a) };
+        let fg = if active { rgb(0x050505) } else { rgb(0xe0e0e0) };
 
         div()
             .id(SharedString::from(format!("mode-{label}")))
@@ -361,7 +408,7 @@ impl SettingsWindow {
             .px(px(12.))
             .py(px(8.))
             .rounded(px(10.))
-            .bg(rgb(0x1f1f1f))
+            .bg(rgb(0x1a1a1a))
             .text_color(rgb(0xe8e8e8))
             .cursor_pointer()
             .child(label)
@@ -402,36 +449,36 @@ impl Render for SettingsWindow {
             "Running local fallbacks"
         };
 
-        div().size_full().bg(rgb(0x101010)).child(
+        div().size_full().bg(rgb(0x080808)).child(
             crepuscularity_gpui::view! {r#"
-                div size-full bg-[#050705] p-5
-                    div w-full h-full rounded-[8px] bg-[#08110a] border border-[#17311d] p-5 flex flex-col gap-5
+                div size-full bg-[#050505] p-5
+                    div w-full h-full rounded-[6px] bg-[#080808] border border-[#252525] p-5 flex flex-col gap-5
                         div flex items-center justify-between
                             div flex flex-col gap-1
-                                div text-[#d9f7df] text-xl
+                                div text-[#f0f0f0] text-xl
                                     "Settings"
-                                div text-[#7fa98a] text-sm
+                                div text-[#b8b8b8] text-sm
                                     "Desktop, launcher, modes, and system actions"
-                            div text-[#6fbf7f] text-xs
+                            div text-[#b8b8b8] text-xs
                                 "{desktop.mode.label()}"
                         div flex flex-col gap-3
-                            div text-[#8ab693] text-sm
+                            div text-[#d0d0d0] text-sm
                                 "Windows"
                         div flex flex-col gap-3
-                            div text-[#8ab693] text-sm
+                            div text-[#d0d0d0] text-sm
                                 "Interface"
-                            div text-[#4a7153] text-xs
+                            div text-[#8d8d8d] text-xs
                                 "Status bar is {status_bar}"
                         div flex flex-col gap-3
-                            div text-[#8ab693] text-sm
+                            div text-[#d0d0d0] text-sm
                                 "Launcher"
                         div flex flex-col gap-3
-                            div text-[#8ab693] text-sm
+                            div text-[#d0d0d0] text-sm
                                 "Desktop actions"
                         div flex flex-col gap-3
-                            div text-[#8ab693] text-sm
+                            div text-[#d0d0d0] text-sm
                                 "Session"
-                            div text-[#4a7153] text-xs
+                            div text-[#8d8d8d] text-xs
                                 "{session_status}"
             "#}
             .child(
@@ -584,7 +631,7 @@ impl Render for LauncherWindow {
 fn launcher_window_options(cx: &App) -> WindowOptions {
     WindowOptions {
         app_id: Some("alpenglowed-launcher".into()),
-        titlebar: Some(TitlebarOptions::default()),
+        titlebar: None,
         window_bounds: Some(WindowBounds::centered(size(px(900.), px(340.)), cx)),
         kind: WindowKind::PopUp,
         is_movable: false,
@@ -597,10 +644,26 @@ fn launcher_window_options(cx: &App) -> WindowOptions {
 fn settings_window_options(cx: &App) -> WindowOptions {
     WindowOptions {
         app_id: Some("alpenglowed-settings".into()),
-        titlebar: Some(TitlebarOptions::default()),
+        titlebar: None,
         window_bounds: Some(WindowBounds::centered(size(px(900.), px(640.)), cx)),
         kind: WindowKind::PopUp,
         is_resizable: false,
+        ..Default::default()
+    }
+}
+
+fn companion_window_options(_cx: &App) -> WindowOptions {
+    WindowOptions {
+        app_id: Some("alpenglowed-companion".into()),
+        titlebar: None,
+        window_bounds: Some(WindowBounds::Windowed(bounds(
+            point(px(950.), px(150.)),
+            size(px(240.), px(220.)),
+        ))),
+        kind: WindowKind::PopUp,
+        is_movable: false,
+        is_resizable: false,
+        is_minimizable: false,
         ..Default::default()
     }
 }
@@ -648,7 +711,7 @@ impl DesktopWindowRole {
 fn managed_window_options(role: DesktopWindowRole, mode: WindowMode, cx: &App) -> WindowOptions {
     WindowOptions {
         app_id: Some(role.app_id().into()),
-        titlebar: Some(TitlebarOptions::default()),
+        titlebar: None,
         window_bounds: Some(managed_window_bounds(role, mode, cx)),
         is_resizable: true,
         ..Default::default()
@@ -659,11 +722,11 @@ fn managed_window_bounds(role: DesktopWindowRole, mode: WindowMode, cx: &App) ->
     match mode {
         WindowMode::Tiling => match role {
             DesktopWindowRole::Primary => {
-                WindowBounds::Windowed(bounds(point(px(24.), px(24.)), size(px(1232.), px(752.))))
+                WindowBounds::Windowed(bounds(point(px(32.), px(56.)), size(px(880.), px(688.))))
             }
         },
         WindowMode::Floating => match role {
-            DesktopWindowRole::Primary => WindowBounds::centered(size(px(900.), px(680.)), cx),
+            DesktopWindowRole::Primary => WindowBounds::centered(size(px(860.), px(640.)), cx),
         },
     }
 }
@@ -701,6 +764,15 @@ fn open_settings_window(desktop: &Entity<DesktopModel>, cx: &mut App) -> AnyWind
         desktop.changed(cx);
     });
     any_handle
+}
+
+fn open_companion_window(desktop: &Entity<DesktopModel>, cx: &mut App) {
+    let desktop_entity = desktop.clone();
+    let _ = cx.open_window(companion_window_options(cx), move |window, cx| {
+        let view = cx.new(|cx| CompanionWindow::new(desktop_entity, cx));
+        window.activate_window();
+        view
+    });
 }
 
 fn focus_or_open_launcher(desktop: &Entity<DesktopModel>, cx: &mut App) {
@@ -777,6 +849,7 @@ fn main() {
 
         let desktop = cx.new(|_| DesktopModel::new(options));
         open_managed_window(&desktop, DesktopWindowRole::Primary, options, cx);
+        open_companion_window(&desktop, cx);
 
         if options.open_settings {
             open_or_focus_settings(&desktop, cx);
