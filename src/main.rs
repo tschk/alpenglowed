@@ -5,45 +5,54 @@ mod plugin;
 mod runner;
 
 use crepuscularity_gpui::prelude::*;
-use crepuscularity_gpui::{actions, Bounds, KeyBinding, KeyDownEvent, Modifiers, WindowBounds};
+use crepuscularity_gpui::{
+    actions, size, AnyWindowHandle, Bounds, EventEmitter, KeyBinding, KeyDownEvent, Modifiers,
+    TitlebarOptions, WindowBounds, WindowKind, WindowOptions,
+};
 use plugin::PluginAction;
 use runner::{Runner, WindowMode};
 use std::process::Command;
 
 actions!(alpenglowed, [Quit, FocusBar, DefocusBar, Confirm]);
 
+#[derive(Clone, Copy)]
 struct UiOptions {
     status_bar: bool,
 }
 
-struct Alpenglowed {
-    query: SharedString,
-    focused: bool,
-    mode: WindowMode,
-    runner: Runner,
-    status_bar: bool,
+#[derive(Clone, Copy)]
+enum DesktopEvent {
+    Changed,
 }
 
-impl Alpenglowed {
-    fn new(status_bar: bool, _cx: &mut Context<Self>) -> Self {
+struct DesktopModel {
+    query: String,
+    mode: WindowMode,
+    runner: Runner,
+    launcher: Option<AnyWindowHandle>,
+}
+
+impl EventEmitter<DesktopEvent> for DesktopModel {}
+
+impl DesktopModel {
+    fn new() -> Self {
         let mut runner = Runner::new();
         runner.query = "window".to_string();
         runner.update();
 
         Self {
-            query: SharedString::from("window"),
-            focused: true,
+            query: "window".to_string(),
             mode: WindowMode::Tiling,
             runner,
-            status_bar,
+            launcher: None,
         }
     }
 
     fn set_query(&mut self, query: String, cx: &mut Context<Self>) {
-        self.query = SharedString::from(query.clone());
+        self.query = query.clone();
         self.runner.query = query;
         self.runner.update();
-        cx.notify();
+        self.changed(cx);
     }
 
     fn apply(&mut self, action: PluginAction, cx: &mut Context<Self>) {
@@ -58,75 +67,150 @@ impl Alpenglowed {
             }
             PluginAction::None => {}
         }
+        self.changed(cx);
+    }
+
+    fn changed(&mut self, cx: &mut Context<Self>) {
         cx.notify();
+        cx.emit(DesktopEvent::Changed);
+    }
+}
+
+struct WorkspaceWindow {
+    desktop: Entity<DesktopModel>,
+    status_bar: bool,
+    options: UiOptions,
+}
+
+impl WorkspaceWindow {
+    fn new(desktop: Entity<DesktopModel>, options: UiOptions, cx: &mut Context<Self>) -> Self {
+        cx.subscribe(&desktop, |_, _, _: &DesktopEvent, cx| {
+            cx.notify();
+        })
+        .detach();
+
+        Self {
+            desktop,
+            status_bar: options.status_bar,
+            options,
+        }
     }
 
-    fn render_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let prompt = if self.focused { ">" } else { "." };
+    fn render_status_bar(&self, cx: &App) -> impl IntoElement {
+        let desktop = self.desktop.read(cx);
+        let desktop_state = de::DesktopState::detect(desktop.mode.label());
+        let display = desktop_state
+            .display
+            .unwrap_or_else(|| "no-display".to_string());
+        let backend = if desktop_state.wayland {
+            "wayland"
+        } else {
+            "offline"
+        };
 
-        div()
-            .w(px(860.))
-            .h(px(60.))
-            .rounded(px(14.))
-            .bg(rgb(0x161616))
-            .border_1()
-            .border_color(rgb(0x2a2a2a))
-            .flex()
-            .items_center()
-            .px(px(18.))
-            .gap(px(12.))
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                if !this.focused {
-                    return;
-                }
-                let key = event.keystroke.key.as_str();
-                if key == "backspace" {
-                    let mut query = String::from(this.query.as_ref());
-                    query.pop();
-                    this.set_query(query, cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                if key == "enter" {
-                    if let Some(action) = this.runner.confirm() {
-                        this.apply(action, cx);
-                    }
-                    cx.stop_propagation();
-                    return;
-                }
-                if event.keystroke.modifiers == Modifiers::default() {
-                    if let Some(ch) = event.keystroke.key_char.as_deref() {
-                        if ch.chars().count() == 1 && !ch.chars().all(|c| c.is_control()) {
-                            let mut query = String::from(this.query.as_ref());
-                            query.push_str(ch);
-                            this.set_query(query, cx);
-                            cx.stop_propagation();
-                        }
-                    }
-                }
+        crepuscularity_gpui::view! {r#"
+            div absolute top-5 left-1/2 ml-[-160px] w-[320px] h-[34px] rounded-[17px] bg-neutral-950 border border-neutral-800 flex items-center justify-between px-3 text-[12px] text-neutral-300
+                "{desktop.mode.label()}"
+                "{backend}"
+                "{display}"
+        "#}
+    }
+
+    fn render_workspace(&self, cx: &App) -> impl IntoElement {
+        let desktop = self.desktop.read(cx);
+        let mode_label = format!("{} mode", desktop.mode.label());
+
+        crepuscularity_gpui::view! {r#"
+            div flex-1 bg-neutral-950 p-6
+                div w-full h-full rounded bg-neutral-900 border border-neutral-800
+                    div w-full h-full flex items-center justify-center
+                        div flex flex-col items-center gap-3
+                            div text-neutral-100 text-xl
+                                "alpenglowed"
+                            div text-neutral-400 text-sm
+                                "{mode_label}"
+        "#}
+    }
+}
+
+impl Render for WorkspaceWindow {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut root = div()
+            .size_full()
+            .bg(rgb(0x0f0f0f))
+            .relative()
+            .key_context("alpenglowed")
+            .on_action(cx.listener(|this, _: &FocusBar, _, cx| {
+                focus_or_open_launcher(&this.desktop, this.options, cx);
             }))
-            .child(
-                div()
-                    .text_size(px(16.))
-                    .text_color(rgb(0x8f8f8f))
-                    .child(prompt),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .text_size(px(18.))
-                    .text_color(rgb(0xf1f1f1))
-                    .child(self.query.clone()),
-            )
-            .child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(rgb(0x767676))
-                    .child(self.mode.label()),
-            )
+            .child(self.render_workspace(cx));
+
+        if self.status_bar {
+            root = root.child(self.render_status_bar(cx));
+        }
+
+        root
+    }
+}
+
+struct LauncherWindow {
+    desktop: Entity<DesktopModel>,
+}
+
+impl LauncherWindow {
+    fn new(desktop: Entity<DesktopModel>, cx: &mut Context<Self>) -> Self {
+        cx.subscribe(&desktop, |_, _, _: &DesktopEvent, cx| {
+            cx.notify();
+        })
+        .detach();
+
+        Self { desktop }
     }
 
-    fn render_results(&self) -> impl IntoElement {
+    fn backspace(&mut self, cx: &mut Context<Self>) {
+        let query = self.desktop.read(cx).query.clone();
+        let mut next = query;
+        next.pop();
+        self.desktop.update(cx, |desktop, cx| {
+            desktop.set_query(next, cx);
+        });
+    }
+
+    fn append(&mut self, ch: &str, cx: &mut Context<Self>) {
+        let query = self.desktop.read(cx).query.clone();
+        let mut next = query;
+        next.push_str(ch);
+        self.desktop.update(cx, |desktop, cx| {
+            desktop.set_query(next, cx);
+        });
+    }
+
+    fn confirm(&mut self, cx: &mut Context<Self>) {
+        let action = self.desktop.read(cx).runner.confirm();
+        if let Some(action) = action {
+            self.desktop.update(cx, |desktop, cx| {
+                desktop.apply(action, cx);
+            });
+        }
+    }
+
+    fn render_bar(&self, cx: &App) -> impl IntoElement {
+        let desktop = self.desktop.read(cx);
+
+        crepuscularity_gpui::view! {r#"
+            div w-[860px] h-[60px] rounded-[14px] bg-neutral-950 border border-neutral-800 flex items-center px-[18px] gap-3
+                div text-[16px] text-neutral-500
+                    ">"
+                div flex-1 text-[18px] text-neutral-100
+                    "{desktop.query}"
+                div text-[12px] text-neutral-500
+                    "{desktop.mode.label()}"
+        "#}
+    }
+
+    fn render_results(&self, cx: &App) -> impl IntoElement {
+        let desktop = self.desktop.read(cx);
+
         div()
             .w(px(860.))
             .gap(px(4.))
@@ -135,7 +219,7 @@ impl Alpenglowed {
             .border_1()
             .border_color(rgb(0x242424))
             .p(px(10.))
-            .children(self.runner.results.iter().map(|result| {
+            .children(desktop.runner.results.iter().map(|result| {
                 div()
                     .rounded(px(10.))
                     .bg(rgb(0x1d1d1d))
@@ -158,97 +242,130 @@ impl Alpenglowed {
                     )
             }))
     }
+}
 
-    fn render_status_bar(&self) -> impl IntoElement {
-        let desktop = de::DesktopState::detect(self.mode.label());
-        let display = desktop.display.unwrap_or_else(|| "no-display".to_string());
-        let backend = if desktop.wayland {
-            "wayland"
-        } else {
-            "offline"
-        };
-
+impl Render for LauncherWindow {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .absolute()
-            .top(px(18.))
-            .left_1_2()
-            .ml(px(-160.))
-            .w(px(320.))
-            .h(px(34.))
-            .rounded(px(17.))
-            .bg(rgb(0x121212))
-            .border_1()
-            .border_color(rgb(0x242424))
-            .flex()
-            .items_center()
-            .justify_between()
-            .px(px(12.))
-            .text_size(px(12.))
-            .text_color(rgb(0xbcbcbc))
-            .child(self.mode.label())
-            .child(backend)
-            .child(display)
-    }
-
-    fn render_workspace(&self) -> impl IntoElement {
-        let mode_label = format!("{} mode", self.mode.label());
-        crepuscularity_gpui::view! {r#"
-            div flex-1 bg-neutral-950 p-6
-                div w-full h-full rounded bg-neutral-900 border border-neutral-800
-                    div w-full h-full flex items-center justify-center
-                        div flex flex-col items-center gap-3
-                            div text-neutral-100 text-xl
-                                "alpenglowed"
-                            div text-neutral-400 text-sm
-                                "{mode_label}"
-        "#}
+            .size_full()
+            .bg(rgb(0x0f0f0f))
+            .key_context("alpenglowed")
+            .on_action(cx.listener(|this, _: &Confirm, _, cx| {
+                this.confirm(cx);
+            }))
+            .on_action(cx.listener(|this, _: &DefocusBar, window, cx| {
+                let id = window.window_handle().window_id();
+                this.desktop.update(cx, move |desktop, cx| {
+                    if desktop
+                        .launcher
+                        .is_some_and(|handle| handle.window_id() == id)
+                    {
+                        desktop.launcher = None;
+                        desktop.changed(cx);
+                    }
+                });
+                window.remove_window();
+            }))
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                let key = event.keystroke.key.as_str();
+                if key == "backspace" {
+                    this.backspace(cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                if key == "enter" {
+                    this.confirm(cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                if event.keystroke.modifiers == Modifiers::default() {
+                    if let Some(ch) = event.keystroke.key_char.as_deref() {
+                        if ch.chars().count() == 1 && !ch.chars().all(|c| c.is_control()) {
+                            this.append(ch, cx);
+                            cx.stop_propagation();
+                        }
+                    }
+                }
+            }))
+            .child(
+                div()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .w(px(860.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(10.))
+                            .child(self.render_bar(cx))
+                            .child(self.render_results(cx)),
+                    ),
+            )
     }
 }
 
-impl Render for Alpenglowed {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut root = div()
-            .size_full()
-            .bg(rgb(0x0f0f0f))
-            .flex()
-            .flex_col()
-            .relative()
-            .key_context("alpenglowed")
-            .on_action(cx.listener(|this, _: &FocusBar, _, cx| {
-                this.focused = true;
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &DefocusBar, _, cx| {
-                this.focused = false;
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &Confirm, _, cx| {
-                if let Some(action) = this.runner.confirm() {
-                    this.apply(action, cx);
-                }
-            }))
-            .child(self.render_workspace())
-            .child(
-                div()
-                    .absolute()
-                    .top_1_2()
-                    .left_1_2()
-                    .ml(px(-430.))
-                    .mt(px(-180.))
-                    .w(px(860.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(10.))
-                    .child(self.render_bar(cx))
-                    .child(self.render_results()),
-            );
-
-        if self.status_bar {
-            root = root.child(self.render_status_bar());
-        }
-
-        root
+fn workspace_window_options(cx: &App) -> WindowOptions {
+    WindowOptions {
+        app_id: Some("alpenglowed".into()),
+        titlebar: None,
+        window_bounds: Some(WindowBounds::Maximized(Bounds::maximized(None, cx))),
+        ..Default::default()
     }
+}
+
+fn launcher_window_options(cx: &App) -> WindowOptions {
+    WindowOptions {
+        app_id: Some("alpenglowed-launcher".into()),
+        titlebar: Some(TitlebarOptions::default()),
+        window_bounds: Some(WindowBounds::centered(size(px(900.), px(340.)), cx)),
+        kind: WindowKind::PopUp,
+        is_movable: false,
+        is_resizable: false,
+        is_minimizable: false,
+        ..Default::default()
+    }
+}
+
+fn open_launcher_window(desktop: &Entity<DesktopModel>, cx: &mut App) -> AnyWindowHandle {
+    let desktop_entity = desktop.clone();
+    let handle = cx
+        .open_window(launcher_window_options(cx), move |window, cx| {
+            let view = cx.new(|cx| LauncherWindow::new(desktop_entity, cx));
+            window.activate_window();
+            view
+        })
+        .unwrap();
+    let any_handle: AnyWindowHandle = handle.into();
+    desktop.update(cx, |desktop, cx| {
+        desktop.launcher = Some(any_handle);
+        desktop.changed(cx);
+    });
+    any_handle
+}
+
+fn focus_or_open_launcher(desktop: &Entity<DesktopModel>, options: UiOptions, cx: &mut App) {
+    let Some(handle) = desktop.read(cx).launcher else {
+        open_launcher_window(desktop, cx);
+        return;
+    };
+
+    if handle
+        .update(cx, |_, window, _| {
+            window.activate_window();
+        })
+        .is_ok()
+    {
+        return;
+    }
+
+    desktop.update(cx, |desktop, cx| {
+        desktop.launcher = None;
+        desktop.changed(cx);
+    });
+    let _ = options;
+    open_launcher_window(desktop, cx);
 }
 
 fn main() {
@@ -279,18 +396,14 @@ fn main() {
             KeyBinding::new("cmd-q", Quit, None),
         ]);
 
-        let bounds = Bounds::maximized(None, cx);
-        let window_options = WindowOptions {
-            app_id: Some("alpenglowed".into()),
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            ..Default::default()
-        };
-
-        let status_bar = options.status_bar;
-        cx.open_window(window_options, move |_window, cx| {
-            cx.new(|cx| Alpenglowed::new(status_bar, cx))
+        let desktop = cx.new(|_| DesktopModel::new());
+        let workspace = desktop.clone();
+        cx.open_window(workspace_window_options(cx), move |_window, cx| {
+            cx.new(|cx| WorkspaceWindow::new(workspace, options, cx))
         })
         .unwrap();
+
+        focus_or_open_launcher(&desktop, options, cx);
     });
 }
 
