@@ -2,7 +2,8 @@
 
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
 static APP_CACHE: OnceLock<Vec<String>> = OnceLock::new();
@@ -29,9 +30,40 @@ fn apps() -> &'static Vec<String> {
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WindowMode {
+    Tiling,
+    Floating,
+}
+
+impl WindowMode {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Tiling => "tiling",
+            Self::Floating => "floating",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RunnerAction {
+    Launch(String),
+    Shell(String),
+    Calculator(f64),
+    SetWindowMode(WindowMode),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunnerResult {
+    pub title: String,
+    pub subtitle: String,
+    pub score: i64,
+    pub action: RunnerAction,
+}
+
 pub struct Runner {
     pub query: String,
-    pub results: Vec<(String, i64)>,
+    pub results: Vec<RunnerResult>,
     matcher: SkimMatcherV2,
 }
 
@@ -48,55 +80,127 @@ impl Runner {
         self.results.clear();
         let q = self.query.trim();
 
-        // Shell
         if q.starts_with('>') {
-            let cmd = q[1..].trim();
+            let cmd = q.trim_start_matches('>').trim();
             if !cmd.is_empty() {
-                self.results.push((format!("▶ {}", cmd), i64::MAX));
+                self.results.push(RunnerResult {
+                    title: format!("Run {cmd}"),
+                    subtitle: "shell".to_string(),
+                    score: i64::MAX,
+                    action: RunnerAction::Shell(cmd.to_string()),
+                });
             }
             return;
         }
 
-        // Calculator
         if is_math(q) {
             if let Some(v) = calc(q) {
-                self.results.push((format!("= {}", v), i64::MAX));
+                self.results.push(RunnerResult {
+                    title: format!("= {v}"),
+                    subtitle: "calculator".to_string(),
+                    score: i64::MAX,
+                    action: RunnerAction::Calculator(v),
+                });
             }
         }
 
-        // Fuzzy apps
+        for result in window_mode_results(q, &self.matcher) {
+            self.results.push(result);
+        }
+
         for app in apps() {
             if let Some(s) = self.matcher.fuzzy_match(app, q) {
                 if s > 0 {
-                    self.results.push((app.clone(), s));
+                    self.results.push(RunnerResult {
+                        title: app.clone(),
+                        subtitle: "app".to_string(),
+                        score: s,
+                        action: RunnerAction::Launch(app.clone()),
+                    });
                 }
             }
         }
-        self.results.sort_by(|a, b| b.1.cmp(&a.1));
+        self.results.sort_by(|a, b| b.score.cmp(&a.score));
         self.results.truncate(15);
     }
 
-    pub fn confirm(&self) {
-        if self.results.is_empty() {
-            return;
+    pub fn confirm(&self) -> Option<RunnerAction> {
+        let action = self.results.first()?.action.clone();
+        match &action {
+            RunnerAction::Shell(command) => {
+                let _ = Command::new("sh").arg("-c").arg(command).spawn();
+            }
+            RunnerAction::Launch(app) => {
+                let _ = Command::new(app).spawn();
+            }
+            RunnerAction::Calculator(_) | RunnerAction::SetWindowMode(_) => {}
         }
-        let (t, _) = &self.results[0];
-        if let Some(c) = t.strip_prefix("▶ ") {
-            let _ = Command::new("sh").arg("-c").arg(c).spawn();
-        } else if !t.starts_with("= ") {
-            let _ = Command::new(t).spawn();
-        }
+        Some(action)
     }
+}
+
+fn window_mode_results(q: &str, matcher: &SkimMatcherV2) -> Vec<RunnerResult> {
+    [
+        ("Tile windows", "window mode", WindowMode::Tiling),
+        ("Float windows", "window mode", WindowMode::Floating),
+    ]
+    .into_iter()
+    .filter_map(move |(title, subtitle, mode)| {
+        matcher.fuzzy_match(title, q).map(|score| RunnerResult {
+            title: title.to_string(),
+            subtitle: subtitle.to_string(),
+            score,
+            action: RunnerAction::SetWindowMode(mode),
+        })
+    })
+    .collect()
 }
 
 fn is_math(s: &str) -> bool {
     let t = s.trim();
     !t.is_empty()
-        && t.chars().all(|c| c.is_ascii_digit() || "+-*/() .".contains(c))
+        && t.chars()
+            .all(|c| c.is_ascii_digit() || "+-*/() .".contains(c))
         && t.contains(|c: char| c.is_ascii_digit())
 }
 
 fn calc(expr: &str) -> Option<f64> {
-    let o = Command::new("bc").arg("-ql").arg(expr).output().ok()?;
+    let mut child = Command::new("bc")
+        .arg("-ql")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .ok()?;
+    child.stdin.as_mut()?.write_all(expr.as_bytes()).ok()?;
+    let o = child.wait_with_output().ok()?;
     String::from_utf8_lossy(&o.stdout).trim().parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_should_return_shell_action_when_query_starts_with_prompt() {
+        let mut runner = Runner::new();
+        runner.query = "> echo ok".to_string();
+        runner.update();
+
+        assert_eq!(
+            runner.results.first().map(|result| &result.action),
+            Some(&RunnerAction::Shell("echo ok".to_string()))
+        );
+    }
+
+    #[test]
+    fn update_should_return_tiling_action_for_window_mode_query() {
+        let mut runner = Runner::new();
+        runner.query = "tile".to_string();
+        runner.update();
+
+        assert!(runner
+            .results
+            .iter()
+            .any(|result| { result.action == RunnerAction::SetWindowMode(WindowMode::Tiling) }));
+    }
 }
