@@ -3,6 +3,7 @@ extern crate crepuscularity_gpui as gpui;
 mod de;
 mod plugin;
 mod runner;
+mod session;
 
 use crepuscularity_gpui::prelude::*;
 use crepuscularity_gpui::{
@@ -31,8 +32,7 @@ struct DesktopModel {
     mode: WindowMode,
     status_bar: bool,
     runner: Runner,
-    primary: Option<AnyWindowHandle>,
-    secondary: Option<AnyWindowHandle>,
+    session_control: bool,
     launcher: Option<AnyWindowHandle>,
     settings: Option<AnyWindowHandle>,
 }
@@ -50,8 +50,7 @@ impl DesktopModel {
             mode: WindowMode::Tiling,
             status_bar: options.status_bar,
             runner,
-            primary: None,
-            secondary: None,
+            session_control: std::env::var_os("ALPENGLOW_SESSION_CONTROL").is_some(),
             launcher: None,
             settings: None,
         }
@@ -67,11 +66,19 @@ impl DesktopModel {
     fn apply(&mut self, action: PluginAction, cx: &mut Context<Self>) {
         match action {
             PluginAction::SetWindowMode { mode } => {
-                self.mode = mode;
-                reopen_managed_windows(&cx.entity(), cx);
+                self.mode = mode.clone();
+                let _ = session::dispatch(&session::SessionRequest::SetWindowMode { mode });
             }
             PluginAction::OpenSettings => {}
-            PluginAction::Desktop { action } => de::run(&action),
+            PluginAction::Desktop { action } => {
+                if session::dispatch(&session::SessionRequest::DesktopAction {
+                    action: action.clone(),
+                })
+                .is_err()
+                {
+                    de::run(&action);
+                }
+            }
             PluginAction::Launch { program } => {
                 let _ = Command::new(program).spawn();
             }
@@ -126,12 +133,18 @@ impl WorkspaceWindow {
         } else {
             "offline"
         };
+        let session = if desktop.session_control {
+            "session"
+        } else {
+            "local"
+        };
 
         crepuscularity_gpui::view! {r#"
             div absolute top-5 left-1/2 ml-[-190px] w-[380px] h-[34px] rounded-[8px] bg-[#08110a] border border-[#17311d] flex items-center justify-between px-3 text-[12px] text-[#8ab693]
                 "{desktop.mode.label()}"
                 "{backend}"
                 "{display}"
+                "{session}"
         "#}
     }
 
@@ -314,7 +327,6 @@ impl SettingsWindow {
         _cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let desktop = self.desktop.clone();
-        let desktop_for_reopen = self.desktop.clone();
         let bg = if active { rgb(0x29453a) } else { rgb(0x1f1f1f) };
         let fg = if active { rgb(0xf3fff7) } else { rgb(0xd5d5d5) };
 
@@ -330,7 +342,9 @@ impl SettingsWindow {
             .on_click(move |_, _, cx| {
                 desktop.update(cx, |desktop, cx| {
                     desktop.mode = mode.clone();
-                    reopen_managed_windows(&desktop_for_reopen, cx);
+                    let _ = session::dispatch(&session::SessionRequest::SetWindowMode {
+                        mode: mode.clone(),
+                    });
                     desktop.changed(cx);
                 });
             })
@@ -382,6 +396,11 @@ impl Render for SettingsWindow {
         } else {
             "disabled"
         };
+        let session_status = if desktop.session_control {
+            "Connected to compositor"
+        } else {
+            "Running local fallbacks"
+        };
 
         div().size_full().bg(rgb(0x101010)).child(
             crepuscularity_gpui::view! {r#"
@@ -412,6 +431,8 @@ impl Render for SettingsWindow {
                         div flex flex-col gap-3
                             div text-[#8ab693] text-sm
                                 "Session"
+                            div text-[#4a7153] text-xs
+                                "{session_status}"
             "#}
             .child(
                 div()
@@ -604,43 +625,23 @@ fn open_launcher_window(desktop: &Entity<DesktopModel>, cx: &mut App) -> AnyWind
 #[derive(Clone, Copy)]
 enum DesktopWindowRole {
     Primary,
-    Secondary,
 }
 
 impl DesktopWindowRole {
     fn title(self) -> &'static str {
         match self {
             Self::Primary => "Desktop",
-            Self::Secondary => "Windows",
         }
     }
 
     fn subtitle(self) -> &'static str {
         match self {
             Self::Primary => "keyboard workspace",
-            Self::Secondary => "parallel surface",
         }
     }
 
     fn app_id(self) -> &'static str {
-        match self {
-            Self::Primary => "alpenglowed",
-            Self::Secondary => "alpenglowed-secondary",
-        }
-    }
-
-    fn handle(self, desktop: &DesktopModel) -> &Option<AnyWindowHandle> {
-        match self {
-            Self::Primary => &desktop.primary,
-            Self::Secondary => &desktop.secondary,
-        }
-    }
-
-    fn set_handle(self, desktop: &mut DesktopModel, handle: Option<AnyWindowHandle>) {
-        match self {
-            Self::Primary => desktop.primary = handle,
-            Self::Secondary => desktop.secondary = handle,
-        }
+        "alpenglowed"
     }
 }
 
@@ -658,17 +659,11 @@ fn managed_window_bounds(role: DesktopWindowRole, mode: WindowMode, cx: &App) ->
     match mode {
         WindowMode::Tiling => match role {
             DesktopWindowRole::Primary => {
-                WindowBounds::Windowed(bounds(point(px(24.), px(24.)), size(px(780.), px(720.))))
-            }
-            DesktopWindowRole::Secondary => {
-                WindowBounds::Windowed(bounds(point(px(836.), px(24.)), size(px(420.), px(720.))))
+                WindowBounds::Windowed(bounds(point(px(24.), px(24.)), size(px(1232.), px(752.))))
             }
         },
         WindowMode::Floating => match role {
             DesktopWindowRole::Primary => WindowBounds::centered(size(px(900.), px(680.)), cx),
-            DesktopWindowRole::Secondary => {
-                WindowBounds::Windowed(bounds(point(px(760.), px(96.)), size(px(420.), px(520.))))
-            }
         },
     }
 }
@@ -678,7 +673,7 @@ fn open_managed_window(
     role: DesktopWindowRole,
     options: UiOptions,
     cx: &mut App,
-) -> AnyWindowHandle {
+) {
     let mode = desktop.read(cx).mode.clone();
     let desktop_entity = desktop.clone();
     let handle = cx
@@ -687,48 +682,8 @@ fn open_managed_window(
             move |_window, cx| cx.new(|cx| WorkspaceWindow::new(desktop_entity, role, options, cx)),
         )
         .unwrap();
-    let any_handle: AnyWindowHandle = handle.into();
-    desktop.update(cx, |desktop, cx| {
-        role.set_handle(desktop, Some(any_handle));
-        desktop.changed(cx);
-    });
-    any_handle
-}
-
-fn close_managed_window(
-    desktop: &Entity<DesktopModel>,
-    role: DesktopWindowRole,
-    cx: &mut App,
-) -> bool {
-    let Some(handle) = *role.handle(desktop.read(cx)) else {
-        return false;
-    };
-    let closed = handle
-        .update(cx, |_, window, _| {
-            window.remove_window();
-        })
-        .is_ok();
-    desktop.update(cx, |desktop, _| {
-        role.set_handle(desktop, None);
-    });
-    closed
-}
-
-fn reopen_managed_windows(desktop: &Entity<DesktopModel>, cx: &mut App) {
-    close_managed_window(desktop, DesktopWindowRole::Primary, cx);
-    close_managed_window(desktop, DesktopWindowRole::Secondary, cx);
-    open_managed_window(
-        desktop,
-        DesktopWindowRole::Primary,
-        UiOptions::from_env(),
-        cx,
-    );
-    open_managed_window(
-        desktop,
-        DesktopWindowRole::Secondary,
-        UiOptions::from_env(),
-        cx,
-    );
+    let _: AnyWindowHandle = handle.into();
+    desktop.update(cx, |desktop, cx| desktop.changed(cx));
 }
 
 fn open_settings_window(desktop: &Entity<DesktopModel>, cx: &mut App) -> AnyWindowHandle {
@@ -822,7 +777,6 @@ fn main() {
 
         let desktop = cx.new(|_| DesktopModel::new(options));
         open_managed_window(&desktop, DesktopWindowRole::Primary, options, cx);
-        open_managed_window(&desktop, DesktopWindowRole::Secondary, options, cx);
 
         if options.open_settings {
             open_or_focus_settings(&desktop, cx);
