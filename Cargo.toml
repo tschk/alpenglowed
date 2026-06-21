@@ -5,14 +5,14 @@ edition = "2021"
 publish = false
 
 [dependencies]
-crepuscularity-gpui = { path = "../crepuscularity/crates/crepuscularity-gpui" }
+crepuscularity-gpui = { path = "../crepuscularity/crates/crepuscularity-gpui", features = ["wayland"] }
 fuzzy-matcher = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 wayland-client = "0.31.14"
 
 [build-dependencies]
-crepuscularity-gpui = { path = "../crepuscularity/crates/crepuscularity-gpui" }
+crepuscularity-gpui = { path = "../crepuscularity/crates/crepuscularity-gpui", features = ["wayland"] }
 
 [profile.release]
 lto = "thin"

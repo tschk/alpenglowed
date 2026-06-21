@@ -208,6 +208,8 @@ fn main() {
         return;
     }
 
+    ensure_wayland_display();
+
     Application::new().run(|cx: &mut App| {
         cx.bind_keys([
             KeyBinding::new("cmd-space", FocusBar, None),
@@ -226,4 +228,19 @@ fn main() {
         cx.open_window(window_options, |_window, cx| cx.new(Alpenglowed::new))
             .unwrap();
     });
+}
+
+fn ensure_wayland_display() {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some() {
+        return;
+    }
+
+    let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR") else {
+        return;
+    };
+
+    let wayland_socket = std::path::Path::new(&runtime_dir).join("wayland-0");
+    if wayland_socket.exists() {
+        std::env::set_var("WAYLAND_DISPLAY", "wayland-0");
+    }
 }
