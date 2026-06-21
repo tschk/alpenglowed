@@ -1,5 +1,6 @@
 // Alpenglowed Runner — fuzzy app launcher + shell runner + calculator
 
+use crate::de::DesktopAction;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use std::io::Write;
@@ -51,6 +52,7 @@ pub enum RunnerAction {
     Shell(String),
     Calculator(f64),
     SetWindowMode(WindowMode),
+    Desktop(DesktopAction),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -104,7 +106,7 @@ impl Runner {
             }
         }
 
-        for result in window_mode_results(q, &self.matcher) {
+        for result in action_results(q, &self.matcher) {
             self.results.push(result);
         }
 
@@ -133,24 +135,94 @@ impl Runner {
             RunnerAction::Launch(app) => {
                 let _ = Command::new(app).spawn();
             }
-            RunnerAction::Calculator(_) | RunnerAction::SetWindowMode(_) => {}
+            RunnerAction::Calculator(_)
+            | RunnerAction::SetWindowMode(_)
+            | RunnerAction::Desktop(_) => {}
         }
         Some(action)
     }
 }
 
-fn window_mode_results(q: &str, matcher: &SkimMatcherV2) -> Vec<RunnerResult> {
+fn action_results(q: &str, matcher: &SkimMatcherV2) -> Vec<RunnerResult> {
     [
-        ("Tile windows", "window mode", WindowMode::Tiling),
-        ("Float windows", "window mode", WindowMode::Floating),
+        (
+            "Tile windows",
+            "window mode",
+            RunnerAction::SetWindowMode(WindowMode::Tiling),
+        ),
+        (
+            "Float windows",
+            "window mode",
+            RunnerAction::SetWindowMode(WindowMode::Floating),
+        ),
+        (
+            "Lock",
+            "os action",
+            RunnerAction::Desktop(DesktopAction::Lock),
+        ),
+        (
+            "Logout",
+            "os action",
+            RunnerAction::Desktop(DesktopAction::Logout),
+        ),
+        (
+            "Reboot",
+            "os action",
+            RunnerAction::Desktop(DesktopAction::Reboot),
+        ),
+        (
+            "Shutdown",
+            "os action",
+            RunnerAction::Desktop(DesktopAction::Shutdown),
+        ),
+        (
+            "Suspend",
+            "os action",
+            RunnerAction::Desktop(DesktopAction::Suspend),
+        ),
+        (
+            "Terminal",
+            "desktop action",
+            RunnerAction::Desktop(DesktopAction::Terminal),
+        ),
+        (
+            "Apps",
+            "desktop action",
+            RunnerAction::Desktop(DesktopAction::Apps),
+        ),
+        (
+            "Wi-Fi",
+            "desktop action",
+            RunnerAction::Desktop(DesktopAction::Wifi),
+        ),
+        (
+            "Audio",
+            "desktop action",
+            RunnerAction::Desktop(DesktopAction::Audio),
+        ),
+        (
+            "Clipboard",
+            "desktop action",
+            RunnerAction::Desktop(DesktopAction::Clipboard),
+        ),
+        (
+            "Notifications",
+            "desktop action",
+            RunnerAction::Desktop(DesktopAction::Notifications),
+        ),
     ]
     .into_iter()
-    .filter_map(move |(title, subtitle, mode)| {
-        matcher.fuzzy_match(title, q).map(|score| RunnerResult {
+    .filter_map(move |(title, subtitle, action)| {
+        let score = if title.eq_ignore_ascii_case(q) {
+            Some(i64::MAX - 1)
+        } else {
+            matcher.fuzzy_match(title, q)
+        };
+        score.map(|score| RunnerResult {
             title: title.to_string(),
             subtitle: subtitle.to_string(),
             score,
-            action: RunnerAction::SetWindowMode(mode),
+            action,
         })
     })
     .collect()
@@ -202,5 +274,17 @@ mod tests {
             .results
             .iter()
             .any(|result| { result.action == RunnerAction::SetWindowMode(WindowMode::Tiling) }));
+    }
+
+    #[test]
+    fn update_should_return_os_actions() {
+        let mut runner = Runner::new();
+        runner.query = "lock".to_string();
+        runner.update();
+
+        assert_eq!(
+            runner.results.first().map(|result| &result.action),
+            Some(&RunnerAction::Desktop(DesktopAction::Lock))
+        );
     }
 }

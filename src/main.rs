@@ -8,6 +8,7 @@
 //   Results: fuzzy-matched apps / shell output / calculator
 //   Below: launched app windows managed by cage (Phase A) or built-in (Phase D)
 
+mod de;
 mod pills;
 mod runner;
 
@@ -50,6 +51,7 @@ impl Alpenglowed {
     fn apply(&mut self, action: RunnerAction, cx: &mut Context<Self>) {
         match action {
             RunnerAction::SetWindowMode(mode) => self.mode = mode,
+            RunnerAction::Desktop(action) => de::run(&action),
             RunnerAction::Launch(_) | RunnerAction::Shell(_) | RunnerAction::Calculator(_) => {}
         }
         cx.notify();
@@ -190,6 +192,11 @@ impl Render for Alpenglowed {
 }
 
 fn main() {
+    if std::env::args().any(|arg| arg == "--polybar") {
+        println!("{}", de::DesktopState::detect("tiling").polybar());
+        return;
+    }
+
     Application::new().run(|cx: &mut App| {
         cx.bind_keys([
             KeyBinding::new("cmd-space", FocusBar, None),
