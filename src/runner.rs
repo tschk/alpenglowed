@@ -90,4 +90,16 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn update_should_return_settings_action() {
+        let mut runner = Runner::new();
+        runner.query = "settings".to_string();
+        runner.update();
+
+        assert!(runner
+            .results
+            .iter()
+            .any(|result| result.action == PluginAction::OpenSettings));
+    }
 }

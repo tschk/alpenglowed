@@ -28,14 +28,16 @@ enum DesktopEvent {
 struct DesktopModel {
     query: String,
     mode: WindowMode,
+    status_bar: bool,
     runner: Runner,
     launcher: Option<AnyWindowHandle>,
+    settings: Option<AnyWindowHandle>,
 }
 
 impl EventEmitter<DesktopEvent> for DesktopModel {}
 
 impl DesktopModel {
-    fn new() -> Self {
+    fn new(options: UiOptions) -> Self {
         let mut runner = Runner::new();
         runner.query = "window".to_string();
         runner.update();
@@ -43,8 +45,10 @@ impl DesktopModel {
         Self {
             query: "window".to_string(),
             mode: WindowMode::Tiling,
+            status_bar: options.status_bar,
             runner,
             launcher: None,
+            settings: None,
         }
     }
 
@@ -58,6 +62,7 @@ impl DesktopModel {
     fn apply(&mut self, action: PluginAction, cx: &mut Context<Self>) {
         match action {
             PluginAction::SetWindowMode { mode } => self.mode = mode,
+            PluginAction::OpenSettings => {}
             PluginAction::Desktop { action } => de::run(&action),
             PluginAction::Launch { program } => {
                 let _ = Command::new(program).spawn();
@@ -74,12 +79,15 @@ impl DesktopModel {
         cx.notify();
         cx.emit(DesktopEvent::Changed);
     }
+
+    fn toggle_status_bar(&mut self, cx: &mut Context<Self>) {
+        self.status_bar = !self.status_bar;
+        self.changed(cx);
+    }
 }
 
 struct WorkspaceWindow {
     desktop: Entity<DesktopModel>,
-    status_bar: bool,
-    options: UiOptions,
 }
 
 impl WorkspaceWindow {
@@ -89,11 +97,8 @@ impl WorkspaceWindow {
         })
         .detach();
 
-        Self {
-            desktop,
-            status_bar: options.status_bar,
-            options,
-        }
+        let _ = options;
+        Self { desktop }
     }
 
     fn render_status_bar(&self, cx: &App) -> impl IntoElement {
@@ -141,11 +146,11 @@ impl Render for WorkspaceWindow {
             .relative()
             .key_context("alpenglowed")
             .on_action(cx.listener(|this, _: &FocusBar, _, cx| {
-                focus_or_open_launcher(&this.desktop, this.options, cx);
+                focus_or_open_launcher(&this.desktop, cx);
             }))
             .child(self.render_workspace(cx));
 
-        if self.status_bar {
+        if self.desktop.read(cx).status_bar {
             root = root.child(self.render_status_bar(cx));
         }
 
@@ -188,9 +193,13 @@ impl LauncherWindow {
     fn confirm(&mut self, cx: &mut Context<Self>) {
         let action = self.desktop.read(cx).runner.confirm();
         if let Some(action) = action {
-            self.desktop.update(cx, |desktop, cx| {
-                desktop.apply(action, cx);
-            });
+            if matches!(action, PluginAction::OpenSettings) {
+                open_or_focus_settings(&self.desktop, cx);
+            } else {
+                self.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(action, cx);
+                });
+            }
         }
     }
 
@@ -241,6 +250,184 @@ impl LauncherWindow {
                             .child(result.subtitle.clone()),
                     )
             }))
+    }
+}
+
+struct SettingsWindow {
+    desktop: Entity<DesktopModel>,
+}
+
+impl SettingsWindow {
+    fn new(desktop: Entity<DesktopModel>, cx: &mut Context<Self>) -> Self {
+        cx.subscribe(&desktop, |_, _, _: &DesktopEvent, cx| {
+            cx.notify();
+        })
+        .detach();
+
+        Self { desktop }
+    }
+
+    fn mode_button(
+        &self,
+        label: &'static str,
+        mode: WindowMode,
+        active: bool,
+        _cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let desktop = self.desktop.clone();
+        let bg = if active { rgb(0x29453a) } else { rgb(0x1f1f1f) };
+        let fg = if active { rgb(0xf3fff7) } else { rgb(0xd5d5d5) };
+
+        div()
+            .id(SharedString::from(format!("mode-{label}")))
+            .px(px(12.))
+            .py(px(8.))
+            .rounded(px(10.))
+            .bg(bg)
+            .text_color(fg)
+            .cursor_pointer()
+            .child(label)
+            .on_click(move |_, _, cx| {
+                desktop.update(cx, |desktop, cx| {
+                    desktop.mode = mode.clone();
+                    desktop.changed(cx);
+                });
+            })
+    }
+
+    fn action_button(
+        &self,
+        label: &'static str,
+        on_click: impl Fn(&Entity<DesktopModel>, &mut App) + 'static,
+    ) -> impl IntoElement {
+        let desktop = self.desktop.clone();
+        div()
+            .id(SharedString::from(format!("settings-{label}")))
+            .px(px(12.))
+            .py(px(8.))
+            .rounded(px(10.))
+            .bg(rgb(0x1f1f1f))
+            .text_color(rgb(0xe8e8e8))
+            .cursor_pointer()
+            .child(label)
+            .on_click(move |_, _, cx| on_click(&desktop, cx))
+    }
+}
+
+impl Render for SettingsWindow {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let desktop = self.desktop.read(cx);
+        let tiling = desktop.mode == WindowMode::Tiling;
+        let floating = desktop.mode == WindowMode::Floating;
+        let status_bar = if desktop.status_bar {
+            "enabled"
+        } else {
+            "disabled"
+        };
+
+        div().size_full().bg(rgb(0x101010)).child(
+            crepuscularity_gpui::view! {r#"
+                div size-full bg-neutral-950 p-5
+                    div w-full h-full rounded bg-neutral-900 border border-neutral-800 p-5 flex flex-col gap-5
+                        div flex items-center justify-between
+                            div flex flex-col gap-1
+                                div text-neutral-100 text-xl
+                                    "Settings"
+                                div text-neutral-400 text-sm
+                                    "Desktop, launcher, and window controls"
+                            div text-neutral-500 text-xs
+                                "{desktop.mode.label()}"
+                        div flex flex-col gap-3
+                            div text-neutral-300 text-sm
+                                "Windows"
+                        div flex flex-col gap-3
+                            div text-neutral-300 text-sm
+                                "Interface"
+                            div text-neutral-500 text-xs
+                                "Status bar is {status_bar}"
+                        div flex flex-col gap-3
+                            div text-neutral-300 text-sm
+                                "Launcher"
+                        div flex flex-col gap-3
+                            div text-neutral-300 text-sm
+                                "Desktop actions"
+            "#}
+            .child(
+                div()
+                    .absolute()
+                    .top(px(114.))
+                    .left(px(36.))
+                    .flex()
+                    .gap(px(8.))
+                    .child(self.mode_button("Tile windows", WindowMode::Tiling, tiling, cx))
+                    .child(self.mode_button("Float windows", WindowMode::Floating, floating, cx)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(px(204.))
+                    .left(px(36.))
+                    .flex()
+                    .gap(px(8.))
+                    .child(self.action_button("Toggle status bar", |desktop, cx| {
+                        desktop.update(cx, |desktop, cx| desktop.toggle_status_bar(cx));
+                    })),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(px(294.))
+                    .left(px(36.))
+                    .flex()
+                    .gap(px(8.))
+                    .child(self.action_button("Focus launcher", |desktop, cx| {
+                        focus_or_open_launcher(desktop, cx);
+                    }))
+                    .child(self.action_button("Reset query", |desktop, cx| {
+                        desktop.update(cx, |desktop, cx| {
+                            desktop.set_query("window".to_string(), cx);
+                        });
+                    })),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(px(384.))
+                    .left(px(36.))
+                    .flex()
+                    .gap(px(8.))
+                    .child(self.action_button("Lock", |desktop, cx| {
+                        desktop.update(cx, |desktop, cx| {
+                            desktop.apply(
+                                PluginAction::Desktop {
+                                    action: de::DesktopAction::Lock,
+                                },
+                                cx,
+                            );
+                        });
+                    }))
+                    .child(self.action_button("Terminal", |desktop, cx| {
+                        desktop.update(cx, |desktop, cx| {
+                            desktop.apply(
+                                PluginAction::Desktop {
+                                    action: de::DesktopAction::Terminal,
+                                },
+                                cx,
+                            );
+                        });
+                    }))
+                    .child(self.action_button("Files", |desktop, cx| {
+                        desktop.update(cx, |desktop, cx| {
+                            desktop.apply(
+                                PluginAction::Desktop {
+                                    action: de::DesktopAction::Files,
+                                },
+                                cx,
+                            );
+                        });
+                    })),
+            ),
+        )
     }
 }
 
@@ -328,6 +515,17 @@ fn launcher_window_options(cx: &App) -> WindowOptions {
     }
 }
 
+fn settings_window_options(cx: &App) -> WindowOptions {
+    WindowOptions {
+        app_id: Some("alpenglowed-settings".into()),
+        titlebar: Some(TitlebarOptions::default()),
+        window_bounds: Some(WindowBounds::centered(size(px(720.), px(540.)), cx)),
+        kind: WindowKind::PopUp,
+        is_resizable: false,
+        ..Default::default()
+    }
+}
+
 fn open_launcher_window(desktop: &Entity<DesktopModel>, cx: &mut App) -> AnyWindowHandle {
     let desktop_entity = desktop.clone();
     let handle = cx
@@ -345,7 +543,24 @@ fn open_launcher_window(desktop: &Entity<DesktopModel>, cx: &mut App) -> AnyWind
     any_handle
 }
 
-fn focus_or_open_launcher(desktop: &Entity<DesktopModel>, options: UiOptions, cx: &mut App) {
+fn open_settings_window(desktop: &Entity<DesktopModel>, cx: &mut App) -> AnyWindowHandle {
+    let desktop_entity = desktop.clone();
+    let handle = cx
+        .open_window(settings_window_options(cx), move |window, cx| {
+            let view = cx.new(|cx| SettingsWindow::new(desktop_entity, cx));
+            window.activate_window();
+            view
+        })
+        .unwrap();
+    let any_handle: AnyWindowHandle = handle.into();
+    desktop.update(cx, |desktop, cx| {
+        desktop.settings = Some(any_handle);
+        desktop.changed(cx);
+    });
+    any_handle
+}
+
+fn focus_or_open_launcher(desktop: &Entity<DesktopModel>, cx: &mut App) {
     let Some(handle) = desktop.read(cx).launcher else {
         open_launcher_window(desktop, cx);
         return;
@@ -364,8 +579,29 @@ fn focus_or_open_launcher(desktop: &Entity<DesktopModel>, options: UiOptions, cx
         desktop.launcher = None;
         desktop.changed(cx);
     });
-    let _ = options;
     open_launcher_window(desktop, cx);
+}
+
+fn open_or_focus_settings(desktop: &Entity<DesktopModel>, cx: &mut App) {
+    let Some(handle) = desktop.read(cx).settings else {
+        open_settings_window(desktop, cx);
+        return;
+    };
+
+    if handle
+        .update(cx, |_, window, _| {
+            window.activate_window();
+        })
+        .is_ok()
+    {
+        return;
+    }
+
+    desktop.update(cx, |desktop, cx| {
+        desktop.settings = None;
+        desktop.changed(cx);
+    });
+    open_settings_window(desktop, cx);
 }
 
 fn main() {
@@ -396,14 +632,14 @@ fn main() {
             KeyBinding::new("cmd-q", Quit, None),
         ]);
 
-        let desktop = cx.new(|_| DesktopModel::new());
+        let desktop = cx.new(|_| DesktopModel::new(options));
         let workspace = desktop.clone();
         cx.open_window(workspace_window_options(cx), move |_window, cx| {
             cx.new(|cx| WorkspaceWindow::new(workspace, options, cx))
         })
         .unwrap();
 
-        focus_or_open_launcher(&desktop, options, cx);
+        focus_or_open_launcher(&desktop, cx);
     });
 }
 

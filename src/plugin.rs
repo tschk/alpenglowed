@@ -15,6 +15,7 @@ pub enum PluginAction {
     Launch { program: String },
     Shell { command: String },
     SetWindowMode { mode: WindowMode },
+    OpenSettings,
     Desktop { action: DesktopAction },
     None,
 }
@@ -45,6 +46,7 @@ impl PluginRegistry {
         registry.register(Box::new(ShellPlugin));
         registry.register(Box::new(CalculatorPlugin));
         registry.register(Box::new(WindowModePlugin));
+        registry.register(Box::new(SettingsPlugin));
         registry.register(Box::new(DesktopActionsPlugin));
         registry.register(Box::new(AppLauncherPlugin));
         registry.register(Box::new(SpotifyPlugin));
@@ -165,6 +167,33 @@ impl Plugin for DesktopActionsPlugin {
                 })
             })
             .collect()
+    }
+}
+
+struct SettingsPlugin;
+
+impl Plugin for SettingsPlugin {
+    fn id(&self) -> &str {
+        "settings"
+    }
+
+    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        [
+            ("Settings", "desktop settings"),
+            ("Open settings", "desktop settings"),
+            ("Preferences", "desktop settings"),
+        ]
+        .into_iter()
+        .filter_map(|(title, subtitle)| {
+            score(title, query, matcher).map(|score| PluginResult {
+                plugin_id: self.id().to_string(),
+                title: title.to_string(),
+                subtitle: subtitle.to_string(),
+                score,
+                action: PluginAction::OpenSettings,
+            })
+        })
+        .collect()
     }
 }
 
