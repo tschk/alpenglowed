@@ -58,6 +58,7 @@ struct DesktopModel {
     mode: WindowMode,
     layout: LayoutState,
     status_bar: bool,
+    last_action: String,
     runner: Runner,
     session_control: bool,
     launcher: Option<AnyWindowHandle>,
@@ -81,6 +82,7 @@ impl DesktopModel {
                 layout
             },
             status_bar: options.status_bar,
+            last_action: "Ready: desktop active".to_string(),
             runner,
             session_control: std::env::var_os("ALPENGLOW_SESSION_CONTROL").is_some(),
             launcher: None,
@@ -95,34 +97,37 @@ impl DesktopModel {
         self.changed(cx);
     }
 
+    fn set_last_action(&mut self, title: impl Into<String>, detail: impl Into<String>) {
+        let title = title.into();
+        let detail = detail.into();
+        self.last_action = format!("{title}: {detail}");
+        self.layout.set_focused_window_content(title, detail);
+    }
+
     fn apply(&mut self, action: PluginAction, cx: &mut Context<Self>) {
         match action {
             PluginAction::SetWindowMode { mode } => {
                 self.mode = mode.clone();
                 self.layout.set_window_mode(&mode);
-                self.layout
-                    .set_focused_window_content("Window mode", mode.label());
+                self.set_last_action("Window mode", mode.label());
                 let _ = session::dispatch(&session::SessionRequest::SetWindowMode { mode });
             }
             PluginAction::Layout { action } => {
                 self.layout.apply(&action);
-                self.layout
-                    .set_focused_window_content(action.title(), self.layout.summary());
+                self.set_last_action(action.title(), self.layout.summary());
                 let _ = session::dispatch(&session::SessionRequest::Layout { action });
             }
             PluginAction::ShowStatusBar => {
                 self.status_bar = true;
-                self.layout
-                    .set_focused_window_content("Status bar", "enabled");
+                self.set_last_action("Status bar", "enabled");
             }
             PluginAction::HideStatusBar => {
                 self.status_bar = false;
-                self.layout
-                    .set_focused_window_content("Status bar", "disabled");
+                self.set_last_action("Status bar", "disabled");
             }
             PluginAction::ToggleStatusBar => {
                 self.toggle_status_bar(cx);
-                self.layout.set_focused_window_content(
+                self.set_last_action(
                     "Status bar",
                     if self.status_bar {
                         "enabled"
@@ -135,42 +140,52 @@ impl DesktopModel {
                 if let Some(handle) = self.settings {
                     let _ = handle.update(cx, |_, window, _| window.remove_window());
                     self.settings = None;
-                    self.layout.set_focused_window_content("Settings", "closed");
+                    self.set_last_action("Settings", "closed");
                 } else {
                     open_or_focus_settings(&cx.entity(), cx);
-                    self.layout.set_focused_window_content("Settings", "opened");
+                    self.set_last_action("Settings", "opened");
                 }
             }
             PluginAction::OpenSettings => {
                 open_or_focus_settings(&cx.entity(), cx);
-                self.layout.set_focused_window_content("Settings", "opened");
+                self.set_last_action("Settings", "opened");
             }
             PluginAction::CloseSettings => {
                 if let Some(handle) = self.settings {
                     let _ = handle.update(cx, |_, window, _| window.remove_window());
                     self.settings = None;
                 }
-                self.layout.set_focused_window_content("Settings", "closed");
+                self.set_last_action("Settings", "closed");
             }
             PluginAction::Desktop { action } => {
-                self.layout
-                    .set_focused_window_content(action.title(), action.subtitle());
+                let resolved = action
+                    .resolve()
+                    .map(|command| command.display())
+                    .unwrap_or_else(|| "no command available".to_string());
                 if session::dispatch(&session::SessionRequest::DesktopAction {
                     action: action.clone(),
                 })
-                .is_err()
+                .is_ok()
                 {
-                    de::run(&action);
+                    self.set_last_action(action.title(), format!("session {resolved}"));
+                } else {
+                    match de::run(&action) {
+                        de::RunResult::Spawned(command) => self.set_last_action(
+                            action.title(),
+                            format!("local {}", command.display()),
+                        ),
+                        de::RunResult::MissingCommand => {
+                            self.set_last_action(action.title(), "no command available")
+                        }
+                    }
                 }
             }
             PluginAction::Launch { program } => {
-                self.layout
-                    .set_focused_window_content(program.clone(), "app launch");
+                self.set_last_action(program.clone(), "app launch");
                 let _ = Command::new(program).spawn();
             }
             PluginAction::Shell { command } => {
-                self.layout
-                    .set_focused_window_content("Shell", command.clone());
+                self.set_last_action("Shell", command.clone());
                 let _ = Command::new("sh").arg("-c").arg(command).spawn();
             }
             PluginAction::None => {}
@@ -368,6 +383,7 @@ impl DesktopWindow {
             return vec![
                 "launcher ready for app, shell, and os actions".to_string(),
                 "tiling shortcuts stay on desktop surface".to_string(),
+                window.detail.clone(),
                 "terminal and browser stay in main flow".to_string(),
             ];
         }
@@ -375,6 +391,7 @@ impl DesktopWindow {
             return vec![
                 "clipboard history and quick notes".to_string(),
                 "transient actions and settings access".to_string(),
+                window.detail.clone(),
                 "good target for floating utility panes".to_string(),
             ];
         }
@@ -842,6 +859,7 @@ impl Render for SettingsWindow {
         } else {
             "Running local fallbacks"
         };
+        let last_action = desktop.last_action.clone();
         div().size_full().bg(rgb(0x080808)).child(
             div().size_full().bg(rgb(0x050505)).p(px(20.)).child(
                 div()
@@ -1109,6 +1127,22 @@ impl Render for SettingsWindow {
                                                         .child(format!(
                                                             "Layout axis: {layout_axis}"
                                                         )),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_size(px(11.))
+                                                        .text_color(rgb(0x8d8d8d))
+                                                        .child(format!(
+                                                            "Last action: {last_action}"
+                                                        )),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_size(px(11.))
+                                                        .text_color(rgb(0x8d8d8d))
+                                                        .child(
+                                                            "Desktop actions show session dispatch or local fallback command",
+                                                        ),
                                                 ),
                                         ),
                                     )

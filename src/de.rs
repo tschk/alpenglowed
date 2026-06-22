@@ -147,6 +147,16 @@ pub struct ResolvedCommand {
     pub args: Vec<String>,
 }
 
+impl ResolvedCommand {
+    pub fn display(&self) -> String {
+        if self.args.is_empty() {
+            self.program.clone()
+        } else {
+            format!("{} {}", self.program, self.args.join(" "))
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopState {
     pub mode: &'static str,
@@ -174,10 +184,18 @@ impl DesktopState {
     }
 }
 
-pub fn run(action: &DesktopAction) {
-    if let Some(command) = action.resolve() {
-        let _ = Command::new(command.program).args(command.args).spawn();
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunResult {
+    Spawned(ResolvedCommand),
+    MissingCommand,
+}
+
+pub fn run(action: &DesktopAction) -> RunResult {
+    let Some(command) = action.resolve() else {
+        return RunResult::MissingCommand;
+    };
+    let _ = Command::new(&command.program).args(&command.args).spawn();
+    RunResult::Spawned(command)
 }
 
 pub fn smoke_wayland() -> Result<(), String> {
