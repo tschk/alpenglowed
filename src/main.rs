@@ -456,7 +456,9 @@ impl LauncherWindow {
                 .enumerate()
                 .map(|(index, result)| {
                     let selected = index == desktop.runner.selected;
+                    let desktop = self.desktop.clone();
                     div()
+                        .id(SharedString::from(format!("launcher-result-{index}")))
                         .rounded(px(6.))
                         .bg(if selected {
                             rgb(0x161616)
@@ -474,6 +476,31 @@ impl LauncherWindow {
                         .flex()
                         .items_center()
                         .gap(px(10.))
+                        .cursor_pointer()
+                        .on_click(move |_, _, cx| {
+                            desktop.update(cx, |desktop, cx| {
+                                desktop.runner.select(index);
+                                desktop.changed(cx);
+                            });
+                            let action = desktop.read(cx).runner.confirm();
+                            if let Some(action) = action {
+                                if matches!(action, PluginAction::OpenSettings) {
+                                    open_or_focus_settings(&desktop, cx);
+                                } else if !matches!(action, PluginAction::None) {
+                                    desktop.update(cx, |desktop, cx| {
+                                        desktop.apply(action, cx);
+                                    });
+                                    if let Some(handle) = desktop.read(cx).launcher {
+                                        let _ = handle
+                                            .update(cx, |_, window, _| window.remove_window());
+                                    }
+                                    desktop.update(cx, |desktop, cx| {
+                                        desktop.launcher = None;
+                                        desktop.changed(cx);
+                                    });
+                                }
+                            }
+                        })
                         .child(
                             div()
                                 .text_size(px(12.))

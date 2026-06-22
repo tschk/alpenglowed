@@ -79,6 +79,14 @@ impl Runner {
             self.selected - 1
         };
     }
+
+    pub fn select(&mut self, index: usize) {
+        if self.results.is_empty() {
+            self.selected = 0;
+        } else {
+            self.selected = index.min(self.results.len() - 1);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -183,5 +191,14 @@ mod tests {
         runner.select_next();
         let second = runner.selected_result().map(|result| result.title.clone());
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn select_should_clamp_to_available_results() {
+        let mut runner = Runner::new();
+        runner.query = "window".to_string();
+        runner.update();
+        runner.select(999);
+        assert_eq!(runner.selected, runner.results.len() - 1);
     }
 }
