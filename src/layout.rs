@@ -65,7 +65,13 @@ pub struct LayoutWindowView {
 #[derive(Debug, Clone)]
 pub struct LayoutContainerView {
     pub axis: Axis,
-    pub children: Vec<LayoutView>,
+    pub children: Vec<LayoutChildView>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LayoutChildView {
+    pub grow: f32,
+    pub node: LayoutView,
 }
 
 #[derive(Debug, Clone)]
@@ -85,7 +91,13 @@ struct WindowNode {
 #[derive(Debug, Clone)]
 struct ContainerNode {
     axis: Axis,
-    children: Vec<Node>,
+    children: Vec<ChildNode>,
+}
+
+#[derive(Debug, Clone)]
+struct ChildNode {
+    grow: f32,
+    node: Node,
 }
 
 impl LayoutState {
@@ -94,18 +106,24 @@ impl LayoutState {
             root: Node::Container(ContainerNode {
                 axis: Axis::Row,
                 children: vec![
-                    Node::Window(WindowNode {
-                        id: 1,
-                        title: "Workspace".to_string(),
-                        detail: "Ready".to_string(),
-                        floating: false,
-                    }),
-                    Node::Window(WindowNode {
-                        id: 2,
-                        title: "Scratch".to_string(),
-                        detail: "Ready".to_string(),
-                        floating: false,
-                    }),
+                    ChildNode {
+                        grow: 1.4,
+                        node: Node::Window(WindowNode {
+                            id: 1,
+                            title: "Workspace".to_string(),
+                            detail: "Ready".to_string(),
+                            floating: false,
+                        }),
+                    },
+                    ChildNode {
+                        grow: 0.9,
+                        node: Node::Window(WindowNode {
+                            id: 2,
+                            title: "Scratch".to_string(),
+                            detail: "Ready".to_string(),
+                            floating: false,
+                        }),
+                    },
                 ],
             }),
             focused: 1,
@@ -214,7 +232,7 @@ impl LayoutState {
             Node::Window(window) => windows.push(window),
             Node::Container(container) => {
                 for child in &container.children {
-                    self.collect(child, windows);
+                    self.collect(&child.node, windows);
                 }
             }
         }
@@ -238,7 +256,10 @@ impl LayoutState {
                 children: container
                     .children
                     .iter()
-                    .map(|child| self.view_node(child))
+                    .map(|child| LayoutChildView {
+                        grow: child.grow,
+                        node: self.view_node(&child.node),
+                    })
                     .collect(),
             }),
         }
@@ -253,7 +274,7 @@ impl LayoutView {
             LayoutView::Container(container) => container
                 .children
                 .iter()
-                .find_map(|child| child.into_focused_detail()),
+                .find_map(|child| child.node.into_focused_detail()),
         }
     }
 }
@@ -262,7 +283,10 @@ fn find(node: &Node, id: usize) -> Option<&WindowNode> {
     match node {
         Node::Window(window) if window.id == id => Some(window),
         Node::Window(_) => None,
-        Node::Container(container) => container.children.iter().find_map(|child| find(child, id)),
+        Node::Container(container) => container
+            .children
+            .iter()
+            .find_map(|child| find(&child.node, id)),
     }
 }
 
@@ -273,7 +297,7 @@ fn find_mut(node: &mut Node, id: usize) -> Option<&mut WindowNode> {
         Node::Container(container) => container
             .children
             .iter_mut()
-            .find_map(|child| find_mut(child, id)),
+            .find_map(|child| find_mut(&mut child.node, id)),
     }
 }
 
@@ -284,13 +308,19 @@ fn split_window(node: &mut Node, id: usize, axis: Axis, new_id: usize, title: St
             *node = Node::Container(ContainerNode {
                 axis,
                 children: vec![
-                    Node::Window(existing),
-                    Node::Window(WindowNode {
-                        id: new_id,
-                        title,
-                        detail: "Ready".to_string(),
-                        floating: false,
-                    }),
+                    ChildNode {
+                        grow: 1.0,
+                        node: Node::Window(existing),
+                    },
+                    ChildNode {
+                        grow: 1.0,
+                        node: Node::Window(WindowNode {
+                            id: new_id,
+                            title,
+                            detail: "Ready".to_string(),
+                            floating: false,
+                        }),
+                    },
                 ],
             });
             true
@@ -299,7 +329,7 @@ fn split_window(node: &mut Node, id: usize, axis: Axis, new_id: usize, title: St
         Node::Container(container) => container
             .children
             .iter_mut()
-            .any(|child| split_window(child, id, axis.clone(), new_id, title.clone())),
+            .any(|child| split_window(&mut child.node, id, axis.clone(), new_id, title.clone())),
     }
 }
 
@@ -309,8 +339,11 @@ fn remove_window(node: &mut Node, id: usize) -> bool {
         Node::Container(container) => {
             container
                 .children
-                .retain_mut(|child| !remove_window(child, id));
-            container.children.iter_mut().for_each(collapse);
+                .retain_mut(|child| !remove_window(&mut child.node, id));
+            container
+                .children
+                .iter_mut()
+                .for_each(|child| collapse(&mut child.node));
             false
         }
     }
@@ -320,10 +353,13 @@ fn collapse(node: &mut Node) {
     if let Node::Container(container) = node {
         if container.children.len() == 1 {
             let child = container.children.remove(0);
-            *node = child;
+            *node = child.node;
             return;
         }
-        container.children.iter_mut().for_each(collapse);
+        container
+            .children
+            .iter_mut()
+            .for_each(|child| collapse(&mut child.node));
     }
 }
 
@@ -332,7 +368,7 @@ fn set_floating(node: &mut Node, floating: bool) {
         Node::Window(window) => window.floating = floating,
         Node::Container(container) => {
             for child in &mut container.children {
-                set_floating(child, floating);
+                set_floating(&mut child.node, floating);
             }
         }
     }
@@ -391,13 +427,25 @@ mod tests {
         let mut layout = LayoutState::new();
         layout.set_focused_window_content("Terminal", "echo hi");
         match layout.view() {
-            LayoutView::Container(container) => match &container.children[0] {
+            LayoutView::Container(container) => match &container.children[0].node {
                 LayoutView::Window(window) => {
                     assert_eq!(window.title, "Terminal");
                     assert_eq!(window.detail, "echo hi");
                 }
                 _ => panic!("expected window"),
             },
+            _ => panic!("expected container"),
+        }
+    }
+
+    #[test]
+    fn view_should_expose_child_grow_ratios() {
+        let layout = LayoutState::new();
+        match layout.view() {
+            LayoutView::Container(container) => {
+                assert_eq!(container.children.len(), 2);
+                assert!(container.children[0].grow > container.children[1].grow);
+            }
             _ => panic!("expected container"),
         }
     }

@@ -50,6 +50,10 @@ impl Runner {
         Some(self.results.get(self.selected)?.action.clone())
     }
 
+    pub fn selected_result(&self) -> Option<&PluginResult> {
+        self.results.get(self.selected)
+    }
+
     pub fn selection_label(&self) -> String {
         if self.results.is_empty() {
             "0 results".to_string()
@@ -168,5 +172,16 @@ mod tests {
     fn selection_label_should_report_empty_state() {
         let runner = Runner::new();
         assert_eq!(runner.selection_label(), "0 results");
+    }
+
+    #[test]
+    fn selected_result_should_follow_selection() {
+        let mut runner = Runner::new();
+        runner.query = "window".to_string();
+        runner.update();
+        let first = runner.selected_result().map(|result| result.title.clone());
+        runner.select_next();
+        let second = runner.selected_result().map(|result| result.title.clone());
+        assert_ne!(first, second);
     }
 }

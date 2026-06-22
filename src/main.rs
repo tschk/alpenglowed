@@ -11,7 +11,7 @@ use crepuscularity_gpui::{
     actions, size, AnyWindowHandle, Div, EventEmitter, KeyBinding, KeyDownEvent, Modifiers, Pixels,
     WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowOptions,
 };
-use layout::{Axis, LayoutState, LayoutView, LayoutWindowView};
+use layout::{Axis, LayoutChildView, LayoutState, LayoutView, LayoutWindowView};
 use plugin::PluginAction;
 use runner::{Runner, WindowMode};
 use std::process::Command;
@@ -161,11 +161,21 @@ impl DesktopWindow {
                     .gap(px(12.))
                     .when(matches!(container.axis, Axis::Column), |div| div.flex_col());
                 for child in &container.children {
-                    node = node.child(div().flex_1().child(Self::render_layout(child)));
+                    node = node.child(Self::render_child(child));
                 }
                 node
             }
         }
+    }
+
+    fn render_child(child: &LayoutChildView) -> Div {
+        let mut slot = div()
+            .min_w(px(0.))
+            .min_h(px(0.))
+            .child(Self::render_layout(&child.node));
+        slot.style().flex_grow = Some(child.grow.max(0.1));
+        slot.style().flex_shrink = Some(1.);
+        slot
     }
 
     fn render_window(window: &LayoutWindowView) -> Div {
@@ -309,9 +319,16 @@ impl LauncherWindow {
         if let Some(action) = action {
             if matches!(action, PluginAction::OpenSettings) {
                 open_or_focus_settings(&self.desktop, cx);
-            } else {
+            } else if !matches!(action, PluginAction::None) {
                 self.desktop.update(cx, |desktop, cx| {
                     desktop.apply(action, cx);
+                });
+                if let Some(handle) = self.desktop.read(cx).launcher {
+                    let _ = handle.update(cx, |_, window, _| window.remove_window());
+                }
+                self.desktop.update(cx, |desktop, cx| {
+                    desktop.launcher = None;
+                    desktop.changed(cx);
                 });
             }
         }
@@ -334,6 +351,11 @@ impl LauncherWindow {
     fn render_bar(&self, cx: &App) -> impl IntoElement {
         let desktop = self.desktop.read(cx);
         let selection = desktop.runner.selection_label();
+        let subtitle = desktop
+            .runner
+            .selected_result()
+            .map(|result| result.subtitle.clone())
+            .unwrap_or_else(|| "ready".to_string());
 
         div()
             .w(px(720.))
@@ -357,7 +379,7 @@ impl LauncherWindow {
                 div()
                     .text_size(px(12.))
                     .text_color(rgb(0xb8b8b8))
-                    .child(format!("{}  {}", selection, desktop.layout.summary())),
+                    .child(format!("{}  {}", selection, subtitle)),
             )
     }
 
