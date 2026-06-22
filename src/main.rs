@@ -1,15 +1,17 @@
 extern crate crepuscularity_gpui as gpui;
 
 mod de;
+mod layout;
 mod plugin;
 mod runner;
 mod session;
 
 use crepuscularity_gpui::prelude::*;
 use crepuscularity_gpui::{
-    actions, bounds, point, size, AnyWindowHandle, EventEmitter, KeyBinding, KeyDownEvent,
-    Modifiers, WindowBounds, WindowKind, WindowOptions,
+    actions, size, AnyWindowHandle, Div, EventEmitter, KeyBinding, KeyDownEvent, Modifiers, Pixels,
+    WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowOptions,
 };
+use layout::{Axis, LayoutState, LayoutView, LayoutWindowView};
 use plugin::PluginAction;
 use runner::{Runner, WindowMode};
 use std::process::Command;
@@ -30,6 +32,7 @@ enum DesktopEvent {
 struct DesktopModel {
     query: String,
     mode: WindowMode,
+    layout: LayoutState,
     status_bar: bool,
     runner: Runner,
     session_control: bool,
@@ -48,6 +51,7 @@ impl DesktopModel {
         Self {
             query: "window".to_string(),
             mode: WindowMode::Tiling,
+            layout: LayoutState::new(),
             status_bar: options.status_bar,
             runner,
             session_control: std::env::var_os("ALPENGLOW_SESSION_CONTROL").is_some(),
@@ -68,6 +72,10 @@ impl DesktopModel {
             PluginAction::SetWindowMode { mode } => {
                 self.mode = mode.clone();
                 let _ = session::dispatch(&session::SessionRequest::SetWindowMode { mode });
+            }
+            PluginAction::Layout { action } => {
+                self.layout.apply(&action);
+                let _ = session::dispatch(&session::SessionRequest::Layout { action });
             }
             PluginAction::OpenSettings => {}
             PluginAction::Desktop { action } => {
@@ -101,62 +109,11 @@ impl DesktopModel {
     }
 }
 
-struct WorkspaceWindow {
+struct DesktopWindow {
     desktop: Entity<DesktopModel>,
 }
 
-impl WorkspaceWindow {
-    fn new(
-        desktop: Entity<DesktopModel>,
-        options: UiOptions,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        cx.subscribe(&desktop, |_, _, _: &DesktopEvent, cx| {
-            cx.notify();
-        })
-        .detach();
-
-        let _ = options;
-        Self { desktop }
-    }
-
-    fn render_status_bar(&self, cx: &App) -> impl IntoElement {
-        let desktop = self.desktop.read(cx);
-        let desktop_state = de::DesktopState::detect(desktop.mode.label());
-        let display = desktop_state
-            .display
-            .unwrap_or_else(|| "no-display".to_string());
-        let backend = if desktop_state.wayland {
-            "wayland"
-        } else {
-            "offline"
-        };
-        let session = if desktop.session_control {
-            "session"
-        } else {
-            "local"
-        };
-
-        crepuscularity_gpui::view! {r#"
-            div absolute top-5 left-1/2 ml-[-190px] w-[380px] h-[34px] rounded-[6px] bg-[#050505] border border-[#2a2a2a] flex items-center justify-between px-3 text-[12px] text-[#cfcfcf]
-                "{desktop.mode.label()}"
-                "{backend}"
-                "{display}"
-                "{session}"
-        "#}
-    }
-
-    fn render_workspace(&self, cx: &App) -> impl IntoElement {
-        let _ = cx;
-        div().size_full().bg(rgb(0x000000))
-    }
-}
-
-struct CompanionWindow {
-    desktop: Entity<DesktopModel>,
-}
-
-impl CompanionWindow {
+impl DesktopWindow {
     fn new(desktop: Entity<DesktopModel>, cx: &mut Context<Self>) -> Self {
         cx.subscribe(&desktop, |_, _, _: &DesktopEvent, cx| {
             cx.notify();
@@ -164,58 +121,60 @@ impl CompanionWindow {
         .detach();
         Self { desktop }
     }
-}
 
-impl Render for CompanionWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let desktop = self.desktop.read(cx);
-        let session_status = if desktop.session_control {
-            "compositor session"
-        } else {
-            "local shell"
-        };
-
-        crepuscularity_gpui::view! {r#"
-            div size-full bg-transparent p-4
-                div w-full h-full rounded-[6px] bg-[#080808] border border-[#252525] p-4 flex flex-col gap-4
-                    div flex items-center justify-between
-                        div text-[#f0f0f0] text-[14px]
-                            "Actions"
-                        div text-[#9a9a9a] text-[11px]
-                            "{desktop.mode.label()}"
-                    div flex flex-col gap-2 text-[12px] text-[#d0d0d0]
-                        div "Enter  run result"
-                        div "Esc    close bar"
-                        div "Cmd-Space focus bar"
-                        div "Cmd-Q  quit shell"
-                    div flex flex-col gap-2 pt-2 border-t border-[#252525]
-                        div text-[#b8b8b8] text-[12px]
-                            "Session"
-                        div text-[#8d8d8d] text-[12px]
-                            "{session_status}"
-                        div text-[#8d8d8d] text-[12px]
-                            "Use the bar for quit, settings, shell, and desktop actions."
-        "#}
-    }
-}
-
-impl Render for WorkspaceWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut root = div()
-            .size_full()
-            .bg(rgb(0x000000))
-            .relative()
-            .key_context("alpenglowed")
-            .on_action(cx.listener(|this, _: &FocusBar, _, cx| {
-                focus_or_open_launcher(&this.desktop, cx);
-            }))
-            .child(self.render_workspace(cx));
-
-        if self.desktop.read(cx).status_bar {
-            root = root.child(self.render_status_bar(cx));
+    fn render_layout(view: &LayoutView) -> Div {
+        match view {
+            LayoutView::Window(window) => Self::render_window(window),
+            LayoutView::Container(container) => {
+                let mut node = div()
+                    .size_full()
+                    .flex()
+                    .gap(px(12.))
+                    .when(matches!(container.axis, Axis::Column), |div| div.flex_col());
+                for child in &container.children {
+                    node = node.child(div().flex_1().child(Self::render_layout(child)));
+                }
+                node
+            }
         }
+    }
 
-        root
+    fn render_window(window: &LayoutWindowView) -> Div {
+        let border = if window.focused { 0xf0f0f0 } else { 0x2a2a2a };
+        let label = if window.floating { "floating" } else { "tiled" };
+        div()
+            .size_full()
+            .rounded(px(6.))
+            .bg(rgb(0x050505))
+            .border_1()
+            .border_color(rgb(border))
+            .p(px(16.))
+            .flex()
+            .flex_col()
+            .justify_between()
+            .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(16.))
+                            .text_color(rgb(0xf5f5f5))
+                            .child(window.title.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(rgb(0x9a9a9a))
+                            .child(label),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(rgb(0x8d8d8d))
+                    .child(format!("window {}", window.id)),
+            )
     }
 }
 
@@ -268,11 +227,11 @@ impl LauncherWindow {
         let desktop = self.desktop.read(cx);
 
         crepuscularity_gpui::view! {r#"
-            div w-[860px] h-[60px] rounded-[6px] bg-[#050505] border border-[#2a2a2a] flex items-center px-[18px] gap-3
+            div w-[720px] h-[52px] rounded-[6px] bg-[#050505ee] border border-[#2a2a2a] flex items-center px-[16px] gap-3
                 div flex-1 text-[18px] text-[#ffffff]
                     "{desktop.query}"
                 div text-[12px] text-[#b8b8b8]
-                    "{desktop.mode.label()}"
+                    "{desktop.layout.summary()}"
         "#}
     }
 
@@ -280,19 +239,17 @@ impl LauncherWindow {
         let desktop = self.desktop.read(cx);
 
         div()
-            .w(px(860.))
+            .w(px(720.))
             .gap(px(4.))
-            .rounded(px(6.))
-            .bg(rgb(0x050505))
-            .border_1()
-            .border_color(rgb(0x2a2a2a))
-            .p(px(10.))
+            .p(px(0.))
             .children(desktop.runner.results.iter().map(|result| {
                 div()
                     .rounded(px(6.))
-                    .bg(rgb(0x111111))
-                    .px(px(12.))
-                    .py(px(10.))
+                    .bg(rgb(0x0f0f0f))
+                    .border_1()
+                    .border_color(rgb(0x232323))
+                    .px(px(10.))
+                    .py(px(8.))
                     .flex()
                     .items_center()
                     .gap(px(10.))
@@ -304,13 +261,13 @@ impl LauncherWindow {
                     )
                     .child(
                         div()
-                            .text_size(px(14.))
+                            .text_size(px(13.))
                             .text_color(rgb(0xf0f0f0))
                             .child(result.title.clone()),
                     )
                     .child(
                         div()
-                            .text_size(px(12.))
+                            .text_size(px(11.))
                             .text_color(rgb(0x8d8d8d))
                             .child(result.subtitle.clone()),
                     )
@@ -409,6 +366,9 @@ impl Render for SettingsWindow {
         } else {
             "disabled"
         };
+        let layout_summary = desktop.layout.summary();
+        let layout_axis = desktop.layout.axis();
+        let focused = desktop.layout.focused_title().to_string();
         let session_status = if desktop.session_control {
             "Connected to compositor"
         } else {
@@ -430,6 +390,12 @@ impl Render for SettingsWindow {
                         div flex flex-col gap-3
                             div text-[#d0d0d0] text-sm
                                 "Windows"
+                            div text-[#8d8d8d] text-xs
+                                "{layout_summary}"
+                            div text-[#8d8d8d] text-xs
+                                "Root axis: {layout_axis}"
+                            div text-[#8d8d8d] text-xs
+                                "Focused: {focused}"
                         div flex flex-col gap-3
                             div text-[#d0d0d0] text-sm
                                 "Interface"
@@ -534,7 +500,15 @@ impl Render for SettingsWindow {
 
 impl Render for LauncherWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        let status_bar = self.desktop.read(cx).status_bar;
+        let mode = self.desktop.read(cx).layout.summary();
+        let session = if self.desktop.read(cx).session_control {
+            "session"
+        } else {
+            "local"
+        };
+
+        let mut root = div()
             .size_full()
             .key_context("alpenglowed")
             .on_action(cx.listener(|this, _: &Confirm, _, cx| {
@@ -578,18 +552,63 @@ impl Render for LauncherWindow {
                 div()
                     .size_full()
                     .flex()
-                    .items_center()
+                    .items_start()
                     .justify_center()
                     .child(
                         div()
-                            .w(px(860.))
+                            .w(px(720.))
                             .flex()
                             .flex_col()
-                            .gap(px(10.))
+                            .gap(px(8.))
                             .child(self.render_bar(cx))
                             .child(self.render_results(cx)),
                     ),
-            )
+            );
+
+        if status_bar {
+            root = root.child(crepuscularity_gpui::view! {r#"
+                div absolute top-5 left-1/2 ml-[-190px] w-[380px] h-[34px] rounded-[6px] bg-[#050505ee] border border-[#2a2a2a] flex items-center justify-between px-3 text-[12px] text-[#cfcfcf]
+                    "{mode}"
+                    "{session}"
+                    "alpenglow"
+            "#});
+        }
+
+        root
+    }
+}
+
+impl Render for DesktopWindow {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let desktop = self.desktop.read(cx);
+        let layout = desktop.layout.view();
+        let status = desktop.status_bar;
+
+        let mut root = div()
+            .size_full()
+            .bg(rgb(0x000000))
+            .key_context("alpenglowed")
+            .on_action(cx.listener(|this, _: &FocusBar, _, cx| {
+                focus_or_open_launcher(&this.desktop, cx);
+            }))
+            .child(
+                div()
+                    .size_full()
+                    .p(px(24.))
+                    .pt(px(if status { 72. } else { 24. }))
+                    .child(Self::render_layout(&layout)),
+            );
+
+        if status {
+            root = root.child(crepuscularity_gpui::view! {r#"
+                div absolute top-5 left-1/2 ml-[-190px] w-[380px] h-[34px] rounded-[6px] bg-[#050505] border border-[#2a2a2a] flex items-center justify-between px-3 text-[12px] text-[#cfcfcf]
+                    "{desktop.layout.summary()}"
+                    "{desktop.layout.axis()}"
+                    "alpenglow"
+            "#});
+        }
+
+        root
     }
 }
 
@@ -597,11 +616,13 @@ fn launcher_window_options(cx: &App) -> WindowOptions {
     WindowOptions {
         app_id: Some("alpenglowed-launcher".into()),
         titlebar: None,
-        window_bounds: Some(WindowBounds::centered(size(px(900.), px(180.)), cx)),
+        window_bounds: Some(WindowBounds::centered(size(px(760.), px(118.)), cx)),
         kind: WindowKind::PopUp,
         is_movable: false,
         is_resizable: false,
         is_minimizable: false,
+        window_background: WindowBackgroundAppearance::Transparent,
+        window_decorations: Some(WindowDecorations::Client),
         ..Default::default()
     }
 }
@@ -613,24 +634,29 @@ fn settings_window_options(cx: &App) -> WindowOptions {
         window_bounds: Some(WindowBounds::centered(size(px(900.), px(640.)), cx)),
         kind: WindowKind::PopUp,
         is_resizable: false,
+        window_background: WindowBackgroundAppearance::Opaque,
+        window_decorations: Some(WindowDecorations::Client),
         ..Default::default()
     }
 }
 
-fn companion_window_options(_cx: &App) -> WindowOptions {
+fn desktop_window_options(cx: &App) -> WindowOptions {
     WindowOptions {
-        app_id: Some("alpenglowed-companion".into()),
+        app_id: Some("alpenglowed-desktop".into()),
         titlebar: None,
-        window_bounds: Some(WindowBounds::Windowed(bounds(
-            point(px(950.), px(150.)),
-            size(px(240.), px(220.)),
-        ))),
-        kind: WindowKind::PopUp,
+        window_bounds: Some(WindowBounds::Fullscreen(bounds(px(1440.), px(900.), cx))),
+        kind: WindowKind::Normal,
         is_movable: false,
         is_resizable: false,
         is_minimizable: false,
+        window_background: WindowBackgroundAppearance::Opaque,
+        window_decorations: Some(WindowDecorations::Client),
         ..Default::default()
     }
+}
+
+fn bounds(width: Pixels, height: Pixels, cx: &App) -> gpui::Bounds<Pixels> {
+    WindowBounds::centered(size(width, height), cx).get_bounds()
 }
 
 fn open_launcher_window(desktop: &Entity<DesktopModel>, cx: &mut App) -> AnyWindowHandle {
@@ -650,36 +676,11 @@ fn open_launcher_window(desktop: &Entity<DesktopModel>, cx: &mut App) -> AnyWind
     any_handle
 }
 
-fn managed_window_options(mode: WindowMode, cx: &App) -> WindowOptions {
-    WindowOptions {
-        app_id: Some("alpenglowed".into()),
-        titlebar: None,
-        window_bounds: Some(managed_window_bounds(mode, cx)),
-        is_resizable: true,
-        ..Default::default()
-    }
-}
-
-fn managed_window_bounds(mode: WindowMode, cx: &App) -> WindowBounds {
-    let _ = (mode, cx);
-    WindowBounds::Windowed(bounds(point(px(0.), px(0.)), size(px(1.), px(1.))))
-}
-
-fn open_managed_window(
-    desktop: &Entity<DesktopModel>,
-    options: UiOptions,
-    cx: &mut App,
-) {
-    let mode = desktop.read(cx).mode.clone();
+fn open_desktop_window(desktop: &Entity<DesktopModel>, cx: &mut App) {
     let desktop_entity = desktop.clone();
-    let handle = cx
-        .open_window(
-            managed_window_options(mode, cx),
-            move |_window, cx| cx.new(|cx| WorkspaceWindow::new(desktop_entity, options, cx)),
-        )
-        .unwrap();
-    let _: AnyWindowHandle = handle.into();
-    desktop.update(cx, |desktop, cx| desktop.changed(cx));
+    let _ = cx.open_window(desktop_window_options(cx), move |_window, cx| {
+        cx.new(|cx| DesktopWindow::new(desktop_entity, cx))
+    });
 }
 
 fn open_settings_window(desktop: &Entity<DesktopModel>, cx: &mut App) -> AnyWindowHandle {
@@ -697,15 +698,6 @@ fn open_settings_window(desktop: &Entity<DesktopModel>, cx: &mut App) -> AnyWind
         desktop.changed(cx);
     });
     any_handle
-}
-
-fn open_companion_window(desktop: &Entity<DesktopModel>, cx: &mut App) {
-    let desktop_entity = desktop.clone();
-    let _ = cx.open_window(companion_window_options(cx), move |window, cx| {
-        let view = cx.new(|cx| CompanionWindow::new(desktop_entity, cx));
-        window.activate_window();
-        view
-    });
 }
 
 fn focus_or_open_launcher(desktop: &Entity<DesktopModel>, cx: &mut App) {
@@ -781,8 +773,7 @@ fn main() {
         ]);
 
         let desktop = cx.new(|_| DesktopModel::new(options));
-        open_managed_window(&desktop, options, cx);
-        open_companion_window(&desktop, cx);
+        open_desktop_window(&desktop, cx);
 
         if options.open_settings {
             open_or_focus_settings(&desktop, cx);

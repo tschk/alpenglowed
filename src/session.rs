@@ -1,4 +1,5 @@
 use crate::de::DesktopAction;
+use crate::layout::LayoutAction;
 use crate::runner::WindowMode;
 use serde::Serialize;
 use std::io::Write;
@@ -8,6 +9,7 @@ use std::os::unix::net::UnixStream;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SessionRequest {
     SetWindowMode { mode: WindowMode },
+    Layout { action: LayoutAction },
     DesktopAction { action: DesktopAction },
 }
 
@@ -42,5 +44,15 @@ mod tests {
         .unwrap();
 
         assert_eq!(payload, r#"{"type":"desktop_action","action":"lock"}"#);
+    }
+
+    #[test]
+    fn layout_request_should_serialize() {
+        let payload = serde_json::to_string(&SessionRequest::Layout {
+            action: LayoutAction::SplitRow,
+        })
+        .unwrap();
+
+        assert_eq!(payload, r#"{"type":"layout","action":"split_row"}"#);
     }
 }

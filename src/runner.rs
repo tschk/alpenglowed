@@ -78,6 +78,22 @@ mod tests {
     }
 
     #[test]
+    fn update_should_return_layout_action_for_split_query() {
+        let mut runner = Runner::new();
+        runner.query = "split row".to_string();
+        runner.update();
+
+        assert!(runner.results.iter().any(|result| {
+            matches!(
+                result.action,
+                PluginAction::Layout {
+                    action: crate::layout::LayoutAction::SplitRow
+                }
+            )
+        }));
+    }
+
+    #[test]
     fn update_should_return_os_actions() {
         let mut runner = Runner::new();
         runner.query = "lock".to_string();

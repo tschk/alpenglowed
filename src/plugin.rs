@@ -1,4 +1,5 @@
 use crate::de::DesktopAction;
+use crate::layout::LayoutAction;
 use crate::runner::WindowMode;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
@@ -15,6 +16,7 @@ pub enum PluginAction {
     Launch { program: String },
     Shell { command: String },
     SetWindowMode { mode: WindowMode },
+    Layout { action: LayoutAction },
     OpenSettings,
     Desktop { action: DesktopAction },
     None,
@@ -46,6 +48,7 @@ impl PluginRegistry {
         registry.register(Box::new(ShellPlugin));
         registry.register(Box::new(CalculatorPlugin));
         registry.register(Box::new(WindowModePlugin));
+        registry.register(Box::new(LayoutPlugin));
         registry.register(Box::new(SettingsPlugin));
         registry.register(Box::new(DesktopActionsPlugin));
         registry.register(Box::new(AppLauncherPlugin));
@@ -167,6 +170,35 @@ impl Plugin for DesktopActionsPlugin {
                 })
             })
             .collect()
+    }
+}
+
+struct LayoutPlugin;
+
+impl Plugin for LayoutPlugin {
+    fn id(&self) -> &str {
+        "layout"
+    }
+
+    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        [
+            ("Split row", "layout", LayoutAction::SplitRow),
+            ("Split column", "layout", LayoutAction::SplitColumn),
+            ("Focus next window", "layout", LayoutAction::FocusNext),
+            ("Close focused window", "layout", LayoutAction::CloseFocused),
+            ("Toggle floating", "layout", LayoutAction::ToggleFloat),
+        ]
+        .into_iter()
+        .filter_map(|(title, subtitle, action)| {
+            score(title, query, matcher).map(|score| PluginResult {
+                plugin_id: self.id().to_string(),
+                title: title.to_string(),
+                subtitle: subtitle.to_string(),
+                score,
+                action: PluginAction::Layout { action },
+            })
+        })
+        .collect()
     }
 }
 
