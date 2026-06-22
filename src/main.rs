@@ -234,18 +234,48 @@ impl DesktopWindow {
                     .child(format!("window {}", window.id)),
             );
 
-        if window.floating {
-            div().size_full().p(px(48.)).child(
-                div()
-                    .size_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(panel.max_w(px(420.)).max_h(px(280.))),
-            )
-        } else {
-            div().size_full().child(panel)
+        div().size_full().child(panel)
+    }
+
+    fn render_floating_window(
+        desktop: &Entity<DesktopModel>,
+        window: &LayoutWindowView,
+        index: usize,
+    ) -> Div {
+        let offset = px(72. + index as f32 * 28.);
+        div()
+            .absolute()
+            .top(offset)
+            .left(offset)
+            .w(px(420.))
+            .h(px(280.))
+            .child(Self::render_window(desktop, window))
+    }
+
+    fn render_floating_layer(desktop: &Entity<DesktopModel>, windows: &[LayoutWindowView]) -> Div {
+        let mut layer = div()
+            .absolute()
+            .top(px(0.))
+            .left(px(0.))
+            .right(px(0.))
+            .bottom(px(0.));
+        for (index, window) in windows.iter().enumerate() {
+            layer = layer.child(Self::render_floating_window(desktop, window, index));
         }
+        layer
+    }
+
+    fn render_workspace(desktop: &Entity<DesktopModel>, layout: &LayoutView) -> Div {
+        let tiled = layout.tiled();
+        let floating = layout.floating_windows();
+        let mut root = div().size_full();
+        if let Some(tiled) = tiled {
+            root = root.child(Self::render_layout(desktop, &tiled));
+        }
+        if !floating.is_empty() {
+            root = root.child(Self::render_floating_layer(desktop, &floating));
+        }
+        root
     }
 
     fn render_status_bar(desktop: &DesktopModel) -> Div {
@@ -943,7 +973,7 @@ impl Render for DesktopWindow {
                     .size_full()
                     .p(px(24.))
                     .pt(px(if status { 72. } else { 24. }))
-                    .child(Self::render_layout(&self.desktop, &layout)),
+                    .child(Self::render_workspace(&self.desktop, &layout)),
             );
 
         if status {

@@ -300,6 +300,51 @@ impl LayoutView {
                 .find_map(|child| child.node.into_focused_detail()),
         }
     }
+
+    pub fn tiled(&self) -> Option<LayoutView> {
+        match self {
+            LayoutView::Window(window) if window.floating => None,
+            LayoutView::Window(window) => Some(LayoutView::Window(window.clone())),
+            LayoutView::Container(container) => {
+                let children = container
+                    .children
+                    .iter()
+                    .filter_map(|child| {
+                        child.node.tiled().map(|node| LayoutChildView {
+                            grow: child.grow,
+                            node,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                match children.len() {
+                    0 => None,
+                    1 => Some(children.into_iter().next().unwrap().node),
+                    _ => Some(LayoutView::Container(LayoutContainerView {
+                        axis: container.axis.clone(),
+                        children,
+                    })),
+                }
+            }
+        }
+    }
+
+    pub fn floating_windows(&self) -> Vec<LayoutWindowView> {
+        let mut windows = Vec::new();
+        self.collect_floating(&mut windows);
+        windows
+    }
+
+    fn collect_floating(&self, windows: &mut Vec<LayoutWindowView>) {
+        match self {
+            LayoutView::Window(window) if window.floating => windows.push(window.clone()),
+            LayoutView::Window(_) => {}
+            LayoutView::Container(container) => {
+                for child in &container.children {
+                    child.node.collect_floating(windows);
+                }
+            }
+        }
+    }
 }
 
 fn find(node: &Node, id: usize) -> Option<&WindowNode> {
@@ -535,6 +580,19 @@ mod tests {
             }
             _ => panic!("expected container"),
         }
+    }
+
+    #[test]
+    fn tiled_view_should_drop_floating_windows() {
+        let mut layout = LayoutState::new();
+        layout.apply(&LayoutAction::ToggleFloat);
+        let view = layout.view();
+        let tiled = view.tiled().expect("expected tiled view");
+        match tiled {
+            LayoutView::Window(window) => assert_eq!(window.title, "Scratch"),
+            _ => panic!("expected remaining tiled window"),
+        }
+        assert_eq!(view.floating_windows().len(), 1);
     }
 
     #[test]
