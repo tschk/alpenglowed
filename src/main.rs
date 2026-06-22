@@ -121,6 +121,13 @@ impl DesktopModel {
                 );
             }
             PluginAction::OpenSettings => {}
+            PluginAction::CloseSettings => {
+                if let Some(handle) = self.settings {
+                    let _ = handle.update(cx, |_, window, _| window.remove_window());
+                    self.settings = None;
+                }
+                self.layout.set_focused_window_content("Settings", "closed");
+            }
             PluginAction::Desktop { action } => {
                 self.layout
                     .set_focused_window_content(action.title(), action.subtitle());

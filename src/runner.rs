@@ -177,6 +177,18 @@ mod tests {
     }
 
     #[test]
+    fn update_should_return_close_settings_action() {
+        let mut runner = Runner::new();
+        runner.query = "close settings".to_string();
+        runner.update();
+
+        assert!(runner
+            .results
+            .iter()
+            .any(|result| result.action == PluginAction::CloseSettings));
+    }
+
+    #[test]
     fn selection_should_wrap() {
         let mut runner = Runner::new();
         runner.query = "window".to_string();

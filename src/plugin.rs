@@ -19,6 +19,7 @@ pub enum PluginAction {
     Layout { action: LayoutAction },
     ToggleStatusBar,
     OpenSettings,
+    CloseSettings,
     Desktop { action: DesktopAction },
     None,
 }
@@ -224,16 +225,22 @@ impl Plugin for SettingsPlugin {
         [
             ("Settings", "desktop settings"),
             ("Open settings", "desktop settings"),
+            ("Close settings", "desktop settings"),
             ("Preferences", "desktop settings"),
         ]
         .into_iter()
         .filter_map(|(title, subtitle)| {
+            let action = if title == "Close settings" {
+                PluginAction::CloseSettings
+            } else {
+                PluginAction::OpenSettings
+            };
             score(title, query, matcher).map(|score| PluginResult {
                 plugin_id: self.id().to_string(),
                 title: title.to_string(),
                 subtitle: subtitle.to_string(),
                 score,
-                action: PluginAction::OpenSettings,
+                action,
             })
         })
         .collect()
