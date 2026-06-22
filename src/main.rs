@@ -232,6 +232,8 @@ impl DesktopWindow {
     fn render_window(desktop: &Entity<DesktopModel>, window: &LayoutWindowView) -> Div {
         let border = if window.focused { 0xf0f0f0 } else { 0x2a2a2a };
         let label = if window.floating { "floating" } else { "tiled" };
+        let focus = if window.focused { "focused" } else { "ready" };
+        let lines = Self::pane_lines(window);
         let window_id = window.id;
         let desktop = desktop.clone();
         let panel = div()
@@ -244,7 +246,7 @@ impl DesktopWindow {
             .p(px(16.))
             .flex()
             .flex_col()
-            .justify_between()
+            .gap(px(14.))
             .cursor_pointer()
             .on_click(move |_, _, cx| {
                 desktop.update(cx, |desktop, cx| {
@@ -255,18 +257,33 @@ impl DesktopWindow {
             .child(
                 div()
                     .flex()
+                    .items_center()
                     .justify_between()
                     .child(
                         div()
-                            .text_size(px(16.))
-                            .text_color(rgb(0xf5f5f5))
-                            .child(window.title.clone()),
+                            .flex()
+                            .items_center()
+                            .gap(px(10.))
+                            .child(
+                                div()
+                                    .w(px(8.))
+                                    .h(px(8.))
+                                    .rounded_full()
+                                    .bg(rgb(if window.focused { 0xf0f0f0 } else { 0x5a5a5a })),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(16.))
+                                    .text_color(rgb(0xf5f5f5))
+                                    .child(window.title.clone()),
+                            ),
                     )
                     .child(
                         div()
-                            .text_size(px(11.))
-                            .text_color(rgb(0x9a9a9a))
-                            .child(label),
+                            .flex()
+                            .gap(px(8.))
+                            .child(Self::window_pill(label, false))
+                            .child(Self::window_pill(focus, window.focused)),
                     ),
             )
             .child(
@@ -277,12 +294,102 @@ impl DesktopWindow {
             )
             .child(
                 div()
-                    .text_size(px(12.))
-                    .text_color(rgb(0x8d8d8d))
-                    .child(format!("window {}", window.id)),
+                    .flex_1()
+                    .rounded(px(4.))
+                    .bg(rgb(0x090909))
+                    .border_1()
+                    .border_color(rgb(0x151515))
+                    .p(px(12.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .children(lines.into_iter().map(Self::window_line)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(rgb(0x7e7e7e))
+                            .child(format!("window {}", window.id)),
+                    )
+                    .child(div().text_size(px(11.)).text_color(rgb(0x7e7e7e)).child(
+                        if window.floating {
+                            format!(
+                                "{:.0}x{:.0} @ {:.0},{:.0}",
+                                window.width, window.height, window.x, window.y
+                            )
+                        } else {
+                            "flex layout".to_string()
+                        },
+                    )),
             );
 
         div().size_full().child(panel)
+    }
+
+    fn window_pill(text: &str, active: bool) -> Div {
+        div()
+            .px(px(8.))
+            .py(px(4.))
+            .rounded(px(999.))
+            .bg(rgb(if active { 0x111111 } else { 0x090909 }))
+            .border_1()
+            .border_color(rgb(if active { 0xf0f0f0 } else { 0x232323 }))
+            .text_size(px(10.))
+            .text_color(rgb(if active { 0xffffff } else { 0x8d8d8d }))
+            .child(text.to_string())
+    }
+
+    fn window_line(text: String) -> Div {
+        div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(rgb(0x6e6e6e))
+                    .child("~"),
+            )
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(rgb(0xd8d8d8))
+                    .child(text),
+            )
+    }
+
+    fn pane_lines(window: &LayoutWindowView) -> Vec<String> {
+        let title = window.title.to_lowercase();
+        if title.contains("workspace") {
+            return vec![
+                "launcher ready for app, shell, and os actions".to_string(),
+                "tiling shortcuts stay on desktop surface".to_string(),
+                "terminal and browser stay in main flow".to_string(),
+            ];
+        }
+        if title.contains("scratch") {
+            return vec![
+                "clipboard history and quick notes".to_string(),
+                "transient actions and settings access".to_string(),
+                "good target for floating utility panes".to_string(),
+            ];
+        }
+        if title.contains("shell") {
+            return vec![
+                "command output stays attached to focused pane".to_string(),
+                "enter runs selected launcher action".to_string(),
+                "escape keeps desktop visible".to_string(),
+            ];
+        }
+        vec![
+            window.detail.clone(),
+            "split, focus, float, resize".to_string(),
+            "bar drives window actions".to_string(),
+        ]
     }
 
     fn render_floating_window(

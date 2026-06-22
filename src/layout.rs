@@ -141,7 +141,7 @@ impl LayoutState {
                         node: Node::Window(WindowNode {
                             id: 1,
                             title: "Workspace".to_string(),
-                            detail: "Ready".to_string(),
+                            detail: "Terminal, browser, and launcher".to_string(),
                             floating: false,
                             x: 72.,
                             y: 72.,
@@ -154,7 +154,7 @@ impl LayoutState {
                         node: Node::Window(WindowNode {
                             id: 2,
                             title: "Scratch".to_string(),
-                            detail: "Ready".to_string(),
+                            detail: "Clipboard, notes, and quick actions".to_string(),
                             floating: false,
                             x: 100.,
                             y: 100.,

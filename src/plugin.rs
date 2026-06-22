@@ -620,6 +620,7 @@ fn default_timeout_ms() -> u64 {
 mod tests {
     use super::*;
     use std::fs;
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn manifest_rejects_missing_command() {
@@ -645,7 +646,9 @@ mod tests {
             "#!/bin/sh\ncat >/dev/null\nprintf '%s' '{\"results\":[{\"id\":\"ok\",\"title\":\"OK\",\"subtitle\":\"command\",\"score\":7,\"action\":{\"type\":\"shell\",\"command\":\"echo ok\"}}]}'\n",
         )
         .unwrap();
-        let _ = Command::new("chmod").arg("+x").arg(&script).status();
+        let mut permissions = fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions).unwrap();
         let manifest = CommandPluginManifest {
             id: "ok".to_string(),
             name: "OK".to_string(),
