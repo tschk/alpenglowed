@@ -188,6 +188,12 @@ impl LayoutState {
         }
     }
 
+    pub fn focus_window(&mut self, id: usize) {
+        if self.find(id).is_some() {
+            self.focused = id;
+        }
+    }
+
     fn split(&mut self, axis: Axis) {
         let new_id = self.next_id;
         self.next_id += 1;
@@ -490,6 +496,15 @@ mod tests {
             },
             _ => panic!("expected container"),
         }
+    }
+
+    #[test]
+    fn focus_window_should_ignore_unknown_ids() {
+        let mut layout = LayoutState::new();
+        layout.focus_window(2);
+        assert_eq!(layout.focused_title(), "Scratch");
+        layout.focus_window(999);
+        assert_eq!(layout.focused_title(), "Scratch");
     }
 
     #[test]

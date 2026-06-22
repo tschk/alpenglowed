@@ -153,9 +153,9 @@ impl DesktopWindow {
         Self { desktop }
     }
 
-    fn render_layout(view: &LayoutView) -> Div {
+    fn render_layout(desktop: &Entity<DesktopModel>, view: &LayoutView) -> Div {
         match view {
-            LayoutView::Window(window) => Self::render_window(window),
+            LayoutView::Window(window) => Self::render_window(desktop, window),
             LayoutView::Container(container) => {
                 let mut node = div()
                     .size_full()
@@ -163,27 +163,30 @@ impl DesktopWindow {
                     .gap(px(12.))
                     .when(matches!(container.axis, Axis::Column), |div| div.flex_col());
                 for child in &container.children {
-                    node = node.child(Self::render_child(child));
+                    node = node.child(Self::render_child(desktop, child));
                 }
                 node
             }
         }
     }
 
-    fn render_child(child: &LayoutChildView) -> Div {
+    fn render_child(desktop: &Entity<DesktopModel>, child: &LayoutChildView) -> Div {
         let mut slot = div()
             .min_w(px(0.))
             .min_h(px(0.))
-            .child(Self::render_layout(&child.node));
+            .child(Self::render_layout(desktop, &child.node));
         slot.style().flex_grow = Some(child.grow.max(0.1));
         slot.style().flex_shrink = Some(1.);
         slot
     }
 
-    fn render_window(window: &LayoutWindowView) -> Div {
+    fn render_window(desktop: &Entity<DesktopModel>, window: &LayoutWindowView) -> Div {
         let border = if window.focused { 0xf0f0f0 } else { 0x2a2a2a };
         let label = if window.floating { "floating" } else { "tiled" };
+        let window_id = window.id;
+        let desktop = desktop.clone();
         let panel = div()
+            .id(SharedString::from(format!("pane-{window_id}")))
             .size_full()
             .rounded(px(6.))
             .bg(rgb(0x050505))
@@ -193,6 +196,13 @@ impl DesktopWindow {
             .flex()
             .flex_col()
             .justify_between()
+            .cursor_pointer()
+            .on_click(move |_, _, cx| {
+                desktop.update(cx, |desktop, cx| {
+                    desktop.layout.focus_window(window_id);
+                    desktop.changed(cx);
+                });
+            })
             .child(
                 div()
                     .flex()
@@ -233,7 +243,7 @@ impl DesktopWindow {
                     .child(panel.max_w(px(420.)).max_h(px(280.))),
             )
         } else {
-            panel
+            div().size_full().child(panel)
         }
     }
 
@@ -919,7 +929,7 @@ impl Render for DesktopWindow {
                     .size_full()
                     .p(px(24.))
                     .pt(px(if status { 72. } else { 24. }))
-                    .child(Self::render_layout(&layout)),
+                    .child(Self::render_layout(&self.desktop, &layout)),
             );
 
         if status {
