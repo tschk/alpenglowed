@@ -90,10 +90,14 @@ impl DesktopModel {
             PluginAction::SetWindowMode { mode } => {
                 self.mode = mode.clone();
                 self.layout.set_window_mode(&mode);
+                self.layout
+                    .set_focused_window_content("Window mode", mode.label());
                 let _ = session::dispatch(&session::SessionRequest::SetWindowMode { mode });
             }
             PluginAction::Layout { action } => {
                 self.layout.apply(&action);
+                self.layout
+                    .set_focused_window_content(action.title(), self.layout.summary());
                 let _ = session::dispatch(&session::SessionRequest::Layout { action });
             }
             PluginAction::OpenSettings => {}

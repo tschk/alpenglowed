@@ -28,6 +28,18 @@ pub enum LayoutAction {
     ToggleFloat,
 }
 
+impl LayoutAction {
+    pub fn title(&self) -> &'static str {
+        match self {
+            Self::SplitRow => "Split row",
+            Self::SplitColumn => "Split column",
+            Self::FocusNext => "Focus next",
+            Self::CloseFocused => "Close focused",
+            Self::ToggleFloat => "Toggle float",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LayoutState {
     root: Node,
