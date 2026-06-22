@@ -25,6 +25,8 @@ actions!(
         Confirm,
         SplitRow,
         SplitColumn,
+        GrowPane,
+        ShrinkPane,
         FocusNextPane,
         ClosePane,
         ToggleFloatPane
@@ -622,6 +624,10 @@ impl Render for SettingsWindow {
                             div text-[#8d8d8d] text-xs
                                 "Cmd-Alt-V split column"
                             div text-[#8d8d8d] text-xs
+                                "Cmd-Alt-L grow focused"
+                            div text-[#8d8d8d] text-xs
+                                "Cmd-Alt-J shrink focused"
+                            div text-[#8d8d8d] text-xs
                                 "Cmd-Shift-] focus next"
                             div text-[#8d8d8d] text-xs
                                 "Cmd-Shift-- close pane"
@@ -649,6 +655,14 @@ impl Render for SettingsWindow {
                     .child(self.layout_action_button(
                         "Split column",
                         layout::LayoutAction::SplitColumn,
+                    ))
+                    .child(self.layout_action_button(
+                        "Grow focused",
+                        layout::LayoutAction::GrowFocused,
+                    ))
+                    .child(self.layout_action_button(
+                        "Shrink focused",
+                        layout::LayoutAction::ShrinkFocused,
                     ))
                     .child(self.layout_action_button(
                         "Focus next",
@@ -845,6 +859,26 @@ impl Render for DesktopWindow {
                     desktop.apply(
                         PluginAction::Layout {
                             action: layout::LayoutAction::SplitColumn,
+                        },
+                        cx,
+                    );
+                });
+            }))
+            .on_action(cx.listener(|this, _: &GrowPane, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::GrowFocused,
+                        },
+                        cx,
+                    );
+                });
+            }))
+            .on_action(cx.listener(|this, _: &ShrinkPane, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::ShrinkFocused,
                         },
                         cx,
                     );
@@ -1059,6 +1093,8 @@ fn main() {
             KeyBinding::new("cmd-alt-f", ToggleFloatPane, None),
             KeyBinding::new("cmd-alt-h", SplitRow, None),
             KeyBinding::new("cmd-alt-v", SplitColumn, None),
+            KeyBinding::new("cmd-alt-l", GrowPane, None),
+            KeyBinding::new("cmd-alt-j", ShrinkPane, None),
         ]);
 
         let desktop_options = options.clone();

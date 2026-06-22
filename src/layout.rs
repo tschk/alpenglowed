@@ -26,6 +26,8 @@ pub enum LayoutAction {
     FocusNext,
     CloseFocused,
     ToggleFloat,
+    GrowFocused,
+    ShrinkFocused,
 }
 
 impl LayoutAction {
@@ -36,6 +38,8 @@ impl LayoutAction {
             Self::FocusNext => "Focus next",
             Self::CloseFocused => "Close focused",
             Self::ToggleFloat => "Toggle float",
+            Self::GrowFocused => "Grow focused",
+            Self::ShrinkFocused => "Shrink focused",
         }
     }
 }
@@ -138,6 +142,8 @@ impl LayoutState {
             LayoutAction::FocusNext => self.focus_next(),
             LayoutAction::CloseFocused => self.close_focused(),
             LayoutAction::ToggleFloat => self.toggle_float(),
+            LayoutAction::GrowFocused => self.resize_focused(0.2),
+            LayoutAction::ShrinkFocused => self.resize_focused(-0.2),
         }
     }
 
@@ -224,6 +230,10 @@ impl LayoutState {
         if let Some(window) = find_mut(&mut self.root, self.focused) {
             window.floating = !window.floating;
         }
+    }
+
+    fn resize_focused(&mut self, delta: f32) {
+        resize_focused(&mut self.root, self.focused, delta);
     }
 
     fn collect<'a>(&'a self, node: &'a Node, windows: &mut Vec<&'a WindowNode>) {
@@ -374,6 +384,50 @@ fn set_floating(node: &mut Node, floating: bool) {
     }
 }
 
+fn resize_focused(node: &mut Node, focused: usize, delta: f32) -> bool {
+    match node {
+        Node::Window(_) => false,
+        Node::Container(container) => {
+            if let Some(index) = container
+                .children
+                .iter()
+                .position(|child| contains_window(&child.node, focused))
+            {
+                if container.children.len() > 1 {
+                    let target = container.children[index].grow + delta;
+                    let sibling = neighbor_index(container.children.len(), index);
+                    let sibling_target = container.children[sibling].grow - delta;
+                    if target >= 0.3 && sibling_target >= 0.3 {
+                        container.children[index].grow = target;
+                        container.children[sibling].grow = sibling_target;
+                        return true;
+                    }
+                }
+                return resize_focused(&mut container.children[index].node, focused, delta);
+            }
+            false
+        }
+    }
+}
+
+fn contains_window(node: &Node, id: usize) -> bool {
+    match node {
+        Node::Window(window) => window.id == id,
+        Node::Container(container) => container
+            .children
+            .iter()
+            .any(|child| contains_window(&child.node, id)),
+    }
+}
+
+fn neighbor_index(len: usize, index: usize) -> usize {
+    if index + 1 < len {
+        index + 1
+    } else {
+        index - 1
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -445,6 +499,36 @@ mod tests {
             LayoutView::Container(container) => {
                 assert_eq!(container.children.len(), 2);
                 assert!(container.children[0].grow > container.children[1].grow);
+            }
+            _ => panic!("expected container"),
+        }
+    }
+
+    #[test]
+    fn grow_focused_should_change_flex_ratios() {
+        let mut layout = LayoutState::new();
+        let before = match layout.view() {
+            LayoutView::Container(container) => container.children[0].grow,
+            _ => panic!("expected container"),
+        };
+        layout.apply(&LayoutAction::GrowFocused);
+        let after = match layout.view() {
+            LayoutView::Container(container) => container.children[0].grow,
+            _ => panic!("expected container"),
+        };
+        assert!(after > before);
+    }
+
+    #[test]
+    fn shrink_focused_should_respect_minimum_ratio() {
+        let mut layout = LayoutState::new();
+        for _ in 0..20 {
+            layout.apply(&LayoutAction::ShrinkFocused);
+        }
+        match layout.view() {
+            LayoutView::Container(container) => {
+                assert!(container.children[0].grow >= 0.3);
+                assert!(container.children[1].grow >= 0.3);
             }
             _ => panic!("expected container"),
         }

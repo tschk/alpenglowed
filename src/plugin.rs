@@ -184,6 +184,8 @@ impl Plugin for LayoutPlugin {
         [
             ("Split row", "layout", LayoutAction::SplitRow),
             ("Split column", "layout", LayoutAction::SplitColumn),
+            ("Grow focused pane", "layout", LayoutAction::GrowFocused),
+            ("Shrink focused pane", "layout", LayoutAction::ShrinkFocused),
             ("Focus next window", "layout", LayoutAction::FocusNext),
             ("Close focused window", "layout", LayoutAction::CloseFocused),
             ("Toggle floating", "layout", LayoutAction::ToggleFloat),
