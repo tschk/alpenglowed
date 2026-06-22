@@ -103,26 +103,49 @@ impl DesktopAction {
             Self::Suspend => &[("loginctl", &["suspend"]), ("zzz", &[])],
             Self::Hibernate => &[("loginctl", &["hibernate"])],
             Self::Terminal => &[("foot", &[]), ("alacritty", &[]), ("xterm", &[])],
-            Self::Apps => &[("alpenglowed", &["--polybar"])],
+            Self::Apps => &[
+                ("alpenglowed", &["--polybar"]),
+                ("xdg-open", &["/usr/share/applications"]),
+                ("gio", &["open", "/usr/share/applications"]),
+            ],
             Self::Wifi => &[("iwctl", &[]), ("nmtui", &[])],
-            Self::WifiOn => &[(
-                "iwctl",
-                &["adapter", "phy0", "set-property", "Powered", "on"],
-            )],
-            Self::WifiOff => &[(
-                "iwctl",
-                &["adapter", "phy0", "set-property", "Powered", "off"],
-            )],
-            Self::Audio => &[("alsamixer", &[]), ("pavucontrol", &[])],
+            Self::WifiOn => &[
+                (
+                    "iwctl",
+                    &["adapter", "phy0", "set-property", "Powered", "on"],
+                ),
+                ("rfkill", &["unblock", "wifi"]),
+            ],
+            Self::WifiOff => &[
+                (
+                    "iwctl",
+                    &["adapter", "phy0", "set-property", "Powered", "off"],
+                ),
+                ("rfkill", &["block", "wifi"]),
+            ],
+            Self::Audio => &[
+                ("wpctl", &["status"]),
+                ("pactl", &["info"]),
+                ("alsamixer", &[]),
+                ("pavucontrol", &[]),
+            ],
             Self::AudioMute => &[("wpctl", &["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"])],
             Self::AudioUp => &[("wpctl", &["set-volume", "@DEFAULT_AUDIO_SINK@", "5%+"])],
             Self::AudioDown => &[("wpctl", &["set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"])],
             Self::Display => &[("wlr-randr", &[]), ("arandr", &[])],
             Self::Screenshot => &[("grim", &["$HOME/Pictures/alpenglow-screenshot.png"])],
             Self::Clipboard => &[("cliphist", &["list"])],
-            Self::Notifications => &[("makoctl", &["mode", "-t", "do-not-disturb"])],
+            Self::Notifications => &[
+                ("makoctl", &["mode", "-t", "do-not-disturb"]),
+                ("notify-send", &["alpenglowed", "notifications check"]),
+            ],
             Self::Processes => &[("top", &[])],
-            Self::Files => &[("nnn", &[]), ("vifm", &[])],
+            Self::Files => &[
+                ("nnn", &[]),
+                ("vifm", &[]),
+                ("xdg-open", &["$HOME"]),
+                ("gio", &["open", "$HOME"]),
+            ],
         }
     }
 
