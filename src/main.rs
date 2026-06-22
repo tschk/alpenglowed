@@ -372,11 +372,7 @@ impl SettingsWindow {
             .child(label)
             .on_click(move |_, _, cx| {
                 desktop.update(cx, |desktop, cx| {
-                    desktop.mode = mode.clone();
-                    let _ = session::dispatch(&session::SessionRequest::SetWindowMode {
-                        mode: mode.clone(),
-                    });
-                    desktop.changed(cx);
+                    desktop.apply(PluginAction::SetWindowMode { mode: mode.clone() }, cx);
                 });
             })
     }
@@ -447,6 +443,11 @@ impl Render for SettingsWindow {
         let layout_summary = desktop.layout.summary();
         let layout_axis = desktop.layout.axis();
         let focused = desktop.layout.focused_title().to_string();
+        let focused_detail = desktop
+            .layout
+            .view()
+            .into_focused_detail()
+            .unwrap_or_else(|| "Ready".to_string());
         let session_status = if desktop.session_control {
             "Connected to compositor"
         } else {
@@ -474,6 +475,8 @@ impl Render for SettingsWindow {
                                 "Root axis: {layout_axis}"
                             div text-[#8d8d8d] text-xs
                                 "Focused: {focused}"
+                            div text-[#8d8d8d] text-xs
+                                "Detail: {focused_detail}"
                         div flex flex-col gap-3
                             div text-[#d0d0d0] text-sm
                                 "Interface"
@@ -490,6 +493,19 @@ impl Render for SettingsWindow {
                                 "Session"
                             div text-[#8d8d8d] text-xs
                                 "{session_status}"
+                        div flex flex-col gap-3
+                            div text-[#d0d0d0] text-sm
+                                "Shortcuts"
+                            div text-[#8d8d8d] text-xs
+                                "Cmd-Alt-H split row"
+                            div text-[#8d8d8d] text-xs
+                                "Cmd-Alt-V split column"
+                            div text-[#8d8d8d] text-xs
+                                "Cmd-Shift-] focus next"
+                            div text-[#8d8d8d] text-xs
+                                "Cmd-Shift-- close pane"
+                            div text-[#8d8d8d] text-xs
+                                "Cmd-Alt-F toggle float"
             "#}
             .child(
                 div()
