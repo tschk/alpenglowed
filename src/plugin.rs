@@ -182,6 +182,7 @@ impl Plugin for LayoutPlugin {
 
     fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
         [
+            ("Reset layout", "layout", LayoutAction::Reset),
             ("Split row", "layout", LayoutAction::SplitRow),
             ("Split column", "layout", LayoutAction::SplitColumn),
             ("Grow focused pane", "layout", LayoutAction::GrowFocused),

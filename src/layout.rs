@@ -23,6 +23,7 @@ impl Axis {
 pub enum LayoutAction {
     SplitRow,
     SplitColumn,
+    Reset,
     FocusNext,
     CloseFocused,
     ToggleFloat,
@@ -35,6 +36,7 @@ impl LayoutAction {
         match self {
             Self::SplitRow => "Split row",
             Self::SplitColumn => "Split column",
+            Self::Reset => "Reset layout",
             Self::FocusNext => "Focus next",
             Self::CloseFocused => "Close focused",
             Self::ToggleFloat => "Toggle float",
@@ -106,6 +108,10 @@ struct ChildNode {
 
 impl LayoutState {
     pub fn new() -> Self {
+        Self::seed()
+    }
+
+    fn seed() -> Self {
         Self {
             root: Node::Container(ContainerNode {
                 axis: Axis::Row,
@@ -139,6 +145,7 @@ impl LayoutState {
         match action {
             LayoutAction::SplitRow => self.split(Axis::Row),
             LayoutAction::SplitColumn => self.split(Axis::Column),
+            LayoutAction::Reset => *self = Self::seed(),
             LayoutAction::FocusNext => self.focus_next(),
             LayoutAction::CloseFocused => self.close_focused(),
             LayoutAction::ToggleFloat => self.toggle_float(),
@@ -446,6 +453,17 @@ mod tests {
         assert_eq!(layout.axis(), "row");
         assert_eq!(layout.focused_title(), "Window 3");
         assert_eq!(layout.summary(), "3 tiled 0 floating");
+    }
+
+    #[test]
+    fn reset_should_restore_seed_layout() {
+        let mut layout = LayoutState::new();
+        layout.apply(&LayoutAction::SplitColumn);
+        layout.apply(&LayoutAction::ToggleFloat);
+        layout.apply(&LayoutAction::Reset);
+        assert_eq!(layout.summary(), "2 tiled 0 floating");
+        assert_eq!(layout.axis(), "row");
+        assert_eq!(layout.focused_title(), "Workspace");
     }
 
     #[test]

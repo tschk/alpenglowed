@@ -25,6 +25,7 @@ actions!(
         Confirm,
         SplitRow,
         SplitColumn,
+        ResetLayout,
         GrowPane,
         ShrinkPane,
         FocusNextPane,
@@ -634,6 +635,8 @@ impl Render for SettingsWindow {
                             div text-[#8d8d8d] text-xs
                                 "Cmd-Alt-V split column"
                             div text-[#8d8d8d] text-xs
+                                "Cmd-Alt-R reset layout"
+                            div text-[#8d8d8d] text-xs
                                 "Cmd-Alt-L grow focused"
                             div text-[#8d8d8d] text-xs
                                 "Cmd-Alt-J shrink focused"
@@ -661,6 +664,7 @@ impl Render for SettingsWindow {
                     .left(px(36.))
                     .flex()
                     .gap(px(8.))
+                    .child(self.layout_action_button("Reset layout", layout::LayoutAction::Reset))
                     .child(self.layout_action_button("Split row", layout::LayoutAction::SplitRow))
                     .child(self.layout_action_button(
                         "Split column",
@@ -869,6 +873,16 @@ impl Render for DesktopWindow {
                     desktop.apply(
                         PluginAction::Layout {
                             action: layout::LayoutAction::SplitColumn,
+                        },
+                        cx,
+                    );
+                });
+            }))
+            .on_action(cx.listener(|this, _: &ResetLayout, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::Reset,
                         },
                         cx,
                     );
@@ -1103,6 +1117,7 @@ fn main() {
             KeyBinding::new("cmd-alt-f", ToggleFloatPane, None),
             KeyBinding::new("cmd-alt-h", SplitRow, None),
             KeyBinding::new("cmd-alt-v", SplitColumn, None),
+            KeyBinding::new("cmd-alt-r", ResetLayout, None),
             KeyBinding::new("cmd-alt-l", GrowPane, None),
             KeyBinding::new("cmd-alt-j", ShrinkPane, None),
         ]);
