@@ -268,4 +268,12 @@ mod tests {
         runner.select(999);
         assert_eq!(runner.selected, runner.results.len() - 1);
     }
+
+    #[test]
+    fn update_should_limit_results_to_six() {
+        let mut runner = Runner::new();
+        runner.query = "o".to_string();
+        runner.update();
+        assert!(runner.results.len() <= 6);
+    }
 }

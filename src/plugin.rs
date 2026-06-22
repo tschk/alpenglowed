@@ -76,7 +76,7 @@ impl PluginRegistry {
             .flat_map(|plugin| plugin.query(query, matcher))
             .collect::<Vec<_>>();
         results.sort_by_key(|result| Reverse(result.score));
-        results.truncate(15);
+        results.truncate(6);
         results
     }
 }

@@ -44,6 +44,7 @@ actions!(
 struct UiOptions {
     status_bar: bool,
     open_settings: bool,
+    initial_query: String,
     mode: WindowMode,
 }
 
@@ -68,10 +69,11 @@ impl EventEmitter<DesktopEvent> for DesktopModel {}
 impl DesktopModel {
     fn new(options: UiOptions) -> Self {
         let mut runner = Runner::new();
+        runner.query = options.initial_query.clone();
         runner.update();
 
         Self {
-            query: String::new(),
+            query: options.initial_query,
             mode: options.mode.clone(),
             layout: {
                 let mut layout = LayoutState::new();
@@ -474,7 +476,7 @@ impl LauncherWindow {
                 div()
                     .text_size(px(12.))
                     .text_color(rgb(0xb8b8b8))
-                    .child(format!("{}  {}", selection, subtitle)),
+                    .child(format!("{selection} {subtitle}")),
             )
     }
 
@@ -488,96 +490,101 @@ impl LauncherWindow {
         if desktop.runner.results.is_empty() {
             return div()
                 .w(px(720.))
-                .rounded(px(6.))
+                .rounded_b(px(6.))
                 .bg(rgb(0x0f0f0f))
                 .border_1()
                 .border_color(rgb(0x232323))
-                .px(px(12.))
+                .border_t_0()
+                .px(px(14.))
                 .py(px(10.))
                 .text_size(px(12.))
                 .text_color(rgb(0x8d8d8d))
                 .child("No results");
         }
 
-        div().w(px(720.)).gap(px(4.)).p(px(0.)).children(
-            desktop
-                .runner
-                .results
-                .iter()
-                .enumerate()
-                .map(|(index, result)| {
-                    let selected = index == desktop.runner.selected;
-                    let desktop = self.desktop.clone();
-                    div()
-                        .id(SharedString::from(format!("launcher-result-{index}")))
-                        .rounded(px(6.))
-                        .bg(if selected {
-                            rgb(0x161616)
-                        } else {
-                            rgb(0x0f0f0f)
-                        })
-                        .border_1()
-                        .border_color(if selected {
-                            rgb(0xf0f0f0)
-                        } else {
-                            rgb(0x232323)
-                        })
-                        .px(px(10.))
-                        .py(px(8.))
-                        .flex()
-                        .items_center()
-                        .gap(px(10.))
-                        .cursor_pointer()
-                        .on_click(move |_, _, cx| {
-                            desktop.update(cx, |desktop, cx| {
-                                desktop.runner.select(index);
-                                desktop.changed(cx);
-                            });
-                            let action = desktop.read(cx).runner.confirm();
-                            if let Some(action) = action {
-                                if !matches!(action, PluginAction::None) {
-                                    desktop.update(cx, |desktop, cx| {
-                                        desktop.apply(action, cx);
-                                    });
-                                    if let Some(handle) = desktop.read(cx).launcher {
-                                        let _ = handle
-                                            .update(cx, |_, window, _| window.remove_window());
+        div()
+            .w(px(720.))
+            .rounded_b(px(6.))
+            .bg(rgb(0x0f0f0f))
+            .border_1()
+            .border_color(rgb(0x232323))
+            .border_t_0()
+            .p(px(6.))
+            .gap(px(2.))
+            .children(
+                desktop
+                    .runner
+                    .results
+                    .iter()
+                    .enumerate()
+                    .map(|(index, result)| {
+                        let selected = index == desktop.runner.selected;
+                        let desktop = self.desktop.clone();
+                        div()
+                            .id(SharedString::from(format!("launcher-result-{index}")))
+                            .rounded(px(4.))
+                            .bg(if selected {
+                                rgb(0x141414)
+                            } else {
+                                rgb(0x0f0f0f)
+                            })
+                            .px(px(10.))
+                            .py(px(7.))
+                            .flex()
+                            .items_center()
+                            .gap(px(10.))
+                            .cursor_pointer()
+                            .on_click(move |_, _, cx| {
+                                desktop.update(cx, |desktop, cx| {
+                                    desktop.runner.select(index);
+                                    desktop.changed(cx);
+                                });
+                                let action = desktop.read(cx).runner.confirm();
+                                if let Some(action) = action {
+                                    if !matches!(action, PluginAction::None) {
+                                        desktop.update(cx, |desktop, cx| {
+                                            desktop.apply(action, cx);
+                                        });
+                                        if let Some(handle) = desktop.read(cx).launcher {
+                                            let _ = handle
+                                                .update(cx, |_, window, _| window.remove_window());
+                                        }
+                                        desktop.update(cx, |desktop, cx| {
+                                            desktop.launcher = None;
+                                            desktop.changed(cx);
+                                        });
                                     }
-                                    desktop.update(cx, |desktop, cx| {
-                                        desktop.launcher = None;
-                                        desktop.changed(cx);
-                                    });
                                 }
-                            }
-                        })
-                        .child(
-                            div()
-                                .text_size(px(12.))
-                                .text_color(if selected {
-                                    rgb(0xffffff)
-                                } else {
-                                    rgb(0xb8b8b8)
-                                })
-                                .child(if selected { ">" } else { "$" }),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(13.))
-                                .text_color(if selected {
-                                    rgb(0xffffff)
-                                } else {
-                                    rgb(0xf0f0f0)
-                                })
-                                .child(result.title.clone()),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(11.))
-                                .text_color(rgb(0x8d8d8d))
-                                .child(result.subtitle.clone()),
-                        )
-                }),
-        )
+                            })
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(if selected {
+                                        rgb(0xffffff)
+                                    } else {
+                                        rgb(0xb8b8b8)
+                                    })
+                                    .child(if selected { ">" } else { "$" }),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_size(px(13.))
+                                    .text_color(if selected {
+                                        rgb(0xffffff)
+                                    } else {
+                                        rgb(0xf0f0f0)
+                                    })
+                                    .child(result.title.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(rgb(0x8d8d8d))
+                                    .child(result.subtitle.clone()),
+                            )
+                    }),
+            )
     }
 }
 
@@ -1159,7 +1166,7 @@ fn launcher_window_options(cx: &App) -> WindowOptions {
     WindowOptions {
         app_id: Some("alpenglowed-launcher".into()),
         titlebar: None,
-        window_bounds: Some(WindowBounds::centered(size(px(760.), px(360.)), cx)),
+        window_bounds: Some(WindowBounds::centered(size(px(760.), px(260.)), cx)),
         kind: WindowKind::PopUp,
         is_movable: false,
         is_resizable: false,
@@ -1349,6 +1356,10 @@ impl UiOptions {
                 Ok("1" | "true" | "yes")
             );
         let open_settings = std::env::args().any(|arg| arg == "--open-settings");
+        let initial_query = std::env::args()
+            .find_map(|arg| arg.strip_prefix("--query=").map(ToString::to_string))
+            .or_else(|| std::env::var("ALPENGLOWED_QUERY").ok())
+            .unwrap_or_default();
         let mode = if std::env::args().any(|arg| arg == "--floating")
             || matches!(std::env::var("ALPENGLOWED_MODE").as_deref(), Ok("floating"))
         {
@@ -1360,6 +1371,7 @@ impl UiOptions {
         Self {
             status_bar,
             open_settings,
+            initial_query,
             mode,
         }
     }
