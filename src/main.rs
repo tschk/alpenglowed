@@ -16,7 +16,20 @@ use plugin::PluginAction;
 use runner::{Runner, WindowMode};
 use std::process::Command;
 
-actions!(alpenglowed, [Quit, FocusBar, DefocusBar, Confirm]);
+actions!(
+    alpenglowed,
+    [
+        Quit,
+        FocusBar,
+        DefocusBar,
+        Confirm,
+        SplitRow,
+        SplitColumn,
+        FocusNextPane,
+        ClosePane,
+        ToggleFloatPane
+    ]
+);
 
 #[derive(Clone, Copy)]
 struct UiOptions {
@@ -142,7 +155,7 @@ impl DesktopWindow {
     fn render_window(window: &LayoutWindowView) -> Div {
         let border = if window.focused { 0xf0f0f0 } else { 0x2a2a2a };
         let label = if window.floating { "floating" } else { "tiled" };
-        div()
+        let panel = div()
             .size_full()
             .rounded(px(6.))
             .bg(rgb(0x050505))
@@ -174,7 +187,20 @@ impl DesktopWindow {
                     .text_size(px(12.))
                     .text_color(rgb(0x8d8d8d))
                     .child(format!("window {}", window.id)),
+            );
+
+        if window.floating {
+            div().size_full().p(px(48.)).child(
+                div()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(panel.max_w(px(420.)).max_h(px(280.))),
             )
+        } else {
+            panel
+        }
     }
 }
 
@@ -650,6 +676,56 @@ impl Render for DesktopWindow {
             .on_action(cx.listener(|this, _: &FocusBar, _, cx| {
                 focus_or_open_launcher(&this.desktop, cx);
             }))
+            .on_action(cx.listener(|this, _: &SplitRow, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::SplitRow,
+                        },
+                        cx,
+                    );
+                });
+            }))
+            .on_action(cx.listener(|this, _: &SplitColumn, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::SplitColumn,
+                        },
+                        cx,
+                    );
+                });
+            }))
+            .on_action(cx.listener(|this, _: &FocusNextPane, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::FocusNext,
+                        },
+                        cx,
+                    );
+                });
+            }))
+            .on_action(cx.listener(|this, _: &ClosePane, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::CloseFocused,
+                        },
+                        cx,
+                    );
+                });
+            }))
+            .on_action(cx.listener(|this, _: &ToggleFloatPane, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::ToggleFloat,
+                        },
+                        cx,
+                    );
+                });
+            }))
             .child(
                 div()
                     .size_full()
@@ -829,6 +905,11 @@ fn main() {
             KeyBinding::new("escape", DefocusBar, None),
             KeyBinding::new("enter", Confirm, None),
             KeyBinding::new("cmd-q", Quit, None),
+            KeyBinding::new("cmd-shift-]", FocusNextPane, None),
+            KeyBinding::new("cmd-shift--", ClosePane, None),
+            KeyBinding::new("cmd-alt-f", ToggleFloatPane, None),
+            KeyBinding::new("cmd-alt-h", SplitRow, None),
+            KeyBinding::new("cmd-alt-v", SplitColumn, None),
         ]);
 
         let desktop = cx.new(|_| DesktopModel::new(options));
