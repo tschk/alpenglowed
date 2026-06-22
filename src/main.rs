@@ -98,6 +98,8 @@ impl DesktopModel {
             }
             PluginAction::OpenSettings => {}
             PluginAction::Desktop { action } => {
+                self.layout
+                    .set_focused_window_content(action.title(), action.subtitle());
                 if session::dispatch(&session::SessionRequest::DesktopAction {
                     action: action.clone(),
                 })
@@ -107,9 +109,13 @@ impl DesktopModel {
                 }
             }
             PluginAction::Launch { program } => {
+                self.layout
+                    .set_focused_window_content(program.clone(), "app launch");
                 let _ = Command::new(program).spawn();
             }
             PluginAction::Shell { command } => {
+                self.layout
+                    .set_focused_window_content("Shell", command.clone());
                 let _ = Command::new("sh").arg("-c").arg(command).spawn();
             }
             PluginAction::None => {}
@@ -187,6 +193,12 @@ impl DesktopWindow {
                             .text_color(rgb(0x9a9a9a))
                             .child(label),
                     ),
+            )
+            .child(
+                div()
+                    .text_size(px(13.))
+                    .text_color(rgb(0xb8b8b8))
+                    .child(window.detail.clone()),
             )
             .child(
                 div()

@@ -45,6 +45,7 @@ pub enum LayoutView {
 pub struct LayoutWindowView {
     pub id: usize,
     pub title: String,
+    pub detail: String,
     pub floating: bool,
     pub focused: bool,
 }
@@ -65,6 +66,7 @@ enum Node {
 struct WindowNode {
     id: usize,
     title: String,
+    detail: String,
     floating: bool,
 }
 
@@ -83,11 +85,13 @@ impl LayoutState {
                     Node::Window(WindowNode {
                         id: 1,
                         title: "Workspace".to_string(),
+                        detail: "Ready".to_string(),
                         floating: false,
                     }),
                     Node::Window(WindowNode {
                         id: 2,
                         title: "Scratch".to_string(),
+                        detail: "Ready".to_string(),
                         floating: false,
                     }),
                 ],
@@ -135,6 +139,17 @@ impl LayoutState {
     pub fn set_window_mode(&mut self, mode: &WindowMode) {
         let floating = matches!(mode, WindowMode::Floating);
         set_floating(&mut self.root, floating);
+    }
+
+    pub fn set_focused_window_content(
+        &mut self,
+        title: impl Into<String>,
+        detail: impl Into<String>,
+    ) {
+        if let Some(window) = find_mut(&mut self.root, self.focused) {
+            window.title = title.into();
+            window.detail = detail.into();
+        }
     }
 
     fn split(&mut self, axis: Axis) {
@@ -202,6 +217,7 @@ impl LayoutState {
             Node::Window(window) => LayoutView::Window(LayoutWindowView {
                 id: window.id,
                 title: window.title.clone(),
+                detail: window.detail.clone(),
                 floating: window.floating,
                 focused: window.id == self.focused,
             }),
@@ -247,6 +263,7 @@ fn split_window(node: &mut Node, id: usize, axis: Axis, new_id: usize, title: St
                     Node::Window(WindowNode {
                         id: new_id,
                         title,
+                        detail: "Ready".to_string(),
                         floating: false,
                     }),
                 ],
@@ -342,5 +359,21 @@ mod tests {
         assert_eq!(layout.summary(), "0 tiled 2 floating");
         layout.set_window_mode(&WindowMode::Tiling);
         assert_eq!(layout.summary(), "2 tiled 0 floating");
+    }
+
+    #[test]
+    fn set_focused_window_content_should_update_focused_pane() {
+        let mut layout = LayoutState::new();
+        layout.set_focused_window_content("Terminal", "echo hi");
+        match layout.view() {
+            LayoutView::Container(container) => match &container.children[0] {
+                LayoutView::Window(window) => {
+                    assert_eq!(window.title, "Terminal");
+                    assert_eq!(window.detail, "echo hi");
+                }
+                _ => panic!("expected window"),
+            },
+            _ => panic!("expected container"),
+        }
     }
 }
