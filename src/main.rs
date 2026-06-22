@@ -220,6 +220,52 @@ impl DesktopWindow {
             panel
         }
     }
+
+    fn render_status_bar(desktop: &DesktopModel) -> Div {
+        let state = de::DesktopState::detect(desktop.mode.label());
+        let display = state.display.unwrap_or_else(|| "no-display".to_string());
+        let backend = if state.wayland { "wayland" } else { "offline" };
+        let focused = desktop.layout.focused_title().to_string();
+        let detail = desktop
+            .layout
+            .view()
+            .into_focused_detail()
+            .unwrap_or_else(|| "Ready".to_string());
+
+        div()
+            .absolute()
+            .top(px(20.))
+            .left(px(24.))
+            .flex()
+            .gap(px(8.))
+            .children(
+                [
+                    desktop.mode.label().to_string(),
+                    desktop.layout.summary(),
+                    focused,
+                    detail,
+                    backend.to_string(),
+                    display,
+                ]
+                .into_iter()
+                .map(Self::status_pill),
+            )
+    }
+
+    fn status_pill(text: String) -> Div {
+        div()
+            .h(px(34.))
+            .px(px(12.))
+            .rounded(px(17.))
+            .bg(rgb(0x050505))
+            .border_1()
+            .border_color(rgb(0x2a2a2a))
+            .flex()
+            .items_center()
+            .text_size(px(12.))
+            .text_color(rgb(0xcfcfcf))
+            .child(text)
+    }
 }
 
 struct LauncherWindow {
@@ -620,12 +666,6 @@ impl Render for SettingsWindow {
 impl Render for LauncherWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let status_bar = self.desktop.read(cx).status_bar;
-        let mode = self.desktop.read(cx).layout.summary();
-        let session = if self.desktop.read(cx).session_control {
-            "session"
-        } else {
-            "local"
-        };
 
         let mut root = div()
             .size_full()
@@ -685,12 +725,7 @@ impl Render for LauncherWindow {
             );
 
         if status_bar {
-            root = root.child(crepuscularity_gpui::view! {r#"
-                div absolute top-5 left-1/2 ml-[-190px] w-[380px] h-[34px] rounded-[6px] bg-[#050505ee] border border-[#2a2a2a] flex items-center justify-between px-3 text-[12px] text-[#cfcfcf]
-                    "{mode}"
-                    "{session}"
-                    "alpenglow"
-            "#});
+            root = root.child(DesktopWindow::render_status_bar(&self.desktop.read(cx)));
         }
 
         root
@@ -769,12 +804,7 @@ impl Render for DesktopWindow {
             );
 
         if status {
-            root = root.child(crepuscularity_gpui::view! {r#"
-                div absolute top-5 left-1/2 ml-[-190px] w-[380px] h-[34px] rounded-[6px] bg-[#050505] border border-[#2a2a2a] flex items-center justify-between px-3 text-[12px] text-[#cfcfcf]
-                    "{desktop.layout.summary()}"
-                    "{desktop.layout.axis()}"
-                    "alpenglow"
-            "#});
+            root = root.child(Self::render_status_bar(&desktop));
         }
 
         root
