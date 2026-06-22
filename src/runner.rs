@@ -161,7 +161,7 @@ mod tests {
         assert!(runner
             .results
             .iter()
-            .any(|result| result.action == PluginAction::OpenSettings));
+            .any(|result| result.action == PluginAction::ToggleSettings));
     }
 
     #[test]

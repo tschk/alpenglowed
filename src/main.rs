@@ -120,6 +120,16 @@ impl DesktopModel {
                     },
                 );
             }
+            PluginAction::ToggleSettings => {
+                if let Some(handle) = self.settings {
+                    let _ = handle.update(cx, |_, window, _| window.remove_window());
+                    self.settings = None;
+                    self.layout.set_focused_window_content("Settings", "closed");
+                } else {
+                    open_or_focus_settings(&cx.entity(), cx);
+                    self.layout.set_focused_window_content("Settings", "opened");
+                }
+            }
             PluginAction::OpenSettings => {}
             PluginAction::CloseSettings => {
                 if let Some(handle) = self.settings {

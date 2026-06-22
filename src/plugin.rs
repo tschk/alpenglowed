@@ -18,6 +18,7 @@ pub enum PluginAction {
     SetWindowMode { mode: WindowMode },
     Layout { action: LayoutAction },
     ToggleStatusBar,
+    ToggleSettings,
     OpenSettings,
     CloseSettings,
     Desktop { action: DesktopAction },
@@ -232,6 +233,8 @@ impl Plugin for SettingsPlugin {
         .filter_map(|(title, subtitle)| {
             let action = if title == "Close settings" {
                 PluginAction::CloseSettings
+            } else if matches!(title, "Settings" | "Open settings" | "Preferences") {
+                PluginAction::ToggleSettings
             } else {
                 PluginAction::OpenSettings
             };
