@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::runner::WindowMode;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Axis {
@@ -128,6 +130,11 @@ impl LayoutState {
 
     pub fn view(&self) -> LayoutView {
         self.view_node(&self.root)
+    }
+
+    pub fn set_window_mode(&mut self, mode: &WindowMode) {
+        let floating = matches!(mode, WindowMode::Floating);
+        set_floating(&mut self.root, floating);
     }
 
     fn split(&mut self, axis: Axis) {
@@ -278,6 +285,17 @@ fn collapse(node: &mut Node) {
     }
 }
 
+fn set_floating(node: &mut Node, floating: bool) {
+    match node {
+        Node::Window(window) => window.floating = floating,
+        Node::Container(container) => {
+            for child in &mut container.children {
+                set_floating(child, floating);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,5 +333,14 @@ mod tests {
 
         assert_eq!(layout.summary(), "1 tiled 0 floating");
         assert_eq!(layout.focused_title(), "Scratch");
+    }
+
+    #[test]
+    fn set_window_mode_should_flip_all_windows() {
+        let mut layout = LayoutState::new();
+        layout.set_window_mode(&WindowMode::Floating);
+        assert_eq!(layout.summary(), "0 tiled 2 floating");
+        layout.set_window_mode(&WindowMode::Tiling);
+        assert_eq!(layout.summary(), "2 tiled 0 floating");
     }
 }

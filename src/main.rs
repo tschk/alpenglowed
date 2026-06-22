@@ -31,10 +31,11 @@ actions!(
     ]
 );
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct UiOptions {
     status_bar: bool,
     open_settings: bool,
+    mode: WindowMode,
 }
 
 #[derive(Clone, Copy)]
@@ -63,8 +64,12 @@ impl DesktopModel {
 
         Self {
             query: "window".to_string(),
-            mode: WindowMode::Tiling,
-            layout: LayoutState::new(),
+            mode: options.mode.clone(),
+            layout: {
+                let mut layout = LayoutState::new();
+                layout.set_window_mode(&options.mode);
+                layout
+            },
             status_bar: options.status_bar,
             runner,
             session_control: std::env::var_os("ALPENGLOW_SESSION_CONTROL").is_some(),
@@ -84,6 +89,7 @@ impl DesktopModel {
         match action {
             PluginAction::SetWindowMode { mode } => {
                 self.mode = mode.clone();
+                self.layout.set_window_mode(&mode);
                 let _ = session::dispatch(&session::SessionRequest::SetWindowMode { mode });
             }
             PluginAction::Layout { action } => {
@@ -912,7 +918,8 @@ fn main() {
             KeyBinding::new("cmd-alt-v", SplitColumn, None),
         ]);
 
-        let desktop = cx.new(|_| DesktopModel::new(options));
+        let desktop_options = options.clone();
+        let desktop = cx.new(|_| DesktopModel::new(desktop_options));
         open_desktop_window(&desktop, cx);
 
         if options.open_settings {
@@ -931,10 +938,18 @@ impl UiOptions {
                 Ok("1" | "true" | "yes")
             );
         let open_settings = std::env::args().any(|arg| arg == "--open-settings");
+        let mode = if std::env::args().any(|arg| arg == "--floating")
+            || matches!(std::env::var("ALPENGLOWED_MODE").as_deref(), Ok("floating"))
+        {
+            WindowMode::Floating
+        } else {
+            WindowMode::Tiling
+        };
 
         Self {
             status_bar,
             open_settings,
+            mode,
         }
     }
 }
