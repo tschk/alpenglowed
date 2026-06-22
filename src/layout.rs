@@ -75,13 +75,23 @@ struct ContainerNode {
 impl LayoutState {
     pub fn new() -> Self {
         Self {
-            root: Node::Window(WindowNode {
-                id: 1,
-                title: "Bar".to_string(),
-                floating: false,
+            root: Node::Container(ContainerNode {
+                axis: Axis::Row,
+                children: vec![
+                    Node::Window(WindowNode {
+                        id: 1,
+                        title: "Workspace".to_string(),
+                        floating: false,
+                    }),
+                    Node::Window(WindowNode {
+                        id: 2,
+                        title: "Scratch".to_string(),
+                        floating: false,
+                    }),
+                ],
             }),
             focused: 1,
-            next_id: 2,
+            next_id: 3,
         }
     }
 
@@ -278,24 +288,21 @@ mod tests {
         layout.apply(&LayoutAction::SplitRow);
 
         assert_eq!(layout.axis(), "row");
-        assert_eq!(layout.focused_title(), "Window 2");
-        assert_eq!(layout.summary(), "2 tiled 0 floating");
+        assert_eq!(layout.focused_title(), "Window 3");
+        assert_eq!(layout.summary(), "3 tiled 0 floating");
     }
 
     #[test]
     fn focus_next_should_cycle() {
         let mut layout = LayoutState::new();
-        layout.apply(&LayoutAction::SplitRow);
-        layout.apply(&LayoutAction::SplitColumn);
         layout.apply(&LayoutAction::FocusNext);
 
-        assert_eq!(layout.focused_title(), "Bar");
+        assert_eq!(layout.focused_title(), "Scratch");
     }
 
     #[test]
     fn toggle_float_should_flip_focused_window() {
         let mut layout = LayoutState::new();
-        layout.apply(&LayoutAction::SplitRow);
         layout.apply(&LayoutAction::ToggleFloat);
 
         assert_eq!(layout.summary(), "1 tiled 1 floating");
@@ -304,10 +311,9 @@ mod tests {
     #[test]
     fn close_focused_should_keep_at_least_one_window() {
         let mut layout = LayoutState::new();
-        layout.apply(&LayoutAction::SplitRow);
         layout.apply(&LayoutAction::CloseFocused);
 
         assert_eq!(layout.summary(), "1 tiled 0 floating");
-        assert_eq!(layout.focused_title(), "Bar");
+        assert_eq!(layout.focused_title(), "Scratch");
     }
 }
