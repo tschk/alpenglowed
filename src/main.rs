@@ -1586,6 +1586,12 @@ fn main() {
         println!("{}", de::DesktopState::detect("tiling").polybar());
         return;
     }
+    if std::env::args().any(|arg| arg == "--probe-actions") {
+        for line in de::probe_actions() {
+            println!("{line}");
+        }
+        return;
+    }
     if std::env::args().any(|arg| arg == "--smoke-wayland") {
         match de::smoke_wayland() {
             Ok(()) => println!("wayland ok"),

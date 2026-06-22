@@ -198,6 +198,19 @@ pub fn run(action: &DesktopAction) -> RunResult {
     RunResult::Spawned(command)
 }
 
+pub fn probe_actions() -> Vec<String> {
+    DesktopAction::all()
+        .iter()
+        .map(|action| {
+            let resolved = action
+                .resolve()
+                .map(|command| command.display())
+                .unwrap_or_else(|| "unavailable".to_string());
+            format!("{}\t{}\t{}", action.title(), action.subtitle(), resolved)
+        })
+        .collect()
+}
+
 pub fn smoke_wayland() -> Result<(), String> {
     std::env::var("WAYLAND_DISPLAY").map_err(|_| "WAYLAND_DISPLAY is not set".to_string())?;
     Connection::connect_to_env()
@@ -263,5 +276,12 @@ mod tests {
     #[test]
     fn desktop_action_should_report_missing_commands_without_spawning() {
         assert_eq!(DesktopAction::Shutdown.resolve_with(|_| false), None);
+    }
+
+    #[test]
+    fn probe_actions_should_emit_one_line_per_action() {
+        let lines = probe_actions();
+        assert_eq!(lines.len(), DesktopAction::all().len());
+        assert!(lines.iter().all(|line| line.split('\t').count() == 3));
     }
 }
