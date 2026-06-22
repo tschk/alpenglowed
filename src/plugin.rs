@@ -187,6 +187,8 @@ impl Plugin for LayoutPlugin {
             ("Nudge window right", "layout", LayoutAction::NudgeRight),
             ("Nudge window up", "layout", LayoutAction::NudgeUp),
             ("Nudge window down", "layout", LayoutAction::NudgeDown),
+            ("Expand window", "layout", LayoutAction::ExpandWindow),
+            ("Contract window", "layout", LayoutAction::ContractWindow),
             ("Split row", "layout", LayoutAction::SplitRow),
             ("Split column", "layout", LayoutAction::SplitColumn),
             ("Grow focused pane", "layout", LayoutAction::GrowFocused),

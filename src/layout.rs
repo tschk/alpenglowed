@@ -28,6 +28,8 @@ pub enum LayoutAction {
     NudgeRight,
     NudgeUp,
     NudgeDown,
+    ExpandWindow,
+    ContractWindow,
     FocusNext,
     CloseFocused,
     ToggleFloat,
@@ -45,6 +47,8 @@ impl LayoutAction {
             Self::NudgeRight => "Nudge right",
             Self::NudgeUp => "Nudge up",
             Self::NudgeDown => "Nudge down",
+            Self::ExpandWindow => "Expand window",
+            Self::ContractWindow => "Contract window",
             Self::FocusNext => "Focus next",
             Self::CloseFocused => "Close focused",
             Self::ToggleFloat => "Toggle float",
@@ -76,6 +80,8 @@ pub struct LayoutWindowView {
     pub focused: bool,
     pub x: f32,
     pub y: f32,
+    pub width: f32,
+    pub height: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -104,6 +110,8 @@ struct WindowNode {
     floating: bool,
     x: f32,
     y: f32,
+    width: f32,
+    height: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -137,6 +145,8 @@ impl LayoutState {
                             floating: false,
                             x: 72.,
                             y: 72.,
+                            width: 420.,
+                            height: 280.,
                         }),
                     },
                     ChildNode {
@@ -148,6 +158,8 @@ impl LayoutState {
                             floating: false,
                             x: 100.,
                             y: 100.,
+                            width: 420.,
+                            height: 280.,
                         }),
                     },
                 ],
@@ -166,6 +178,8 @@ impl LayoutState {
             LayoutAction::NudgeRight => self.nudge_focused(24., 0.),
             LayoutAction::NudgeUp => self.nudge_focused(0., -24.),
             LayoutAction::NudgeDown => self.nudge_focused(0., 24.),
+            LayoutAction::ExpandWindow => self.resize_floating_focused(40., 28.),
+            LayoutAction::ContractWindow => self.resize_floating_focused(-40., -28.),
             LayoutAction::FocusNext => self.focus_next(),
             LayoutAction::CloseFocused => self.close_focused(),
             LayoutAction::ToggleFloat => self.toggle_float(),
@@ -274,6 +288,15 @@ impl LayoutState {
         }
     }
 
+    fn resize_floating_focused(&mut self, dw: f32, dh: f32) {
+        if let Some(window) = find_mut(&mut self.root, self.focused) {
+            if window.floating {
+                window.width = (window.width + dw).max(240.);
+                window.height = (window.height + dh).max(180.);
+            }
+        }
+    }
+
     fn resize_focused(&mut self, delta: f32) {
         resize_focused(&mut self.root, self.focused, delta);
     }
@@ -304,6 +327,8 @@ impl LayoutState {
                 focused: window.id == self.focused,
                 x: window.x,
                 y: window.y,
+                width: window.width,
+                height: window.height,
             }),
             Node::Container(container) => LayoutView::Container(LayoutContainerView {
                 axis: container.axis.clone(),
@@ -420,6 +445,8 @@ fn split_window(node: &mut Node, id: usize, axis: Axis, new_id: usize, title: St
                             floating: false,
                             x: 72. + new_id as f32 * 20.,
                             y: 72. + new_id as f32 * 20.,
+                            width: 420.,
+                            height: 280.,
                         }),
                     },
                 ],
@@ -566,6 +593,33 @@ mod tests {
         };
         assert!(after.0 > before.0);
         assert!(after.1 > before.1);
+    }
+
+    #[test]
+    fn resize_should_change_floating_window_size_only() {
+        let mut layout = LayoutState::new();
+        layout.apply(&LayoutAction::ToggleFloat);
+        let before = match layout.view() {
+            LayoutView::Container(container) => match &container.children[0].node {
+                LayoutView::Window(window) => (window.width, window.height),
+                _ => panic!("expected window"),
+            },
+            _ => panic!("expected container"),
+        };
+        layout.apply(&LayoutAction::ExpandWindow);
+        layout.apply(&LayoutAction::ContractWindow);
+        layout.apply(&LayoutAction::ContractWindow);
+        let after = match layout.view() {
+            LayoutView::Container(container) => match &container.children[0].node {
+                LayoutView::Window(window) => (window.width, window.height),
+                _ => panic!("expected window"),
+            },
+            _ => panic!("expected container"),
+        };
+        assert!(after.0 < before.0);
+        assert!(after.1 < before.1);
+        assert!(after.0 >= 240.);
+        assert!(after.1 >= 180.);
     }
 
     #[test]

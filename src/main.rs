@@ -30,6 +30,8 @@ actions!(
         NudgeRight,
         NudgeUp,
         NudgeDown,
+        ExpandWindow,
+        ContractWindow,
         GrowPane,
         ShrinkPane,
         FocusNextPane,
@@ -250,8 +252,8 @@ impl DesktopWindow {
             .absolute()
             .top(px(window.y))
             .left(px(window.x))
-            .w(px(420.))
-            .h(px(280.))
+            .w(px(window.width))
+            .h(px(window.height))
             .child(Self::render_window(desktop, window))
     }
 
@@ -678,6 +680,10 @@ impl Render for SettingsWindow {
                             div text-[#8d8d8d] text-xs
                                 "Cmd-Alt-Down nudge down"
                             div text-[#8d8d8d] text-xs
+                                "Cmd-Alt-= expand window"
+                            div text-[#8d8d8d] text-xs
+                                "Cmd-Alt-- contract window"
+                            div text-[#8d8d8d] text-xs
                                 "Cmd-Alt-L grow focused"
                             div text-[#8d8d8d] text-xs
                                 "Cmd-Alt-J shrink focused"
@@ -715,6 +721,14 @@ impl Render for SettingsWindow {
                     .child(self.layout_action_button(
                         "Nudge down",
                         layout::LayoutAction::NudgeDown,
+                    ))
+                    .child(self.layout_action_button(
+                        "Expand window",
+                        layout::LayoutAction::ExpandWindow,
+                    ))
+                    .child(self.layout_action_button(
+                        "Contract window",
+                        layout::LayoutAction::ContractWindow,
                     ))
                     .child(self.layout_action_button("Split row", layout::LayoutAction::SplitRow))
                     .child(self.layout_action_button(
@@ -979,6 +993,26 @@ impl Render for DesktopWindow {
                     );
                 });
             }))
+            .on_action(cx.listener(|this, _: &ExpandWindow, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::ExpandWindow,
+                        },
+                        cx,
+                    );
+                });
+            }))
+            .on_action(cx.listener(|this, _: &ContractWindow, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::ContractWindow,
+                        },
+                        cx,
+                    );
+                });
+            }))
             .on_action(cx.listener(|this, _: &GrowPane, _, cx| {
                 this.desktop.update(cx, |desktop, cx| {
                     desktop.apply(
@@ -1213,6 +1247,8 @@ fn main() {
             KeyBinding::new("cmd-alt-right", NudgeRight, None),
             KeyBinding::new("cmd-alt-up", NudgeUp, None),
             KeyBinding::new("cmd-alt-down", NudgeDown, None),
+            KeyBinding::new("cmd-alt-=", ExpandWindow, None),
+            KeyBinding::new("cmd-alt--", ContractWindow, None),
             KeyBinding::new("cmd-alt-l", GrowPane, None),
             KeyBinding::new("cmd-alt-j", ShrinkPane, None),
         ]);
