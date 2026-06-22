@@ -38,7 +38,13 @@ impl Runner {
     }
 
     pub fn update(&mut self) {
-        self.results = self.plugins.query(self.query.trim(), &self.matcher);
+        let query = self.query.trim();
+        if query.is_empty() {
+            self.results.clear();
+            self.selected = 0;
+            return;
+        }
+        self.results = self.plugins.query(query, &self.matcher);
         if self.results.is_empty() {
             self.selected = 0;
         } else {
@@ -228,6 +234,19 @@ mod tests {
     fn selection_label_should_report_empty_state() {
         let runner = Runner::new();
         assert_eq!(runner.selection_label(), "0 results");
+    }
+
+    #[test]
+    fn update_should_clear_results_when_query_empty() {
+        let mut runner = Runner::new();
+        runner.query = "window".to_string();
+        runner.update();
+        assert!(!runner.results.is_empty());
+
+        runner.query.clear();
+        runner.update();
+
+        assert!(runner.results.is_empty());
     }
 
     #[test]

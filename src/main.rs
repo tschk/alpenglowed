@@ -68,11 +68,10 @@ impl EventEmitter<DesktopEvent> for DesktopModel {}
 impl DesktopModel {
     fn new(options: UiOptions) -> Self {
         let mut runner = Runner::new();
-        runner.query = "window".to_string();
         runner.update();
 
         Self {
-            query: "window".to_string(),
+            query: String::new(),
             mode: options.mode.clone(),
             layout: {
                 let mut layout = LayoutState::new();
@@ -438,11 +437,20 @@ impl LauncherWindow {
     fn render_bar(&self, cx: &App) -> impl IntoElement {
         let desktop = self.desktop.read(cx);
         let selection = desktop.runner.selection_label();
-        let subtitle = desktop
-            .runner
-            .selected_result()
-            .map(|result| result.subtitle.clone())
-            .unwrap_or_else(|| "ready".to_string());
+        let subtitle = if desktop.query.trim().is_empty() {
+            "type to search desktop actions".to_string()
+        } else {
+            desktop
+                .runner
+                .selected_result()
+                .map(|result| result.subtitle.clone())
+                .unwrap_or_else(|| "no match".to_string())
+        };
+        let query = if desktop.query.is_empty() {
+            " ".to_string()
+        } else {
+            desktop.query.clone()
+        };
 
         div()
             .w(px(720.))
@@ -460,7 +468,7 @@ impl LauncherWindow {
                     .flex_1()
                     .text_size(px(18.))
                     .text_color(rgb(0xffffff))
-                    .child(desktop.query.clone()),
+                    .child(query),
             )
             .child(
                 div()
@@ -472,6 +480,10 @@ impl LauncherWindow {
 
     fn render_results(&self, cx: &App) -> impl IntoElement {
         let desktop = self.desktop.read(cx);
+
+        if desktop.query.trim().is_empty() {
+            return div();
+        }
 
         if desktop.runner.results.is_empty() {
             return div()
@@ -953,7 +965,7 @@ impl Render for LauncherWindow {
                 div()
                     .size_full()
                     .flex()
-                    .items_start()
+                    .items_center()
                     .justify_center()
                     .child(
                         div()
