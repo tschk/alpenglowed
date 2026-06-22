@@ -109,6 +109,17 @@ impl DesktopModel {
                     .set_focused_window_content(action.title(), self.layout.summary());
                 let _ = session::dispatch(&session::SessionRequest::Layout { action });
             }
+            PluginAction::ToggleStatusBar => {
+                self.toggle_status_bar(cx);
+                self.layout.set_focused_window_content(
+                    "Status bar",
+                    if self.status_bar {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    },
+                );
+            }
             PluginAction::OpenSettings => {}
             PluginAction::Desktop { action } => {
                 self.layout

@@ -17,6 +17,7 @@ pub enum PluginAction {
     Shell { command: String },
     SetWindowMode { mode: WindowMode },
     Layout { action: LayoutAction },
+    ToggleStatusBar,
     OpenSettings,
     Desktop { action: DesktopAction },
     None,
@@ -49,6 +50,7 @@ impl PluginRegistry {
         registry.register(Box::new(CalculatorPlugin));
         registry.register(Box::new(WindowModePlugin));
         registry.register(Box::new(LayoutPlugin));
+        registry.register(Box::new(InterfacePlugin));
         registry.register(Box::new(SettingsPlugin));
         registry.register(Box::new(DesktopActionsPlugin));
         registry.register(Box::new(AppLauncherPlugin));
@@ -232,6 +234,45 @@ impl Plugin for SettingsPlugin {
                 subtitle: subtitle.to_string(),
                 score,
                 action: PluginAction::OpenSettings,
+            })
+        })
+        .collect()
+    }
+}
+
+struct InterfacePlugin;
+
+impl Plugin for InterfacePlugin {
+    fn id(&self) -> &str {
+        "interface"
+    }
+
+    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        [
+            (
+                "Toggle status bar",
+                "interface",
+                PluginAction::ToggleStatusBar,
+            ),
+            (
+                "Show status bar",
+                "interface",
+                PluginAction::ToggleStatusBar,
+            ),
+            (
+                "Hide status bar",
+                "interface",
+                PluginAction::ToggleStatusBar,
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(title, subtitle, action)| {
+            score(title, query, matcher).map(|score| PluginResult {
+                plugin_id: self.id().to_string(),
+                title: title.to_string(),
+                subtitle: subtitle.to_string(),
+                score,
+                action: action.clone(),
             })
         })
         .collect()

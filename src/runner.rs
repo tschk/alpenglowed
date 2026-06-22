@@ -165,6 +165,18 @@ mod tests {
     }
 
     #[test]
+    fn update_should_return_status_bar_action() {
+        let mut runner = Runner::new();
+        runner.query = "status".to_string();
+        runner.update();
+
+        assert!(runner
+            .results
+            .iter()
+            .any(|result| result.action == PluginAction::ToggleStatusBar));
+    }
+
+    #[test]
     fn selection_should_wrap() {
         let mut runner = Runner::new();
         runner.query = "window".to_string();
