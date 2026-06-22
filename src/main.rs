@@ -317,6 +317,20 @@ impl LauncherWindow {
         }
     }
 
+    fn select_next(&mut self, cx: &mut Context<Self>) {
+        self.desktop.update(cx, |desktop, cx| {
+            desktop.runner.select_next();
+            desktop.changed(cx);
+        });
+    }
+
+    fn select_previous(&mut self, cx: &mut Context<Self>) {
+        self.desktop.update(cx, |desktop, cx| {
+            desktop.runner.select_previous();
+            desktop.changed(cx);
+        });
+    }
+
     fn render_bar(&self, cx: &App) -> impl IntoElement {
         let desktop = self.desktop.read(cx);
 
@@ -349,40 +363,60 @@ impl LauncherWindow {
     fn render_results(&self, cx: &App) -> impl IntoElement {
         let desktop = self.desktop.read(cx);
 
-        div()
-            .w(px(720.))
-            .gap(px(4.))
-            .p(px(0.))
-            .children(desktop.runner.results.iter().map(|result| {
-                div()
-                    .rounded(px(6.))
-                    .bg(rgb(0x0f0f0f))
-                    .border_1()
-                    .border_color(rgb(0x232323))
-                    .px(px(10.))
-                    .py(px(8.))
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(rgb(0xb8b8b8))
-                            .child("$"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(13.))
-                            .text_color(rgb(0xf0f0f0))
-                            .child(result.title.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(rgb(0x8d8d8d))
-                            .child(result.subtitle.clone()),
-                    )
-            }))
+        div().w(px(720.)).gap(px(4.)).p(px(0.)).children(
+            desktop
+                .runner
+                .results
+                .iter()
+                .enumerate()
+                .map(|(index, result)| {
+                    let selected = index == desktop.runner.selected;
+                    div()
+                        .rounded(px(6.))
+                        .bg(if selected {
+                            rgb(0x161616)
+                        } else {
+                            rgb(0x0f0f0f)
+                        })
+                        .border_1()
+                        .border_color(if selected {
+                            rgb(0xf0f0f0)
+                        } else {
+                            rgb(0x232323)
+                        })
+                        .px(px(10.))
+                        .py(px(8.))
+                        .flex()
+                        .items_center()
+                        .gap(px(10.))
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(if selected {
+                                    rgb(0xffffff)
+                                } else {
+                                    rgb(0xb8b8b8)
+                                })
+                                .child(if selected { ">" } else { "$" }),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(13.))
+                                .text_color(if selected {
+                                    rgb(0xffffff)
+                                } else {
+                                    rgb(0xf0f0f0)
+                                })
+                                .child(result.title.clone()),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(rgb(0x8d8d8d))
+                                .child(result.subtitle.clone()),
+                        )
+                }),
+        )
     }
 }
 
@@ -694,6 +728,16 @@ impl Render for LauncherWindow {
                 let key = event.keystroke.key.as_str();
                 if key == "backspace" {
                     this.backspace(cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                if key == "up" {
+                    this.select_previous(cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                if key == "down" {
+                    this.select_next(cx);
                     cx.stop_propagation();
                     return;
                 }

@@ -21,6 +21,7 @@ impl WindowMode {
 pub struct Runner {
     pub query: String,
     pub results: Vec<PluginResult>,
+    pub selected: usize,
     matcher: SkimMatcherV2,
     plugins: PluginRegistry,
 }
@@ -30,6 +31,7 @@ impl Runner {
         Self {
             query: String::new(),
             results: Vec::new(),
+            selected: 0,
             matcher: SkimMatcherV2::default(),
             plugins: PluginRegistry::new(),
         }
@@ -37,10 +39,33 @@ impl Runner {
 
     pub fn update(&mut self) {
         self.results = self.plugins.query(self.query.trim(), &self.matcher);
+        if self.results.is_empty() {
+            self.selected = 0;
+        } else {
+            self.selected = self.selected.min(self.results.len() - 1);
+        }
     }
 
     pub fn confirm(&self) -> Option<PluginAction> {
-        Some(self.results.first()?.action.clone())
+        Some(self.results.get(self.selected)?.action.clone())
+    }
+
+    pub fn select_next(&mut self) {
+        if self.results.is_empty() {
+            return;
+        }
+        self.selected = (self.selected + 1) % self.results.len();
+    }
+
+    pub fn select_previous(&mut self) {
+        if self.results.is_empty() {
+            return;
+        }
+        self.selected = if self.selected == 0 {
+            self.results.len() - 1
+        } else {
+            self.selected - 1
+        };
     }
 }
 
@@ -117,5 +142,17 @@ mod tests {
             .results
             .iter()
             .any(|result| result.action == PluginAction::OpenSettings));
+    }
+
+    #[test]
+    fn selection_should_wrap() {
+        let mut runner = Runner::new();
+        runner.query = "window".to_string();
+        runner.update();
+        let len = runner.results.len();
+        runner.select_previous();
+        assert_eq!(runner.selected, len - 1);
+        runner.select_next();
+        assert_eq!(runner.selected, 0);
     }
 }
