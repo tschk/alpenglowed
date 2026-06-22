@@ -133,7 +133,24 @@ impl DesktopAction {
             Self::AudioUp => &[("wpctl", &["set-volume", "@DEFAULT_AUDIO_SINK@", "5%+"])],
             Self::AudioDown => &[("wpctl", &["set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"])],
             Self::Display => &[("wlr-randr", &[]), ("arandr", &[])],
-            Self::Screenshot => &[("grim", &["$HOME/Pictures/alpenglow-screenshot.png"])],
+            Self::Screenshot => &[
+                ("grim", &["$HOME/Pictures/alpenglow-screenshot.png"]),
+                (
+                    "ffmpeg",
+                    &[
+                        "-y",
+                        "-f",
+                        "x11grab",
+                        "-video_size",
+                        "1440x900",
+                        "-i",
+                        ":0",
+                        "-frames:v",
+                        "1",
+                        "$HOME/Pictures/alpenglow-screenshot.png",
+                    ],
+                ),
+            ],
             Self::Clipboard => &[("cliphist", &["list"])],
             Self::Notifications => &[
                 ("makoctl", &["mode", "-t", "do-not-disturb"]),
