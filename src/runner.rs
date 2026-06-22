@@ -50,6 +50,14 @@ impl Runner {
         Some(self.results.get(self.selected)?.action.clone())
     }
 
+    pub fn selection_label(&self) -> String {
+        if self.results.is_empty() {
+            "0 results".to_string()
+        } else {
+            format!("{}/{}", self.selected + 1, self.results.len())
+        }
+    }
+
     pub fn select_next(&mut self) {
         if self.results.is_empty() {
             return;
@@ -154,5 +162,11 @@ mod tests {
         assert_eq!(runner.selected, len - 1);
         runner.select_next();
         assert_eq!(runner.selected, 0);
+    }
+
+    #[test]
+    fn selection_label_should_report_empty_state() {
+        let runner = Runner::new();
+        assert_eq!(runner.selection_label(), "0 results");
     }
 }

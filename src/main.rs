@@ -333,6 +333,7 @@ impl LauncherWindow {
 
     fn render_bar(&self, cx: &App) -> impl IntoElement {
         let desktop = self.desktop.read(cx);
+        let selection = desktop.runner.selection_label();
 
         div()
             .w(px(720.))
@@ -356,12 +357,26 @@ impl LauncherWindow {
                 div()
                     .text_size(px(12.))
                     .text_color(rgb(0xb8b8b8))
-                    .child(desktop.layout.summary()),
+                    .child(format!("{}  {}", selection, desktop.layout.summary())),
             )
     }
 
     fn render_results(&self, cx: &App) -> impl IntoElement {
         let desktop = self.desktop.read(cx);
+
+        if desktop.runner.results.is_empty() {
+            return div()
+                .w(px(720.))
+                .rounded(px(6.))
+                .bg(rgb(0x0f0f0f))
+                .border_1()
+                .border_color(rgb(0x232323))
+                .px(px(12.))
+                .py(px(10.))
+                .text_size(px(12.))
+                .text_color(rgb(0x8d8d8d))
+                .child("No results");
+        }
 
         div().w(px(720.)).gap(px(4.)).p(px(0.)).children(
             desktop
