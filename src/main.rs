@@ -934,7 +934,7 @@ fn launcher_window_options(cx: &App) -> WindowOptions {
     WindowOptions {
         app_id: Some("alpenglowed-launcher".into()),
         titlebar: None,
-        window_bounds: Some(WindowBounds::centered(size(px(760.), px(118.)), cx)),
+        window_bounds: Some(WindowBounds::centered(size(px(760.), px(360.)), cx)),
         kind: WindowKind::PopUp,
         is_movable: false,
         is_resizable: false,
