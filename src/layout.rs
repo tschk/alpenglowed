@@ -387,6 +387,7 @@ impl LayoutView {
     pub fn floating_windows(&self) -> Vec<LayoutWindowView> {
         let mut windows = Vec::new();
         self.collect_floating(&mut windows);
+        windows.sort_by_key(|window| window.focused);
         windows
     }
 
@@ -704,6 +705,17 @@ mod tests {
             _ => panic!("expected remaining tiled window"),
         }
         assert_eq!(view.floating_windows().len(), 1);
+    }
+
+    #[test]
+    fn floating_windows_should_put_focused_last() {
+        let mut layout = LayoutState::new();
+        layout.apply(&LayoutAction::ToggleFloat);
+        layout.apply(&LayoutAction::SplitRow);
+        layout.apply(&LayoutAction::ToggleFloat);
+        let windows = layout.view().floating_windows();
+        assert_eq!(windows.len(), 2);
+        assert!(windows[1].focused);
     }
 
     #[test]
