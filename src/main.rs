@@ -226,13 +226,30 @@ impl LauncherWindow {
     fn render_bar(&self, cx: &App) -> impl IntoElement {
         let desktop = self.desktop.read(cx);
 
-        crepuscularity_gpui::view! {r#"
-            div w-[720px] h-[52px] rounded-[6px] bg-[#050505ee] border border-[#2a2a2a] flex items-center px-[16px] gap-3
-                div flex-1 text-[18px] text-[#ffffff]
-                    "{desktop.query}"
-                div text-[12px] text-[#b8b8b8]
-                    "{desktop.layout.summary()}"
-        "#}
+        div()
+            .w(px(720.))
+            .h(px(52.))
+            .rounded(px(6.))
+            .bg(rgb(0x050505))
+            .border_1()
+            .border_color(rgb(0x2a2a2a))
+            .px(px(16.))
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .child(
+                div()
+                    .flex_1()
+                    .text_size(px(18.))
+                    .text_color(rgb(0xffffff))
+                    .child(desktop.query.clone()),
+            )
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(rgb(0xb8b8b8))
+                    .child(desktop.layout.summary()),
+            )
     }
 
     fn render_results(&self, cx: &App) -> impl IntoElement {
@@ -354,6 +371,23 @@ impl SettingsWindow {
             });
         })
     }
+
+    fn layout_action_button(
+        &self,
+        label: &'static str,
+        action: layout::LayoutAction,
+    ) -> impl IntoElement {
+        self.action_button(label, move |desktop, cx| {
+            desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: action.clone(),
+                    },
+                    cx,
+                );
+            });
+        })
+    }
 }
 
 impl Render for SettingsWindow {
@@ -426,7 +460,32 @@ impl Render for SettingsWindow {
             .child(
                 div()
                     .absolute()
-                    .top(px(204.))
+                    .top(px(170.))
+                    .left(px(36.))
+                    .flex()
+                    .gap(px(8.))
+                    .child(self.layout_action_button("Split row", layout::LayoutAction::SplitRow))
+                    .child(self.layout_action_button(
+                        "Split column",
+                        layout::LayoutAction::SplitColumn,
+                    ))
+                    .child(self.layout_action_button(
+                        "Focus next",
+                        layout::LayoutAction::FocusNext,
+                    ))
+                    .child(self.layout_action_button(
+                        "Close focused",
+                        layout::LayoutAction::CloseFocused,
+                    ))
+                    .child(self.layout_action_button(
+                        "Toggle float",
+                        layout::LayoutAction::ToggleFloat,
+                    )),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(px(250.))
                     .left(px(36.))
                     .flex()
                     .gap(px(8.))
@@ -437,7 +496,7 @@ impl Render for SettingsWindow {
             .child(
                 div()
                     .absolute()
-                    .top(px(294.))
+                    .top(px(340.))
                     .left(px(36.))
                     .flex()
                     .gap(px(8.))
@@ -453,7 +512,7 @@ impl Render for SettingsWindow {
             .child(
                 div()
                     .absolute()
-                    .top(px(384.))
+                    .top(px(430.))
                     .left(px(36.))
                     .flex()
                     .gap(px(8.))
@@ -476,7 +535,7 @@ impl Render for SettingsWindow {
             .child(
                 div()
                     .absolute()
-                    .top(px(474.))
+                    .top(px(520.))
                     .left(px(36.))
                     .flex()
                     .gap(px(8.))
