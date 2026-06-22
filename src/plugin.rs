@@ -17,6 +17,8 @@ pub enum PluginAction {
     Shell { command: String },
     SetWindowMode { mode: WindowMode },
     Layout { action: LayoutAction },
+    ShowStatusBar,
+    HideStatusBar,
     ToggleStatusBar,
     ToggleSettings,
     OpenSettings,
@@ -224,26 +226,36 @@ impl Plugin for SettingsPlugin {
 
     fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
         [
-            ("Settings", "desktop settings"),
-            ("Open settings", "desktop settings"),
-            ("Close settings", "desktop settings"),
-            ("Preferences", "desktop settings"),
+            (
+                "Toggle settings",
+                "desktop settings",
+                PluginAction::ToggleSettings,
+            ),
+            ("Settings", "desktop settings", PluginAction::ToggleSettings),
+            (
+                "Open settings",
+                "desktop settings",
+                PluginAction::OpenSettings,
+            ),
+            (
+                "Close settings",
+                "desktop settings",
+                PluginAction::CloseSettings,
+            ),
+            (
+                "Preferences",
+                "desktop settings",
+                PluginAction::OpenSettings,
+            ),
         ]
         .into_iter()
-        .filter_map(|(title, subtitle)| {
-            let action = if title == "Close settings" {
-                PluginAction::CloseSettings
-            } else if matches!(title, "Settings" | "Open settings" | "Preferences") {
-                PluginAction::ToggleSettings
-            } else {
-                PluginAction::OpenSettings
-            };
+        .filter_map(|(title, subtitle, action)| {
             score(title, query, matcher).map(|score| PluginResult {
                 plugin_id: self.id().to_string(),
                 title: title.to_string(),
                 subtitle: subtitle.to_string(),
                 score,
-                action,
+                action: action.clone(),
             })
         })
         .collect()
@@ -264,16 +276,8 @@ impl Plugin for InterfacePlugin {
                 "interface",
                 PluginAction::ToggleStatusBar,
             ),
-            (
-                "Show status bar",
-                "interface",
-                PluginAction::ToggleStatusBar,
-            ),
-            (
-                "Hide status bar",
-                "interface",
-                PluginAction::ToggleStatusBar,
-            ),
+            ("Show status bar", "interface", PluginAction::ShowStatusBar),
+            ("Hide status bar", "interface", PluginAction::HideStatusBar),
         ]
         .into_iter()
         .filter_map(|(title, subtitle, action)| {

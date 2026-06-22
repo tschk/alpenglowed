@@ -177,6 +177,30 @@ mod tests {
     }
 
     #[test]
+    fn update_should_return_open_settings_action() {
+        let mut runner = Runner::new();
+        runner.query = "open settings".to_string();
+        runner.update();
+
+        assert!(runner
+            .results
+            .iter()
+            .any(|result| result.action == PluginAction::OpenSettings));
+    }
+
+    #[test]
+    fn update_should_return_show_status_bar_action() {
+        let mut runner = Runner::new();
+        runner.query = "show status bar".to_string();
+        runner.update();
+
+        assert!(runner
+            .results
+            .iter()
+            .any(|result| result.action == PluginAction::ShowStatusBar));
+    }
+
+    #[test]
     fn update_should_return_close_settings_action() {
         let mut runner = Runner::new();
         runner.query = "close settings".to_string();

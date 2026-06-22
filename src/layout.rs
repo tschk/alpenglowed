@@ -346,14 +346,14 @@ impl LayoutState {
 }
 
 impl LayoutView {
-    pub fn into_focused_detail(&self) -> Option<String> {
+    pub fn focused_detail(&self) -> Option<String> {
         match self {
             LayoutView::Window(window) if window.focused => Some(window.detail.clone()),
             LayoutView::Window(_) => None,
             LayoutView::Container(container) => container
                 .children
                 .iter()
-                .find_map(|child| child.node.into_focused_detail()),
+                .find_map(|child| child.node.focused_detail()),
         }
     }
 

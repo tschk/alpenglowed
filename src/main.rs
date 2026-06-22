@@ -109,6 +109,16 @@ impl DesktopModel {
                     .set_focused_window_content(action.title(), self.layout.summary());
                 let _ = session::dispatch(&session::SessionRequest::Layout { action });
             }
+            PluginAction::ShowStatusBar => {
+                self.status_bar = true;
+                self.layout
+                    .set_focused_window_content("Status bar", "enabled");
+            }
+            PluginAction::HideStatusBar => {
+                self.status_bar = false;
+                self.layout
+                    .set_focused_window_content("Status bar", "disabled");
+            }
             PluginAction::ToggleStatusBar => {
                 self.toggle_status_bar(cx);
                 self.layout.set_focused_window_content(
@@ -130,7 +140,10 @@ impl DesktopModel {
                     self.layout.set_focused_window_content("Settings", "opened");
                 }
             }
-            PluginAction::OpenSettings => {}
+            PluginAction::OpenSettings => {
+                open_or_focus_settings(&cx.entity(), cx);
+                self.layout.set_focused_window_content("Settings", "opened");
+            }
             PluginAction::CloseSettings => {
                 if let Some(handle) = self.settings {
                     let _ = handle.update(cx, |_, window, _| window.remove_window());
@@ -319,7 +332,7 @@ impl DesktopWindow {
         let detail = desktop
             .layout
             .view()
-            .into_focused_detail()
+            .focused_detail()
             .unwrap_or_else(|| "Ready".to_string());
 
         div()
@@ -393,9 +406,7 @@ impl LauncherWindow {
     fn confirm(&mut self, cx: &mut Context<Self>) {
         let action = self.desktop.read(cx).runner.confirm();
         if let Some(action) = action {
-            if matches!(action, PluginAction::OpenSettings) {
-                open_or_focus_settings(&self.desktop, cx);
-            } else if !matches!(action, PluginAction::None) {
+            if !matches!(action, PluginAction::None) {
                 self.desktop.update(cx, |desktop, cx| {
                     desktop.apply(action, cx);
                 });
@@ -512,9 +523,7 @@ impl LauncherWindow {
                             });
                             let action = desktop.read(cx).runner.confirm();
                             if let Some(action) = action {
-                                if matches!(action, PluginAction::OpenSettings) {
-                                    open_or_focus_settings(&desktop, cx);
-                                } else if !matches!(action, PluginAction::None) {
+                                if !matches!(action, PluginAction::None) {
                                     desktop.update(cx, |desktop, cx| {
                                         desktop.apply(action, cx);
                                     });
@@ -670,7 +679,7 @@ impl Render for SettingsWindow {
         let focused_detail = desktop
             .layout
             .view()
-            .into_focused_detail()
+            .focused_detail()
             .unwrap_or_else(|| "Ready".to_string());
         let session_status = if desktop.session_control {
             "Connected to compositor"
@@ -958,7 +967,7 @@ impl Render for LauncherWindow {
             );
 
         if status_bar {
-            root = root.child(DesktopWindow::render_status_bar(&self.desktop.read(cx)));
+            root = root.child(DesktopWindow::render_status_bar(self.desktop.read(cx)));
         }
 
         root
@@ -1127,7 +1136,7 @@ impl Render for DesktopWindow {
             );
 
         if status {
-            root = root.child(Self::render_status_bar(&desktop));
+            root = root.child(Self::render_status_bar(desktop));
         }
 
         root
