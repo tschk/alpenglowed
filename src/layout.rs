@@ -24,6 +24,10 @@ pub enum LayoutAction {
     SplitRow,
     SplitColumn,
     Reset,
+    NudgeLeft,
+    NudgeRight,
+    NudgeUp,
+    NudgeDown,
     FocusNext,
     CloseFocused,
     ToggleFloat,
@@ -37,6 +41,10 @@ impl LayoutAction {
             Self::SplitRow => "Split row",
             Self::SplitColumn => "Split column",
             Self::Reset => "Reset layout",
+            Self::NudgeLeft => "Nudge left",
+            Self::NudgeRight => "Nudge right",
+            Self::NudgeUp => "Nudge up",
+            Self::NudgeDown => "Nudge down",
             Self::FocusNext => "Focus next",
             Self::CloseFocused => "Close focused",
             Self::ToggleFloat => "Toggle float",
@@ -66,6 +74,8 @@ pub struct LayoutWindowView {
     pub detail: String,
     pub floating: bool,
     pub focused: bool,
+    pub x: f32,
+    pub y: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +102,8 @@ struct WindowNode {
     title: String,
     detail: String,
     floating: bool,
+    x: f32,
+    y: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -123,6 +135,8 @@ impl LayoutState {
                             title: "Workspace".to_string(),
                             detail: "Ready".to_string(),
                             floating: false,
+                            x: 72.,
+                            y: 72.,
                         }),
                     },
                     ChildNode {
@@ -132,6 +146,8 @@ impl LayoutState {
                             title: "Scratch".to_string(),
                             detail: "Ready".to_string(),
                             floating: false,
+                            x: 100.,
+                            y: 100.,
                         }),
                     },
                 ],
@@ -146,6 +162,10 @@ impl LayoutState {
             LayoutAction::SplitRow => self.split(Axis::Row),
             LayoutAction::SplitColumn => self.split(Axis::Column),
             LayoutAction::Reset => *self = Self::seed(),
+            LayoutAction::NudgeLeft => self.nudge_focused(-24., 0.),
+            LayoutAction::NudgeRight => self.nudge_focused(24., 0.),
+            LayoutAction::NudgeUp => self.nudge_focused(0., -24.),
+            LayoutAction::NudgeDown => self.nudge_focused(0., 24.),
             LayoutAction::FocusNext => self.focus_next(),
             LayoutAction::CloseFocused => self.close_focused(),
             LayoutAction::ToggleFloat => self.toggle_float(),
@@ -245,6 +265,15 @@ impl LayoutState {
         }
     }
 
+    fn nudge_focused(&mut self, dx: f32, dy: f32) {
+        if let Some(window) = find_mut(&mut self.root, self.focused) {
+            if window.floating {
+                window.x = (window.x + dx).max(16.);
+                window.y = (window.y + dy).max(16.);
+            }
+        }
+    }
+
     fn resize_focused(&mut self, delta: f32) {
         resize_focused(&mut self.root, self.focused, delta);
     }
@@ -273,6 +302,8 @@ impl LayoutState {
                 detail: window.detail.clone(),
                 floating: window.floating,
                 focused: window.id == self.focused,
+                x: window.x,
+                y: window.y,
             }),
             Node::Container(container) => LayoutView::Container(LayoutContainerView {
                 axis: container.axis.clone(),
@@ -387,6 +418,8 @@ fn split_window(node: &mut Node, id: usize, axis: Axis, new_id: usize, title: St
                             title,
                             detail: "Ready".to_string(),
                             floating: false,
+                            x: 72. + new_id as f32 * 20.,
+                            y: 72. + new_id as f32 * 20.,
                         }),
                     },
                 ],
@@ -509,6 +542,30 @@ mod tests {
         assert_eq!(layout.summary(), "2 tiled 0 floating");
         assert_eq!(layout.axis(), "row");
         assert_eq!(layout.focused_title(), "Workspace");
+    }
+
+    #[test]
+    fn nudge_should_move_floating_window_only() {
+        let mut layout = LayoutState::new();
+        layout.apply(&LayoutAction::ToggleFloat);
+        let before = match layout.view() {
+            LayoutView::Container(container) => match &container.children[0].node {
+                LayoutView::Window(window) => (window.x, window.y),
+                _ => panic!("expected window"),
+            },
+            _ => panic!("expected container"),
+        };
+        layout.apply(&LayoutAction::NudgeRight);
+        layout.apply(&LayoutAction::NudgeDown);
+        let after = match layout.view() {
+            LayoutView::Container(container) => match &container.children[0].node {
+                LayoutView::Window(window) => (window.x, window.y),
+                _ => panic!("expected window"),
+            },
+            _ => panic!("expected container"),
+        };
+        assert!(after.0 > before.0);
+        assert!(after.1 > before.1);
     }
 
     #[test]

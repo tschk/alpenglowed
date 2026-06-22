@@ -26,6 +26,10 @@ actions!(
         SplitRow,
         SplitColumn,
         ResetLayout,
+        NudgeLeft,
+        NudgeRight,
+        NudgeUp,
+        NudgeDown,
         GrowPane,
         ShrinkPane,
         FocusNextPane,
@@ -240,13 +244,12 @@ impl DesktopWindow {
     fn render_floating_window(
         desktop: &Entity<DesktopModel>,
         window: &LayoutWindowView,
-        index: usize,
+        _index: usize,
     ) -> Div {
-        let offset = px(72. + index as f32 * 28.);
         div()
             .absolute()
-            .top(offset)
-            .left(offset)
+            .top(px(window.y))
+            .left(px(window.x))
             .w(px(420.))
             .h(px(280.))
             .child(Self::render_window(desktop, window))
@@ -667,6 +670,14 @@ impl Render for SettingsWindow {
                             div text-[#8d8d8d] text-xs
                                 "Cmd-Alt-R reset layout"
                             div text-[#8d8d8d] text-xs
+                                "Cmd-Alt-Left nudge left"
+                            div text-[#8d8d8d] text-xs
+                                "Cmd-Alt-Right nudge right"
+                            div text-[#8d8d8d] text-xs
+                                "Cmd-Alt-Up nudge up"
+                            div text-[#8d8d8d] text-xs
+                                "Cmd-Alt-Down nudge down"
+                            div text-[#8d8d8d] text-xs
                                 "Cmd-Alt-L grow focused"
                             div text-[#8d8d8d] text-xs
                                 "Cmd-Alt-J shrink focused"
@@ -695,6 +706,16 @@ impl Render for SettingsWindow {
                     .flex()
                     .gap(px(8.))
                     .child(self.layout_action_button("Reset layout", layout::LayoutAction::Reset))
+                    .child(self.layout_action_button("Nudge left", layout::LayoutAction::NudgeLeft))
+                    .child(self.layout_action_button(
+                        "Nudge right",
+                        layout::LayoutAction::NudgeRight,
+                    ))
+                    .child(self.layout_action_button("Nudge up", layout::LayoutAction::NudgeUp))
+                    .child(self.layout_action_button(
+                        "Nudge down",
+                        layout::LayoutAction::NudgeDown,
+                    ))
                     .child(self.layout_action_button("Split row", layout::LayoutAction::SplitRow))
                     .child(self.layout_action_button(
                         "Split column",
@@ -913,6 +934,46 @@ impl Render for DesktopWindow {
                     desktop.apply(
                         PluginAction::Layout {
                             action: layout::LayoutAction::Reset,
+                        },
+                        cx,
+                    );
+                });
+            }))
+            .on_action(cx.listener(|this, _: &NudgeLeft, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::NudgeLeft,
+                        },
+                        cx,
+                    );
+                });
+            }))
+            .on_action(cx.listener(|this, _: &NudgeRight, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::NudgeRight,
+                        },
+                        cx,
+                    );
+                });
+            }))
+            .on_action(cx.listener(|this, _: &NudgeUp, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::NudgeUp,
+                        },
+                        cx,
+                    );
+                });
+            }))
+            .on_action(cx.listener(|this, _: &NudgeDown, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::NudgeDown,
                         },
                         cx,
                     );
@@ -1148,6 +1209,10 @@ fn main() {
             KeyBinding::new("cmd-alt-h", SplitRow, None),
             KeyBinding::new("cmd-alt-v", SplitColumn, None),
             KeyBinding::new("cmd-alt-r", ResetLayout, None),
+            KeyBinding::new("cmd-alt-left", NudgeLeft, None),
+            KeyBinding::new("cmd-alt-right", NudgeRight, None),
+            KeyBinding::new("cmd-alt-up", NudgeUp, None),
+            KeyBinding::new("cmd-alt-down", NudgeDown, None),
             KeyBinding::new("cmd-alt-l", GrowPane, None),
             KeyBinding::new("cmd-alt-j", ShrinkPane, None),
         ]);
