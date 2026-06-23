@@ -132,7 +132,11 @@ impl DesktopAction {
             Self::AudioMute => &[("wpctl", &["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"])],
             Self::AudioUp => &[("wpctl", &["set-volume", "@DEFAULT_AUDIO_SINK@", "5%+"])],
             Self::AudioDown => &[("wpctl", &["set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"])],
-            Self::Display => &[("wlr-randr", &[]), ("arandr", &[])],
+            Self::Display => &[
+                ("wlr-randr", &[]),
+                ("arandr", &[]),
+                ("xrandr", &["--query"]),
+            ],
             Self::Screenshot => &[
                 ("grim", &["$HOME/Pictures/alpenglow-screenshot.png"]),
                 (
@@ -151,7 +155,11 @@ impl DesktopAction {
                     ],
                 ),
             ],
-            Self::Clipboard => &[("cliphist", &["list"])],
+            Self::Clipboard => &[
+                ("cliphist", &["list"]),
+                ("wl-paste", &[]),
+                ("wl-paste", &["--list-types"]),
+            ],
             Self::Notifications => &[
                 ("makoctl", &["mode", "-t", "do-not-disturb"]),
                 ("notify-send", &["alpenglowed", "notifications check"]),
