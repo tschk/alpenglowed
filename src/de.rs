@@ -1,5 +1,5 @@
-use std::process::Command;
 use std::fs;
+use std::process::Command;
 use wayland_client::Connection;
 
 use serde::{Deserialize, Serialize};
@@ -158,6 +158,7 @@ impl DesktopAction {
             ],
             Self::Clipboard => &[
                 ("cliphist", &["list"]),
+                ("xclip", &["-o", "-selection", "clipboard"]),
                 ("wl-paste", &[]),
                 ("wl-paste", &["--list-types"]),
             ],
@@ -335,20 +336,30 @@ fn weston_runtime_env() -> Option<Vec<(String, String)>> {
 fn safe_smoke_command(action: &DesktopAction) -> Option<ResolvedCommand> {
     match action {
         DesktopAction::Audio => Some(ResolvedCommand {
-            program: "wpctl".to_string(),
-            args: vec!["status".to_string()],
+            program: "pactl".to_string(),
+            args: vec!["info".to_string()],
         }),
         DesktopAction::Display => Some(ResolvedCommand {
             program: "xrandr".to_string(),
             args: vec!["--query".to_string()],
         }),
         DesktopAction::Clipboard => Some(ResolvedCommand {
-            program: "wl-paste".to_string(),
-            args: vec!["--list-types".to_string()],
+            program: "xclip".to_string(),
+            args: vec![
+                "-o".to_string(),
+                "-selection".to_string(),
+                "clipboard".to_string(),
+            ],
         }),
         DesktopAction::Notifications => Some(ResolvedCommand {
-            program: "notify-send".to_string(),
-            args: vec!["alpenglowed".to_string(), "notifications smoke".to_string()],
+            program: "dbus-send".to_string(),
+            args: vec![
+                "--session".to_string(),
+                "--dest=org.freedesktop.Notifications".to_string(),
+                "--type=method_call".to_string(),
+                "/org/freedesktop/Notifications".to_string(),
+                "org.freedesktop.DBus.Peer.Ping".to_string(),
+            ],
         }),
         DesktopAction::Processes => Some(ResolvedCommand {
             program: "top".to_string(),
