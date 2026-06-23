@@ -963,6 +963,18 @@ impl SettingsSection {
             Self::Session => "state and shortcuts",
         }
     }
+
+    fn from_env() -> Self {
+        let value = std::env::args()
+            .find_map(|arg| arg.strip_prefix("--settings-section=").map(str::to_string))
+            .or_else(|| std::env::var("ALPENGLOWED_SETTINGS_SECTION").ok());
+        match value.as_deref() {
+            Some("system") => Self::System,
+            Some("interface") => Self::Interface,
+            Some("session") => Self::Session,
+            _ => Self::Windows,
+        }
+    }
 }
 
 impl SettingsWindow {
@@ -974,7 +986,7 @@ impl SettingsWindow {
 
         Self {
             desktop,
-            section: SettingsSection::Windows,
+            section: SettingsSection::from_env(),
         }
     }
 
