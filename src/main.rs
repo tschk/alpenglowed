@@ -934,6 +934,26 @@ impl LauncherWindow {
 
 struct SettingsWindow {
     desktop: Entity<DesktopModel>,
+    section: SettingsSection,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsSection {
+    Windows,
+    System,
+    Interface,
+    Session,
+}
+
+impl SettingsSection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Windows => "Windows",
+            Self::System => "System",
+            Self::Interface => "Interface",
+            Self::Session => "Session",
+        }
+    }
 }
 
 impl SettingsWindow {
@@ -943,7 +963,10 @@ impl SettingsWindow {
         })
         .detach();
 
-        Self { desktop }
+        Self {
+            desktop,
+            section: SettingsSection::Windows,
+        }
     }
 
     fn mode_button(&self, label: &'static str, mode: WindowMode, active: bool) -> impl IntoElement {
@@ -1060,6 +1083,28 @@ impl SettingsWindow {
             )
             .child(content)
     }
+
+    fn nav_button(&self, cx: &Context<Self>, section: SettingsSection) -> impl IntoElement {
+        let active = self.section == section;
+        div()
+            .id(SharedString::from(format!(
+                "settings-nav-{}",
+                section.label()
+            )))
+            .px(px(10.))
+            .py(px(7.))
+            .rounded(px(3.))
+            .bg(rgb(if active { 0xf0f0f0 } else { 0x030303 }))
+            .border_1()
+            .border_color(rgb(if active { 0xf0f0f0 } else { 0x1b1b1b }))
+            .text_color(rgb(if active { 0x050505 } else { 0xd0d0d0 }))
+            .cursor_pointer()
+            .child(section.label())
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.section = section;
+                cx.notify();
+            }))
+    }
 }
 
 impl Render for SettingsWindow {
@@ -1142,261 +1187,278 @@ impl Render for SettingsWindow {
                             .gap(px(14.))
                             .child(
                                 div()
+                                    .w(px(136.))
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(8.))
+                                    .rounded(px(3.))
+                                    .bg(rgb(0x050505))
+                                    .border_1()
+                                    .border_color(rgb(0x121212))
+                                    .p(px(10.))
+                                    .child(self.nav_button(cx, SettingsSection::Windows))
+                                    .child(self.nav_button(cx, SettingsSection::System))
+                                    .child(self.nav_button(cx, SettingsSection::Interface))
+                                    .child(self.nav_button(cx, SettingsSection::Session)),
+                            )
+                            .child(
+                                div()
                                     .flex_1()
                                     .flex()
                                     .flex_col()
                                     .gap(px(14.))
-                                    .child(
-                                        self.section_card(
-                                            "Windows",
-                                            format!("root {layout_axis} • detail {focused_detail}"),
-                                            div()
-                                                .flex()
-                                                .flex_wrap()
-                                                .gap(px(8.))
-                                                .child(self.mode_button(
-                                                    "Tile windows",
-                                                    WindowMode::Tiling,
-                                                    tiling,
-                                                ))
-                                                .child(self.mode_button(
-                                                    "Float windows",
-                                                    WindowMode::Floating,
-                                                    floating,
-                                                ))
-                                                .child(self.layout_action_button(
-                                                    "Split row",
-                                                    layout::LayoutAction::SplitRow,
-                                                ))
-                                                .child(self.layout_action_button(
-                                                    "Split column",
-                                                    layout::LayoutAction::SplitColumn,
-                                                ))
-                                                .child(self.layout_action_button(
-                                                    "Flip layout axis",
-                                                    layout::LayoutAction::FlipAxis,
-                                                ))
-                                                .child(self.layout_action_button(
-                                                    "Focus next",
-                                                    layout::LayoutAction::FocusNext,
-                                                ))
-                                                .child(self.layout_action_button(
-                                                    "Toggle float",
-                                                    layout::LayoutAction::ToggleFloat,
-                                                ))
-                                                .child(self.layout_action_button(
-                                                    "Close focused",
-                                                    layout::LayoutAction::CloseFocused,
-                                                )),
-                                        ),
-                                    )
-                                    .child(
-                                        self.section_card(
-                                            "Layout",
-                                            "nudge, resize, reset",
-                                            div()
-                                                .flex()
-                                                .flex_wrap()
-                                                .gap(px(8.))
-                                                .child(self.layout_action_button(
-                                                    "Reset layout",
-                                                    layout::LayoutAction::Reset,
-                                                ))
-                                                .child(self.layout_action_button(
-                                                    "Nudge left",
-                                                    layout::LayoutAction::NudgeLeft,
-                                                ))
-                                                .child(self.layout_action_button(
-                                                    "Nudge right",
-                                                    layout::LayoutAction::NudgeRight,
-                                                ))
-                                                .child(self.layout_action_button(
-                                                    "Nudge up",
-                                                    layout::LayoutAction::NudgeUp,
-                                                ))
-                                                .child(self.layout_action_button(
-                                                    "Nudge down",
-                                                    layout::LayoutAction::NudgeDown,
-                                                ))
-                                                .child(self.layout_action_button(
-                                                    "Expand window",
-                                                    layout::LayoutAction::ExpandWindow,
-                                                ))
-                                                .child(self.layout_action_button(
-                                                    "Contract window",
-                                                    layout::LayoutAction::ContractWindow,
-                                                ))
-                                                .child(self.layout_action_button(
-                                                    "Grow focused",
-                                                    layout::LayoutAction::GrowFocused,
-                                                ))
-                                                .child(self.layout_action_button(
-                                                    "Shrink focused",
-                                                    layout::LayoutAction::ShrinkFocused,
-                                                )),
-                                        ),
-                                    )
-                                    .child(
-                                        self.section_card(
-                                            "System",
-                                            "fast desktop actions from launcher and control center",
-                                            div()
-                                                .flex()
-                                                .flex_wrap()
-                                                .gap(px(8.))
-                                                .child(self.desktop_action_button(
-                                                    "Lock",
-                                                    de::DesktopAction::Lock,
-                                                ))
-                                                .child(self.desktop_action_button(
-                                                    "Terminal",
-                                                    de::DesktopAction::Terminal,
-                                                ))
-                                                .child(self.desktop_action_button(
-                                                    "Files",
-                                                    de::DesktopAction::Files,
-                                                ))
-                                                .child(self.desktop_action_button(
-                                                    "Screenshot",
-                                                    de::DesktopAction::Screenshot,
-                                                ))
-                                                .child(self.desktop_action_button(
-                                                    "Clipboard",
-                                                    de::DesktopAction::Clipboard,
-                                                ))
-                                                .child(self.desktop_action_button(
-                                                    "Wi-Fi",
-                                                    de::DesktopAction::Wifi,
-                                                ))
-                                                .child(self.desktop_action_button(
-                                                    "Notifications",
-                                                    de::DesktopAction::Notifications,
-                                                ))
-                                                .child(self.desktop_action_button(
-                                                    "Logout",
-                                                    de::DesktopAction::Logout,
-                                                ))
-                                                .child(self.desktop_action_button(
-                                                    "Suspend",
-                                                    de::DesktopAction::Suspend,
-                                                ))
-                                                .child(self.desktop_action_button(
-                                                    "Reboot",
-                                                    de::DesktopAction::Reboot,
-                                                ))
-                                                .child(self.desktop_action_button(
-                                                    "Shutdown",
-                                                    de::DesktopAction::Shutdown,
-                                                )),
-                                        ),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .w(px(280.))
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(14.))
-                                    .child(
-                                        self.section_card(
-                                            "Interface",
-                                            format!("status bar {status_bar}"),
-                                            div()
-                                                .flex()
-                                                .flex_col()
-                                                .gap(px(8.))
-                                                .child(self.action_button(
-                                                    "Toggle status bar",
-                                                    |desktop, cx| {
-                                                        desktop.update(cx, |desktop, cx| {
-                                                            desktop.toggle_status_bar(cx)
-                                                        });
-                                                    },
-                                                ))
-                                                .child(self.action_button(
-                                                    "Focus launcher",
-                                                    |desktop, cx| {
-                                                        focus_or_open_launcher(desktop, cx);
-                                                    },
-                                                ))
-                                                .child(self.action_button(
-                                                    "Reset query",
-                                                    |desktop, cx| {
-                                                        desktop.update(cx, |desktop, cx| {
-                                                            desktop.set_query(
-                                                                "window".to_string(),
-                                                                cx,
-                                                            );
-                                                        });
-                                                    },
-                                                )),
-                                        ),
-                                    )
-                                    .child(
-                                        self.section_card(
-                                            "Session",
-                                            session_status,
-                                            div()
-                                                .flex()
-                                                .flex_col()
-                                                .gap(px(6.))
-                                                .child(
-                                                    div()
-                                                        .text_size(px(11.))
-                                                        .text_color(rgb(0x8d8d8d))
-                                                        .child(format!("Focused pane: {focused}")),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_size(px(11.))
-                                                        .text_color(rgb(0x8d8d8d))
-                                                        .child(format!(
-                                                            "Mode: {}",
-                                                            desktop.mode.label()
-                                                        )),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_size(px(11.))
-                                                        .text_color(rgb(0x8d8d8d))
-                                                        .child(format!(
-                                                            "Layout axis: {layout_axis}"
-                                                        )),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_size(px(11.))
-                                                        .text_color(rgb(0x8d8d8d))
-                                                        .child(format!(
-                                                            "Last action: {last_action}"
-                                                        )),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_size(px(11.))
-                                                        .text_color(rgb(0x8d8d8d))
-                                                        .child(
-                                                            "Desktop actions show session dispatch or local fallback command",
-                                                        ),
-                                                ),
-                                        ),
-                                    )
-                                    .child(
-                                        self.section_card(
-                                            "Shortcuts",
-                                            "keyboard-first shell actions",
-                                            div()
-                                                .flex()
-                                                .flex_col()
-                                                .gap(px(6.))
-                                                .children(shortcuts.into_iter().map(|line| {
-                                                    div()
-                                                        .text_size(px(11.))
-                                                        .text_color(rgb(0x8d8d8d))
-                                                        .child(line)
-                                                })),
-                                        ),
-                                    ),
+                                    .when(self.section == SettingsSection::Windows, |panel| {
+                                        panel.child(
+                                            self.section_card(
+                                                "Windows",
+                                                format!("root {layout_axis} • detail {focused_detail}"),
+                                                div()
+                                                    .flex()
+                                                    .flex_wrap()
+                                                    .gap(px(8.))
+                                                    .child(self.mode_button(
+                                                        "Tile windows",
+                                                        WindowMode::Tiling,
+                                                        tiling,
+                                                    ))
+                                                    .child(self.mode_button(
+                                                        "Float windows",
+                                                        WindowMode::Floating,
+                                                        floating,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Split row",
+                                                        layout::LayoutAction::SplitRow,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Split column",
+                                                        layout::LayoutAction::SplitColumn,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Flip layout axis",
+                                                        layout::LayoutAction::FlipAxis,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Focus next",
+                                                        layout::LayoutAction::FocusNext,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Toggle float",
+                                                        layout::LayoutAction::ToggleFloat,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Close focused",
+                                                        layout::LayoutAction::CloseFocused,
+                                                    )),
+                                            ),
+                                        )
+                                        .child(
+                                            self.section_card(
+                                                "Layout",
+                                                "nudge, resize, reset",
+                                                div()
+                                                    .flex()
+                                                    .flex_wrap()
+                                                    .gap(px(8.))
+                                                    .child(self.layout_action_button(
+                                                        "Reset layout",
+                                                        layout::LayoutAction::Reset,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Nudge left",
+                                                        layout::LayoutAction::NudgeLeft,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Nudge right",
+                                                        layout::LayoutAction::NudgeRight,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Nudge up",
+                                                        layout::LayoutAction::NudgeUp,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Nudge down",
+                                                        layout::LayoutAction::NudgeDown,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Expand window",
+                                                        layout::LayoutAction::ExpandWindow,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Contract window",
+                                                        layout::LayoutAction::ContractWindow,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Grow focused",
+                                                        layout::LayoutAction::GrowFocused,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Shrink focused",
+                                                        layout::LayoutAction::ShrinkFocused,
+                                                    )),
+                                            ),
+                                        )
+                                    })
+                                    .when(self.section == SettingsSection::System, |panel| {
+                                        panel.child(
+                                            self.section_card(
+                                                "System",
+                                                "fast desktop actions from launcher and control center",
+                                                div()
+                                                    .flex()
+                                                    .flex_wrap()
+                                                    .gap(px(8.))
+                                                    .child(self.desktop_action_button(
+                                                        "Lock",
+                                                        de::DesktopAction::Lock,
+                                                    ))
+                                                    .child(self.desktop_action_button(
+                                                        "Terminal",
+                                                        de::DesktopAction::Terminal,
+                                                    ))
+                                                    .child(self.desktop_action_button(
+                                                        "Files",
+                                                        de::DesktopAction::Files,
+                                                    ))
+                                                    .child(self.desktop_action_button(
+                                                        "Screenshot",
+                                                        de::DesktopAction::Screenshot,
+                                                    ))
+                                                    .child(self.desktop_action_button(
+                                                        "Clipboard",
+                                                        de::DesktopAction::Clipboard,
+                                                    ))
+                                                    .child(self.desktop_action_button(
+                                                        "Wi-Fi",
+                                                        de::DesktopAction::Wifi,
+                                                    ))
+                                                    .child(self.desktop_action_button(
+                                                        "Notifications",
+                                                        de::DesktopAction::Notifications,
+                                                    ))
+                                                    .child(self.desktop_action_button(
+                                                        "Logout",
+                                                        de::DesktopAction::Logout,
+                                                    ))
+                                                    .child(self.desktop_action_button(
+                                                        "Suspend",
+                                                        de::DesktopAction::Suspend,
+                                                    ))
+                                                    .child(self.desktop_action_button(
+                                                        "Reboot",
+                                                        de::DesktopAction::Reboot,
+                                                    ))
+                                                    .child(self.desktop_action_button(
+                                                        "Shutdown",
+                                                        de::DesktopAction::Shutdown,
+                                                    )),
+                                            ),
+                                        )
+                                    })
+                                    .when(self.section == SettingsSection::Interface, |panel| {
+                                        panel.child(
+                                            self.section_card(
+                                                "Interface",
+                                                format!("status bar {status_bar}"),
+                                                div()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap(px(8.))
+                                                    .child(self.action_button(
+                                                        "Toggle status bar",
+                                                        |desktop, cx| {
+                                                            desktop.update(cx, |desktop, cx| {
+                                                                desktop.toggle_status_bar(cx)
+                                                            });
+                                                        },
+                                                    ))
+                                                    .child(self.action_button(
+                                                        "Focus launcher",
+                                                        |desktop, cx| {
+                                                            focus_or_open_launcher(desktop, cx);
+                                                        },
+                                                    ))
+                                                    .child(self.action_button(
+                                                        "Reset query",
+                                                        |desktop, cx| {
+                                                            desktop.update(cx, |desktop, cx| {
+                                                                desktop.set_query(
+                                                                    "window".to_string(),
+                                                                    cx,
+                                                                );
+                                                            });
+                                                        },
+                                                    )),
+                                            ),
+                                        )
+                                    })
+                                    .when(self.section == SettingsSection::Session, |panel| {
+                                        panel.child(
+                                            self.section_card(
+                                                "Session",
+                                                session_status,
+                                                div()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap(px(6.))
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(11.))
+                                                            .text_color(rgb(0x8d8d8d))
+                                                            .child(format!("Focused pane: {focused}")),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(11.))
+                                                            .text_color(rgb(0x8d8d8d))
+                                                            .child(format!(
+                                                                "Mode: {}",
+                                                                desktop.mode.label()
+                                                            )),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(11.))
+                                                            .text_color(rgb(0x8d8d8d))
+                                                            .child(format!(
+                                                                "Layout axis: {layout_axis}"
+                                                            )),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(11.))
+                                                            .text_color(rgb(0x8d8d8d))
+                                                            .child(format!(
+                                                                "Last action: {last_action}"
+                                                            )),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(11.))
+                                                            .text_color(rgb(0x8d8d8d))
+                                                            .child(
+                                                                "Desktop actions show session dispatch or local fallback command",
+                                                            ),
+                                                    ),
+                                            ),
+                                        )
+                                        .child(
+                                            self.section_card(
+                                                "Shortcuts",
+                                                "keyboard-first shell actions",
+                                                div()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap(px(6.))
+                                                    .children(shortcuts.into_iter().map(|line| {
+                                                        div()
+                                                            .text_size(px(11.))
+                                                            .text_color(rgb(0x8d8d8d))
+                                                            .child(line)
+                                                    })),
+                                            ),
+                                        )
+                                    }),
                             ),
                     ),
             ),
