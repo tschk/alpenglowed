@@ -8,6 +8,7 @@ use std::cmp::Reverse;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -636,23 +637,27 @@ fn score(title: &str, query: &str, matcher: &SkimMatcherV2) -> Option<i64> {
 }
 
 fn apps() -> Vec<String> {
-    let mut apps = Vec::new();
-    if let Ok(path) = std::env::var("PATH") {
-        for dir in std::env::split_paths(&path) {
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    if let Some(name) = entry.file_name().to_str() {
-                        if !name.starts_with('.') {
-                            apps.push(name.to_owned());
+    static APPS: OnceLock<Vec<String>> = OnceLock::new();
+    APPS.get_or_init(|| {
+        let mut apps = Vec::new();
+        if let Ok(path) = std::env::var("PATH") {
+            for dir in std::env::split_paths(&path) {
+                if let Ok(entries) = std::fs::read_dir(dir) {
+                    for entry in entries.flatten() {
+                        if let Some(name) = entry.file_name().to_str() {
+                            if !name.starts_with('.') {
+                                apps.push(name.to_owned());
+                            }
                         }
                     }
                 }
             }
         }
-    }
-    apps.sort();
-    apps.dedup();
-    apps
+        apps.sort();
+        apps.dedup();
+        apps
+    })
+    .clone()
 }
 
 fn program_available(program: &str) -> bool {

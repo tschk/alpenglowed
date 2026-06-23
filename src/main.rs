@@ -951,7 +951,7 @@ impl LauncherWindow {
             desktop
                 .runner
                 .selected_result()
-                .map(|result| result.subtitle.clone())
+                .map(|result| format!("{} via {}", result.subtitle, result.plugin_id))
                 .unwrap_or_else(|| "no match".to_string())
         };
         let meta = shell_text_component(
@@ -1034,10 +1034,11 @@ impl LauncherWindow {
                     .map(|(index, result)| {
                         let selected = index == desktop.runner.selected;
                         let desktop = self.desktop.clone();
+                        let detail = format!("{} via {}", result.subtitle, result.plugin_id);
                         let row = shell_row_component(
                             if selected { ">" } else { "$" },
                             &result.title,
-                            &result.subtitle,
+                            &detail,
                         );
                         div()
                             .id(SharedString::from(format!("launcher-result-{index}")))
