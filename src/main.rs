@@ -1362,20 +1362,86 @@ impl Render for SettingsWindow {
                                                     .flex_wrap()
                                                     .gap(px(8.))
                                                     .child(self.desktop_action_button(
+                                                        "Apps",
+                                                        de::DesktopAction::Apps,
+                                                    ))
+                                                    .child(self.desktop_action_button(
                                                         "Terminal",
                                                         de::DesktopAction::Terminal,
                                                     ))
                                                     .child(self.desktop_action_button(
                                                         "Files",
                                                         de::DesktopAction::Files,
-                                                    ))
+                                                    )),
+                                            ),
+                                        )
+                                        .child(
+                                            self.section_card(
+                                                "Network",
+                                                "wireless controls",
+                                                div()
+                                                    .flex()
+                                                    .flex_wrap()
+                                                    .gap(px(8.))
                                                     .child(self.desktop_action_button(
                                                         "Wi-Fi",
                                                         de::DesktopAction::Wifi,
                                                     ))
                                                     .child(self.desktop_action_button(
+                                                        "Wi-Fi on",
+                                                        de::DesktopAction::WifiOn,
+                                                    ))
+                                                    .child(self.desktop_action_button(
+                                                        "Wi-Fi off",
+                                                        de::DesktopAction::WifiOff,
+                                                    )),
+                                            ),
+                                        )
+                                        .child(
+                                            self.section_card(
+                                                "Audio",
+                                                "device and volume controls",
+                                                div()
+                                                    .flex()
+                                                    .flex_wrap()
+                                                    .gap(px(8.))
+                                                    .child(self.desktop_action_button(
+                                                        "Audio",
+                                                        de::DesktopAction::Audio,
+                                                    ))
+                                                    .child(self.desktop_action_button(
+                                                        "Mute",
+                                                        de::DesktopAction::AudioMute,
+                                                    ))
+                                                    .child(self.desktop_action_button(
+                                                        "Volume up",
+                                                        de::DesktopAction::AudioUp,
+                                                    ))
+                                                    .child(self.desktop_action_button(
+                                                        "Volume down",
+                                                        de::DesktopAction::AudioDown,
+                                                    )),
+                                            ),
+                                        )
+                                        .child(
+                                            self.section_card(
+                                                "Display",
+                                                "monitors and overlays",
+                                                div()
+                                                    .flex()
+                                                    .flex_wrap()
+                                                    .gap(px(8.))
+                                                    .child(self.desktop_action_button(
+                                                        "Display",
+                                                        de::DesktopAction::Display,
+                                                    ))
+                                                    .child(self.desktop_action_button(
                                                         "Notifications",
                                                         de::DesktopAction::Notifications,
+                                                    ))
+                                                    .child(self.desktop_action_button(
+                                                        "Processes",
+                                                        de::DesktopAction::Processes,
                                                     )),
                                             ),
                                         )
@@ -1394,7 +1460,7 @@ impl Render for SettingsWindow {
                                                     .child(self.desktop_action_button(
                                                         "Clipboard",
                                                         de::DesktopAction::Clipboard,
-                                                    ))
+                                                    )),
                                             ),
                                         )
                                         .child(
@@ -1418,6 +1484,10 @@ impl Render for SettingsWindow {
                                                         de::DesktopAction::Suspend,
                                                     ))
                                                     .child(self.desktop_action_button(
+                                                        "Hibernate",
+                                                        de::DesktopAction::Hibernate,
+                                                    ))
+                                                    .child(self.desktop_action_button(
                                                         "Reboot",
                                                         de::DesktopAction::Reboot,
                                                     ))
@@ -1435,6 +1505,7 @@ impl Render for SettingsWindow {
                                                 format!("status bar {status_bar}"),
                                                 div()
                                                     .flex()
+                                                    .flex_wrap()
                                                     .gap(px(8.))
                                                     .child(self.action_button(
                                                         "Toggle status bar",
@@ -1451,13 +1522,16 @@ impl Render for SettingsWindow {
                                                         },
                                                     ))
                                                     .child(self.action_button(
-                                                        "Reset query",
+                                                        "Open settings",
+                                                        |desktop, cx| {
+                                                            open_or_focus_settings(desktop, cx);
+                                                        },
+                                                    ))
+                                                    .child(self.action_button(
+                                                        "Clear query",
                                                         |desktop, cx| {
                                                             desktop.update(cx, |desktop, cx| {
-                                                                desktop.set_query(
-                                                                    "window".to_string(),
-                                                                    cx,
-                                                                );
+                                                                desktop.set_query(String::new(), cx);
                                                             });
                                                         },
                                                     )),
