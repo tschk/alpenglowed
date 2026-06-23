@@ -1235,7 +1235,7 @@ impl Render for SettingsWindow {
                                     .when(self.section == SettingsSection::Windows, |panel| {
                                         panel.child(
                                             self.section_card(
-                                                "Windows",
+                                                "Modes",
                                                 format!("root {layout_axis} • detail {focused_detail}"),
                                                 div()
                                                     .flex()
@@ -1263,6 +1263,16 @@ impl Render for SettingsWindow {
                                                         "Flip layout axis",
                                                         layout::LayoutAction::FlipAxis,
                                                     ))
+                                            ),
+                                        )
+                                        .child(
+                                            self.section_card(
+                                                "Flow",
+                                                "focus and grouping",
+                                                div()
+                                                    .flex()
+                                                    .flex_wrap()
+                                                    .gap(px(8.))
                                                     .child(self.layout_action_button(
                                                         "Focus next",
                                                         layout::LayoutAction::FocusNext,
@@ -1279,8 +1289,8 @@ impl Render for SettingsWindow {
                                         )
                                         .child(
                                             self.section_card(
-                                                "Layout",
-                                                "nudge, resize, reset",
+                                                "Move",
+                                                "position and reset",
                                                 div()
                                                     .flex()
                                                     .flex_wrap()
@@ -1305,6 +1315,16 @@ impl Render for SettingsWindow {
                                                         "Nudge down",
                                                         layout::LayoutAction::NudgeDown,
                                                     ))
+                                            ),
+                                        )
+                                        .child(
+                                            self.section_card(
+                                                "Resize",
+                                                "grow, contract, rebalance",
+                                                div()
+                                                    .flex()
+                                                    .flex_wrap()
+                                                    .gap(px(8.))
                                                     .child(self.layout_action_button(
                                                         "Expand window",
                                                         layout::LayoutAction::ExpandWindow,
