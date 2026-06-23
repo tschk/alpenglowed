@@ -249,28 +249,13 @@ impl DesktopWindow {
     }
 
     fn render_child(desktop: &Entity<DesktopModel>, child: &LayoutChildView) -> Div {
-        let mut slot = div()
-            .relative()
-            .min_w(px(0.))
-            .min_h(px(0.))
-            .child(Self::render_child_overlay(child.grow))
-            .child(match &child.node {
-                LayoutView::Window(window) => {
-                    Self::render_window(desktop, window, Some(child.grow))
-                }
-                _ => Self::render_layout(desktop, &child.node),
-            });
+        let mut slot = div().min_w(px(0.)).min_h(px(0.)).child(match &child.node {
+            LayoutView::Window(window) => Self::render_window(desktop, window, Some(child.grow)),
+            _ => Self::render_layout(desktop, &child.node),
+        });
         slot.style().flex_grow = Some(child.grow.max(0.1));
         slot.style().flex_shrink = Some(1.);
         slot
-    }
-
-    fn render_child_overlay(grow: f32) -> Div {
-        div()
-            .absolute()
-            .right(px(8.))
-            .bottom(px(8.))
-            .child(Self::window_pill(&format!("grow {:.1}", grow), false))
     }
 
     fn render_window(
@@ -278,7 +263,7 @@ impl DesktopWindow {
         window: &LayoutWindowView,
         grow: Option<f32>,
     ) -> Div {
-        let border = if window.focused { 0xf0f0f0 } else { 0x2a2a2a };
+        let border = if window.focused { 0xf0f0f0 } else { 0x1c1c1c };
         let label = if window.floating { "floating" } else { "tiled" };
         let focus = if window.focused { "focused" } else { "ready" };
         let lines = Self::pane_lines(window);
@@ -287,14 +272,14 @@ impl DesktopWindow {
         let panel = div()
             .id(SharedString::from(format!("pane-{window_id}")))
             .size_full()
-            .rounded(px(if window.floating { 10. } else { 6. }))
-            .bg(rgb(if window.floating { 0x020202 } else { 0x050505 }))
+            .rounded(px(3.))
+            .bg(rgb(0x010101))
             .border_1()
             .border_color(rgb(border))
-            .p(px(if window.floating { 14. } else { 16. }))
+            .p(px(12.))
             .flex()
             .flex_col()
-            .gap(px(14.))
+            .gap(px(10.))
             .cursor_pointer()
             .on_click(move |_, _, cx| {
                 desktop.update(cx, |desktop, cx| {
@@ -314,14 +299,14 @@ impl DesktopWindow {
                             .gap(px(10.))
                             .child(
                                 div()
-                                    .w(px(8.))
-                                    .h(px(8.))
+                                    .w(px(6.))
+                                    .h(px(6.))
                                     .rounded_full()
                                     .bg(rgb(if window.focused { 0xf0f0f0 } else { 0x5a5a5a })),
                             )
                             .child(
                                 div()
-                                    .text_size(px(16.))
+                                    .text_size(px(15.))
                                     .text_color(rgb(0xf5f5f5))
                                     .child(window.title.clone()),
                             ),
@@ -336,21 +321,21 @@ impl DesktopWindow {
             )
             .child(
                 div()
-                    .text_size(px(13.))
-                    .text_color(rgb(0xb8b8b8))
+                    .text_size(px(12.))
+                    .text_color(rgb(0x9d9d9d))
                     .child(window.detail.clone()),
             )
             .child(
                 div()
                     .flex_1()
-                    .rounded(px(if window.floating { 6. } else { 4. }))
-                    .bg(rgb(if window.floating { 0x060606 } else { 0x090909 }))
+                    .rounded(px(2.))
+                    .bg(rgb(0x030303))
                     .border_1()
-                    .border_color(rgb(0x151515))
-                    .p(px(12.))
+                    .border_color(rgb(0x101010))
+                    .p(px(10.))
                     .flex()
                     .flex_col()
-                    .gap(px(8.))
+                    .gap(px(6.))
                     .children(lines.into_iter().map(Self::window_line)),
             )
             .child(
@@ -384,13 +369,13 @@ impl DesktopWindow {
     fn window_pill(text: &str, active: bool) -> Div {
         div()
             .px(px(8.))
-            .py(px(4.))
+            .py(px(3.))
             .rounded(px(999.))
-            .bg(rgb(if active { 0x111111 } else { 0x090909 }))
+            .bg(rgb(0x010101))
             .border_1()
-            .border_color(rgb(if active { 0xf0f0f0 } else { 0x232323 }))
+            .border_color(rgb(if active { 0xf0f0f0 } else { 0x1d1d1d }))
             .text_size(px(10.))
-            .text_color(rgb(if active { 0xffffff } else { 0x8d8d8d }))
+            .text_color(rgb(if active { 0xffffff } else { 0x7f7f7f }))
             .child(text.to_string())
     }
 
@@ -441,11 +426,11 @@ impl DesktopWindow {
             .child(
                 div()
                     .size_full()
-                    .rounded(px(12.))
+                    .rounded(px(3.))
                     .bg(rgb(0x000000))
                     .border_1()
-                    .border_color(rgb(0x343434))
-                    .p(px(8.))
+                    .border_color(rgb(0x1d1d1d))
+                    .p(px(4.))
                     .child(Self::render_window(desktop, window, None)),
             )
     }
@@ -514,13 +499,13 @@ impl DesktopWindow {
             .h(px(34.))
             .px(px(12.))
             .rounded(px(17.))
-            .bg(rgb(0x050505))
+            .bg(rgb(0x000000))
             .border_1()
-            .border_color(rgb(0x2a2a2a))
+            .border_color(rgb(0x1d1d1d))
             .flex()
             .items_center()
             .text_size(px(12.))
-            .text_color(rgb(0xcfcfcf))
+            .text_color(rgb(0xbdbdbd))
             .child(text)
     }
 }
@@ -779,27 +764,27 @@ impl LauncherWindow {
         let bar = shell_bar_component(&query, &meta);
 
         div()
-            .w(px(720.))
-            .h(px(52.))
-            .rounded(px(6.))
-            .bg(rgb(0x050505))
+            .w(px(680.))
+            .h(px(46.))
+            .rounded(px(3.))
+            .bg(rgb(0x010101))
             .border_1()
-            .border_color(rgb(0x2a2a2a))
-            .px(px(16.))
+            .border_color(rgb(0x1d1d1d))
+            .px(px(14.))
             .flex()
             .items_center()
-            .gap(px(12.))
+            .gap(px(10.))
             .child(
                 div()
                     .flex_1()
-                    .text_size(px(18.))
+                    .text_size(px(16.))
                     .text_color(rgb(0xffffff))
                     .child(bar.0),
             )
             .child(
                 div()
-                    .text_size(px(12.))
-                    .text_color(rgb(0xb8b8b8))
+                    .text_size(px(11.))
+                    .text_color(rgb(0x8d8d8d))
                     .child(bar.1),
             )
     }
@@ -813,14 +798,14 @@ impl LauncherWindow {
 
         if desktop.runner.results.is_empty() {
             return div()
-                .w(px(720.))
-                .rounded_b(px(6.))
-                .bg(rgb(0x0f0f0f))
+                .w(px(680.))
+                .rounded_b(px(3.))
+                .bg(rgb(0x030303))
                 .border_1()
-                .border_color(rgb(0x232323))
+                .border_color(rgb(0x1a1a1a))
                 .border_t_0()
-                .px(px(14.))
-                .py(px(10.))
+                .px(px(12.))
+                .py(px(8.))
                 .text_size(px(12.))
                 .text_color(rgb(0x8d8d8d))
                 .child(shell_text_component(
@@ -830,13 +815,13 @@ impl LauncherWindow {
         }
 
         div()
-            .w(px(720.))
-            .rounded_b(px(6.))
-            .bg(rgb(0x0f0f0f))
+            .w(px(680.))
+            .rounded_b(px(3.))
+            .bg(rgb(0x030303))
             .border_1()
-            .border_color(rgb(0x232323))
+            .border_color(rgb(0x1a1a1a))
             .border_t_0()
-            .p(px(6.))
+            .p(px(4.))
             .gap(px(2.))
             .children(
                 desktop
@@ -854,14 +839,14 @@ impl LauncherWindow {
                         );
                         div()
                             .id(SharedString::from(format!("launcher-result-{index}")))
-                            .rounded(px(4.))
+                            .rounded(px(2.))
                             .bg(if selected {
-                                rgb(0x141414)
+                                rgb(0x0a0a0a)
                             } else {
-                                rgb(0x0f0f0f)
+                                rgb(0x030303)
                             })
-                            .px(px(10.))
-                            .py(px(7.))
+                            .px(px(8.))
+                            .py(px(6.))
                             .flex()
                             .items_center()
                             .gap(px(10.))
@@ -941,10 +926,12 @@ impl SettingsWindow {
 
         div()
             .id(SharedString::from(format!("mode-{label}")))
-            .px(px(12.))
-            .py(px(8.))
-            .rounded(px(10.))
+            .px(px(10.))
+            .py(px(7.))
+            .rounded(px(3.))
             .bg(bg)
+            .border_1()
+            .border_color(rgb(if active { 0xf0f0f0 } else { 0x1d1d1d }))
             .text_color(fg)
             .cursor_pointer()
             .child(label)
@@ -963,11 +950,13 @@ impl SettingsWindow {
         let desktop = self.desktop.clone();
         div()
             .id(SharedString::from(format!("settings-{label}")))
-            .px(px(12.))
-            .py(px(8.))
-            .rounded(px(10.))
-            .bg(rgb(0x1a1a1a))
-            .text_color(rgb(0xe8e8e8))
+            .px(px(10.))
+            .py(px(7.))
+            .rounded(px(3.))
+            .bg(rgb(0x050505))
+            .border_1()
+            .border_color(rgb(0x1b1b1b))
+            .text_color(rgb(0xdadada))
             .cursor_pointer()
             .child(label)
             .on_click(move |_, _, cx| on_click(&desktop, cx))
@@ -1018,12 +1007,12 @@ impl SettingsWindow {
         div()
             .flex()
             .flex_col()
-            .gap(px(10.))
-            .rounded(px(6.))
-            .bg(rgb(0x090909))
+            .gap(px(8.))
+            .rounded(px(3.))
+            .bg(rgb(0x050505))
             .border_1()
-            .border_color(rgb(0x171717))
-            .p(px(14.))
+            .border_color(rgb(0x121212))
+            .p(px(12.))
             .child(
                 div()
                     .flex()
@@ -1031,14 +1020,14 @@ impl SettingsWindow {
                     .gap(px(4.))
                     .child(
                         div()
-                            .text_size(px(13.))
+                            .text_size(px(12.))
                             .text_color(rgb(0xf0f0f0))
                             .child(header.0),
                     )
                     .child(
                         div()
-                            .text_size(px(11.))
-                            .text_color(rgb(0x8d8d8d))
+                            .text_size(px(10.))
+                            .text_color(rgb(0x7f7f7f))
                             .child(header.1),
                     ),
             )
@@ -1074,18 +1063,18 @@ impl Render for SettingsWindow {
         let status_row =
             shell_status_row_component(desktop.mode.label(), &layout_summary, &focused);
         let shortcuts = shell_list_component("SettingsShortcuts");
-        div().size_full().bg(rgb(0x080808)).child(
-            div().size_full().bg(rgb(0x050505)).p(px(20.)).child(
+        div().size_full().bg(rgb(0x030303)).child(
+            div().size_full().bg(rgb(0x030303)).p(px(16.)).child(
                 div()
                     .size_full()
-                    .rounded(px(6.))
-                    .bg(rgb(0x080808))
+                    .rounded(px(3.))
+                    .bg(rgb(0x030303))
                     .border_1()
-                    .border_color(rgb(0x252525))
-                    .p(px(20.))
+                    .border_color(rgb(0x161616))
+                    .p(px(16.))
                     .flex()
                     .flex_col()
-                    .gap(px(18.))
+                    .gap(px(14.))
                     .child(
                         div()
                             .flex()
@@ -1448,7 +1437,7 @@ impl Render for LauncherWindow {
                     .justify_center()
                     .child(
                         div()
-                            .w(px(720.))
+                            .w(px(680.))
                             .flex()
                             .flex_col()
                             .gap(px(8.))
