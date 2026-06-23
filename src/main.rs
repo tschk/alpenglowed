@@ -264,11 +264,11 @@ impl DesktopWindow {
         let panel = div()
             .id(SharedString::from(format!("pane-{window_id}")))
             .size_full()
-            .rounded(px(6.))
-            .bg(rgb(0x050505))
+            .rounded(px(if window.floating { 10. } else { 6. }))
+            .bg(rgb(if window.floating { 0x020202 } else { 0x050505 }))
             .border_1()
             .border_color(rgb(border))
-            .p(px(16.))
+            .p(px(if window.floating { 14. } else { 16. }))
             .flex()
             .flex_col()
             .gap(px(14.))
@@ -320,8 +320,8 @@ impl DesktopWindow {
             .child(
                 div()
                     .flex_1()
-                    .rounded(px(4.))
-                    .bg(rgb(0x090909))
+                    .rounded(px(if window.floating { 6. } else { 4. }))
+                    .bg(rgb(if window.floating { 0x060606 } else { 0x090909 }))
                     .border_1()
                     .border_color(rgb(0x151515))
                     .p(px(12.))
@@ -412,7 +412,16 @@ impl DesktopWindow {
             .left(px(window.x))
             .w(px(window.width))
             .h(px(window.height))
-            .child(Self::render_window(desktop, window))
+            .child(
+                div()
+                    .size_full()
+                    .rounded(px(12.))
+                    .bg(rgb(0x000000))
+                    .border_1()
+                    .border_color(rgb(0x343434))
+                    .p(px(8.))
+                    .child(Self::render_window(desktop, window)),
+            )
     }
 
     fn render_floating_layer(desktop: &Entity<DesktopModel>, windows: &[LayoutWindowView]) -> Div {
@@ -421,7 +430,16 @@ impl DesktopWindow {
             .top(px(0.))
             .left(px(0.))
             .right(px(0.))
-            .bottom(px(0.));
+            .bottom(px(0.))
+            .child(
+                div()
+                    .absolute()
+                    .top(px(0.))
+                    .left(px(0.))
+                    .right(px(0.))
+                    .bottom(px(0.))
+                    .bg(rgb(0x010101)),
+            );
         for (index, window) in windows.iter().enumerate() {
             layer = layer.child(Self::render_floating_window(desktop, window, index));
         }
