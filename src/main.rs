@@ -16,6 +16,7 @@ use crepuscularity_web::render_component_file_to_html;
 use layout::{Axis, LayoutChildView, LayoutState, LayoutView, LayoutWindowView};
 use plugin::{PluginAction, WindowTarget};
 use runner::{Runner, WindowMode};
+use std::fs;
 use std::process::Command;
 
 const PANES_CREPUS: &str = include_str!("views/panes.crepus");
@@ -484,51 +485,109 @@ impl DesktopWindow {
     }
 
     fn render_status_bar(desktop: &DesktopModel) -> Div {
-        let state = de::DesktopState::detect(desktop.mode.label());
-        let display = state.display.unwrap_or_else(|| "no-display".to_string());
-        let backend = if state.wayland { "wayland" } else { "offline" };
-        let focused = desktop.layout.focused_title().to_string();
+        let metrics = TopBarMetrics::detect(desktop);
         let detail = desktop
             .layout
             .view()
             .focused_detail()
             .unwrap_or_else(|| "Ready".to_string());
+        let header = shell_top_bar_title_component("alpenglowed", &detail);
 
         div()
             .absolute()
-            .top(px(18.))
+            .top(px(16.))
             .left(px(0.))
             .right(px(0.))
             .flex()
             .justify_center()
-            .gap(px(8.))
-            .children(
-                [
-                    desktop.mode.label().to_string(),
-                    desktop.layout.summary(),
-                    focused,
-                    detail,
-                    backend.to_string(),
-                    display,
-                ]
-                .into_iter()
-                .map(Self::status_pill),
+            .child(
+                div()
+                    .w(px(1120.))
+                    .rounded(px(2.))
+                    .bg(rgb(0x070707))
+                    .border_1()
+                    .border_color(rgb(0x2b2b2b))
+                    .px(px(14.))
+                    .py(px(10.))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(3.))
+                            .child(
+                                div()
+                                    .text_size(px(14.))
+                                    .text_color(rgb(0xf2f2f2))
+                                    .child(header.0),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(rgb(0xa0a0a0))
+                                    .child(header.1),
+                            ),
+                    )
+                    .child(
+                        div().flex().gap(px(8.)).children(
+                            [
+                                ("mode".to_string(), desktop.mode.label().to_string()),
+                                ("layout".to_string(), desktop.layout.summary()),
+                                ("time".to_string(), metrics.clock),
+                                ("date".to_string(), metrics.date),
+                                ("power".to_string(), metrics.battery),
+                                ("load".to_string(), metrics.load),
+                                ("mem".to_string(), metrics.memory),
+                                ("wl".to_string(), metrics.backend),
+                            ]
+                            .into_iter()
+                            .map(|(label, value)| Self::status_pill(label, value)),
+                        ),
+                    ),
             )
     }
 
-    fn status_pill(text: String) -> Div {
+    fn status_pill(label: String, value: String) -> Div {
+        let metric = shell_top_bar_metric_component(&label, &value);
         div()
             .h(px(32.))
             .px(px(11.))
             .rounded(px(16.))
-            .bg(rgb(0x000000))
+            .bg(rgb(0x101010))
             .border_1()
-            .border_color(rgb(0x323232))
+            .border_color(rgb(0x3a3a3a))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .child(
+                div()
+                    .text_size(px(10.))
+                    .text_color(rgb(0x8e8e8e))
+                    .child(metric.0),
+            )
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(rgb(0xd0d0d0))
+                    .child(metric.1),
+            )
+    }
+
+    fn status_value_pill(value: String) -> Div {
+        div()
+            .h(px(32.))
+            .px(px(11.))
+            .rounded(px(16.))
+            .bg(rgb(0x101010))
+            .border_1()
+            .border_color(rgb(0x3a3a3a))
             .flex()
             .items_center()
             .text_size(px(11.))
             .text_color(rgb(0xd0d0d0))
-            .child(text)
+            .child(value)
     }
 }
 
@@ -625,6 +684,37 @@ fn shell_section_header_component(title: &str, detail: &str) -> (String, String)
         .unwrap_or_else(|_| (title.to_string(), detail.to_string()))
 }
 
+fn shell_top_bar_title_component(title: &str, subtitle: &str) -> (String, String) {
+    let mut ctx = TemplateContext::new();
+    ctx.set("title", TemplateValue::Str(title.to_string()));
+    ctx.set("subtitle", TemplateValue::Str(subtitle.to_string()));
+    render_component_file_to_html(SHELL_CREPUS, "TopBarTitle", &ctx)
+        .map(|html| {
+            let texts = html_tag_texts(&html, &["h1", "p"]);
+            let title = texts.first().cloned().unwrap_or_else(|| title.to_string());
+            let subtitle = texts
+                .get(1)
+                .cloned()
+                .unwrap_or_else(|| subtitle.to_string());
+            (title, subtitle)
+        })
+        .unwrap_or_else(|_| (title.to_string(), subtitle.to_string()))
+}
+
+fn shell_top_bar_metric_component(label: &str, value: &str) -> (String, String) {
+    let mut ctx = TemplateContext::new();
+    ctx.set("label", TemplateValue::Str(label.to_string()));
+    ctx.set("value", TemplateValue::Str(value.to_string()));
+    render_component_file_to_html(SHELL_CREPUS, "TopBarMetric", &ctx)
+        .map(|html| {
+            let texts = html_tag_texts(&html, &["strong", "p"]);
+            let label = texts.first().cloned().unwrap_or_else(|| label.to_string());
+            let value = texts.get(1).cloned().unwrap_or_else(|| value.to_string());
+            (label, value)
+        })
+        .unwrap_or_else(|_| (label.to_string(), value.to_string()))
+}
+
 fn shell_status_row_component(mode: &str, layout: &str, focused: &str) -> Vec<String> {
     let mut ctx = TemplateContext::new();
     ctx.set("mode", TemplateValue::Str(mode.to_string()));
@@ -633,6 +723,96 @@ fn shell_status_row_component(mode: &str, layout: &str, focused: &str) -> Vec<St
     render_component_file_to_html(SHELL_CREPUS, "SettingsStatusRow", &ctx)
         .map(|html| html_list_items(&html))
         .unwrap_or_else(|_| vec![mode.to_string(), layout.to_string(), focused.to_string()])
+}
+
+struct TopBarMetrics {
+    clock: String,
+    date: String,
+    battery: String,
+    load: String,
+    memory: String,
+    backend: String,
+}
+
+impl TopBarMetrics {
+    fn detect(desktop: &DesktopModel) -> Self {
+        Self {
+            clock: date_value("+%H:%M").unwrap_or_else(|| "--:--".to_string()),
+            date: date_value("+%a %b %e").unwrap_or_else(|| "date unavailable".to_string()),
+            battery: battery_value().unwrap_or_else(|| "battery unavailable".to_string()),
+            load: load_value().unwrap_or_else(|| "load unavailable".to_string()),
+            memory: memory_value().unwrap_or_else(|| "memory unavailable".to_string()),
+            backend: top_bar_backend(desktop),
+        }
+    }
+}
+
+fn date_value(format: &str) -> Option<String> {
+    let output = Command::new("date").arg(format).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_string())
+}
+
+fn battery_value() -> Option<String> {
+    let entries = fs::read_dir("/sys/class/power_supply").ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let kind = fs::read_to_string(path.join("type")).ok()?;
+        if kind.trim() != "Battery" {
+            continue;
+        }
+        let capacity = fs::read_to_string(path.join("capacity")).ok()?;
+        let status = fs::read_to_string(path.join("status")).ok()?;
+        return Some(format!(
+            "{}% {}",
+            capacity.trim(),
+            status.trim().to_lowercase()
+        ));
+    }
+    None
+}
+
+fn load_value() -> Option<String> {
+    let text = fs::read_to_string("/proc/loadavg").ok()?;
+    let first = text.split_whitespace().next()?;
+    Some(first.to_string())
+}
+
+fn memory_value() -> Option<String> {
+    let text = fs::read_to_string("/proc/meminfo").ok()?;
+    let mut total_kb = None;
+    let mut available_kb = None;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("MemTotal:") {
+            total_kb = rest
+                .split_whitespace()
+                .next()
+                .and_then(|v| v.parse::<u64>().ok());
+        } else if let Some(rest) = line.strip_prefix("MemAvailable:") {
+            available_kb = rest
+                .split_whitespace()
+                .next()
+                .and_then(|v| v.parse::<u64>().ok());
+        }
+    }
+    let total_kb = total_kb?;
+    let available_kb = available_kb?;
+    if total_kb == 0 {
+        return None;
+    }
+    let used_pct = ((total_kb.saturating_sub(available_kb)) * 100) / total_kb;
+    Some(format!("{used_pct}% used"))
+}
+
+fn top_bar_backend(desktop: &DesktopModel) -> String {
+    let state = de::DesktopState::detect(desktop.mode.label());
+    let display = state.display.unwrap_or_else(|| "no-display".to_string());
+    let backend = if state.wayland { "wayland" } else { "offline" };
+    format!("{backend} {display}")
 }
 
 fn html_list_items(html: &str) -> Vec<String> {
@@ -1215,7 +1395,7 @@ impl Render for SettingsWindow {
                                     .children(
                                         status_row
                                             .into_iter()
-                                            .map(DesktopWindow::status_pill),
+                                            .map(DesktopWindow::status_value_pill),
                                     ),
                             ),
                     )
@@ -2166,6 +2346,20 @@ mod tests {
         let bar = shell_bar_component("window", "1/6 window mode");
         assert_eq!(bar.0, "window");
         assert_eq!(bar.1, "1/6 window mode");
+    }
+
+    #[test]
+    fn shell_top_bar_title_component_should_render_header() {
+        let header = shell_top_bar_title_component("alpenglowed", "focused pane detail");
+        assert_eq!(header.0, "alpenglowed");
+        assert_eq!(header.1, "focused pane detail");
+    }
+
+    #[test]
+    fn shell_top_bar_metric_component_should_render_value() {
+        let metric = shell_top_bar_metric_component("clock", "11:27");
+        assert_eq!(metric.0, "clock");
+        assert_eq!(metric.1, "11:27");
     }
 
     #[test]

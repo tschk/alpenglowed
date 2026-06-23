@@ -2,11 +2,11 @@
 
 ### Raycast-style bar launcher for Linux (Wayland)
 
-A GPU-accelerated launcher bar that IS the desktop. Summon with a hotkey (Super+Space), type to launch, search, calculate, run commands, or execute plugins. Time, date, battery, weather, CPU/GPU shown as pills in the bar. Windows managed as floating/tiled surfaces below.
+A GPU-accelerated launcher bar that IS the desktop. Summon with a hotkey (Super+Space), type to launch, search, calculate, run commands, or execute plugins. Time, date, battery, load, memory, and backend state shown as pills in the bar. Windows managed as floating/tiled surfaces below.
 
 ## Philosophy
 
-The traditional desktop (wallpaper + icons + taskbar) is unnecessary. The only interface you need is a text bar that does everything: app launcher, calculator, shell, clipboard, file search, AI assistant. Status info (clock, battery, weather, CPU) lives in pills at the top of the bar.
+The traditional desktop (wallpaper + icons + taskbar) is unnecessary. The only interface you need is a text bar that does everything: app launcher, calculator, shell, clipboard, file search, AI assistant. Status info (clock, date, battery, load, memory, backend) lives in pills at the top of the bar.
 
 Alpenglowed is a single Crepuscularity GPUI binary that runs fullscreen on top of the Alpenglow Wayland stack.
 

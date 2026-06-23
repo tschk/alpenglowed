@@ -18,6 +18,14 @@ subtitle = ""
 query = ""
 meta = ""
 
+[TopBarTitle.defaults]
+title = "desktop"
+subtitle = ""
+
+[TopBarMetric.defaults]
+label = ""
+value = ""
+
 [SettingsHeader.defaults]
 title = "Settings"
 subtitle = "Desktop, launcher, session, and system controls"
@@ -61,6 +69,20 @@ div
     "{query}"
   p
     "{meta}"
+
+--- TopBarTitle
+div
+  h1
+    "{title}"
+  p
+    "{subtitle}"
+
+--- TopBarMetric
+div
+  strong
+    "{label}"
+  p
+    "{value}"
 
 --- SettingsHeader
 div
