@@ -84,7 +84,9 @@ cargo build --release
 SDKROOT=$(xcrun --show-sdk-path) cargo run    # macOS dev
 cargo run                                       # Linux dev
 cargo run -- --polybar                          # status output
+cargo run -- --external-polybar                 # desktop without in-app status strip
 cargo run -- --smoke-wayland                    # Wayland connection smoke
+./polybar/launch.sh                             # external polybar bar
 ```
 
 ## Plugins

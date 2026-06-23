@@ -50,6 +50,7 @@ actions!(
 #[derive(Clone)]
 struct UiOptions {
     status_bar: bool,
+    external_polybar: bool,
     open_settings: bool,
     initial_query: String,
     mode: WindowMode,
@@ -66,6 +67,7 @@ struct DesktopModel {
     mode: WindowMode,
     layout: LayoutState,
     status_bar: bool,
+    external_polybar: bool,
     last_action: String,
     runner: Runner,
     session_control: bool,
@@ -93,6 +95,7 @@ impl DesktopModel {
                 layout
             },
             status_bar: options.status_bar,
+            external_polybar: options.external_polybar,
             last_action: "Ready: desktop active".to_string(),
             runner: Runner::new(),
             session_control: std::env::var_os("ALPENGLOW_SESSION_CONTROL").is_some(),
@@ -810,7 +813,11 @@ fn memory_value() -> Option<String> {
 
 fn top_bar_backend(desktop: &DesktopModel) -> String {
     let state = de::DesktopState::detect(desktop.mode.label());
-    let display = state.display.unwrap_or_else(|| "no-display".to_string());
+    polybar_backend(&state)
+}
+
+fn polybar_backend(state: &de::DesktopState) -> String {
+    let display = state.display.as_deref().unwrap_or("no-display").to_string();
     let backend = if state.wayland { "wayland" } else { "offline" };
     format!("{backend} {display}")
 }
@@ -1868,7 +1875,14 @@ impl Render for DesktopWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let desktop = self.desktop.read(cx);
         let layout = desktop.layout.view();
-        let status = desktop.status_bar;
+        let status = desktop.status_bar && !desktop.external_polybar;
+        let top_inset = if status {
+            72.
+        } else if desktop.external_polybar {
+            54.
+        } else {
+            24.
+        };
 
         let mut root = div()
             .size_full()
@@ -2031,7 +2045,7 @@ impl Render for DesktopWindow {
                 div()
                     .size_full()
                     .p(px(24.))
-                    .pt(px(if status { 72. } else { 24. }))
+                    .pt(px(top_inset))
                     .child(Self::render_workspace(&self.desktop, &layout)),
             );
 
@@ -2182,6 +2196,13 @@ fn main() {
         println!("{}", de::DesktopState::detect("tiling").polybar());
         return;
     }
+    if let Some(module) = std::env::args().find_map(|arg| {
+        arg.strip_prefix("--polybar-module=")
+            .map(ToString::to_string)
+    }) {
+        print!("{}", polybar_module(&module));
+        return;
+    }
     if std::env::args().any(|arg| arg == "--probe-actions") {
         for line in de::probe_actions() {
             println!("{line}");
@@ -2249,6 +2270,11 @@ impl UiOptions {
                 std::env::var("ALPENGLOWED_STATUS_BAR").as_deref(),
                 Ok("1" | "true" | "yes")
             );
+        let external_polybar = std::env::args().any(|arg| arg == "--external-polybar")
+            || matches!(
+                std::env::var("ALPENGLOWED_EXTERNAL_BAR").as_deref(),
+                Ok("polybar")
+            );
         let open_settings = std::env::args().any(|arg| arg == "--open-settings");
         let initial_query = std::env::args()
             .find_map(|arg| arg.strip_prefix("--query=").map(ToString::to_string))
@@ -2269,11 +2295,23 @@ impl UiOptions {
 
         Self {
             status_bar,
+            external_polybar,
             open_settings,
             initial_query,
             mode,
             demo_layout,
         }
+    }
+}
+
+fn polybar_module(name: &str) -> String {
+    match name {
+        "mode" => "launcher".to_string(),
+        "backend" => polybar_backend(&de::DesktopState::detect("tiling")),
+        "battery" => battery_value().unwrap_or_else(|| "battery unavailable".to_string()),
+        "load" => load_value().unwrap_or_else(|| "load unavailable".to_string()),
+        "memory" => memory_value().unwrap_or_else(|| "memory unavailable".to_string()),
+        _ => String::new(),
     }
 }
 
@@ -2361,6 +2399,16 @@ mod tests {
         let metric = shell_top_bar_metric_component("clock", "11:27");
         assert_eq!(metric.0, "clock");
         assert_eq!(metric.1, "11:27");
+    }
+
+    #[test]
+    fn polybar_module_should_return_mode() {
+        assert_eq!(polybar_module("mode"), "launcher");
+    }
+
+    #[test]
+    fn polybar_module_should_return_empty_for_unknown_name() {
+        assert_eq!(polybar_module("unknown"), "");
     }
 
     #[test]
