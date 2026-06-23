@@ -76,11 +76,7 @@ impl EventEmitter<DesktopEvent> for DesktopModel {}
 
 impl DesktopModel {
     fn new(options: UiOptions) -> Self {
-        let mut runner = Runner::new();
-        runner.query = options.initial_query.clone();
-        runner.update();
-
-        Self {
+        let mut desktop = Self {
             query: options.initial_query,
             mode: options.mode.clone(),
             layout: {
@@ -97,11 +93,14 @@ impl DesktopModel {
             },
             status_bar: options.status_bar,
             last_action: "Ready: desktop active".to_string(),
-            runner,
+            runner: Runner::new(),
             session_control: std::env::var_os("ALPENGLOW_SESSION_CONTROL").is_some(),
             launcher: None,
             settings: None,
-        }
+        };
+        desktop.runner.query = desktop.query.clone();
+        desktop.refresh_runner();
+        desktop
     }
 
     fn set_query(&mut self, query: String, cx: &mut Context<Self>) {

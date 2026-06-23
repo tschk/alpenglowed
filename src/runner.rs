@@ -37,10 +37,6 @@ impl Runner {
         }
     }
 
-    pub fn update(&mut self) {
-        self.update_with_windows(&[]);
-    }
-
     pub fn update_with_windows(&mut self, windows: &[WindowTarget]) {
         let query = self.query.trim();
         if query.is_empty() {
@@ -111,7 +107,7 @@ mod tests {
     fn update_should_return_shell_action_when_query_starts_with_prompt() {
         let mut runner = Runner::new();
         runner.query = "> echo ok".to_string();
-        runner.update();
+        runner.update_with_windows(&[]);
 
         assert_eq!(
             runner.results.first().map(|result| &result.action),
@@ -125,7 +121,7 @@ mod tests {
     fn update_should_return_tiling_action_for_window_mode_query() {
         let mut runner = Runner::new();
         runner.query = "tile".to_string();
-        runner.update();
+        runner.update_with_windows(&[]);
 
         assert!(runner.results.iter().any(|result| {
             result.action
@@ -139,7 +135,7 @@ mod tests {
     fn update_should_return_layout_action_for_split_query() {
         let mut runner = Runner::new();
         runner.query = "split row".to_string();
-        runner.update();
+        runner.update_with_windows(&[]);
 
         assert!(runner.results.iter().any(|result| {
             matches!(
@@ -155,7 +151,7 @@ mod tests {
     fn update_should_return_layout_action_for_flip_axis_query() {
         let mut runner = Runner::new();
         runner.query = "flip axis".to_string();
-        runner.update();
+        runner.update_with_windows(&[]);
 
         assert!(runner.results.iter().any(|result| {
             matches!(
@@ -188,7 +184,7 @@ mod tests {
     fn update_should_return_os_actions() {
         let mut runner = Runner::new();
         runner.query = "lock".to_string();
-        runner.update();
+        runner.update_with_windows(&[]);
 
         assert_eq!(
             runner.results.first().map(|result| &result.action),
@@ -202,7 +198,7 @@ mod tests {
     fn update_should_return_settings_action() {
         let mut runner = Runner::new();
         runner.query = "settings".to_string();
-        runner.update();
+        runner.update_with_windows(&[]);
 
         assert!(runner
             .results
@@ -214,7 +210,7 @@ mod tests {
     fn update_should_return_status_bar_action() {
         let mut runner = Runner::new();
         runner.query = "status".to_string();
-        runner.update();
+        runner.update_with_windows(&[]);
 
         assert!(runner
             .results
@@ -226,7 +222,7 @@ mod tests {
     fn update_should_return_open_settings_action() {
         let mut runner = Runner::new();
         runner.query = "open settings".to_string();
-        runner.update();
+        runner.update_with_windows(&[]);
 
         assert!(runner
             .results
@@ -238,7 +234,7 @@ mod tests {
     fn update_should_return_show_status_bar_action() {
         let mut runner = Runner::new();
         runner.query = "show status bar".to_string();
-        runner.update();
+        runner.update_with_windows(&[]);
 
         assert!(runner
             .results
@@ -250,7 +246,7 @@ mod tests {
     fn update_should_return_close_settings_action() {
         let mut runner = Runner::new();
         runner.query = "close settings".to_string();
-        runner.update();
+        runner.update_with_windows(&[]);
 
         assert!(runner
             .results
@@ -262,7 +258,7 @@ mod tests {
     fn selection_should_wrap() {
         let mut runner = Runner::new();
         runner.query = "window".to_string();
-        runner.update();
+        runner.update_with_windows(&[]);
         let len = runner.results.len();
         runner.select_previous();
         assert_eq!(runner.selected, len - 1);
@@ -280,11 +276,11 @@ mod tests {
     fn update_should_clear_results_when_query_empty() {
         let mut runner = Runner::new();
         runner.query = "window".to_string();
-        runner.update();
+        runner.update_with_windows(&[]);
         assert!(!runner.results.is_empty());
 
         runner.query.clear();
-        runner.update();
+        runner.update_with_windows(&[]);
 
         assert!(runner.results.is_empty());
     }
@@ -293,7 +289,7 @@ mod tests {
     fn selected_result_should_follow_selection() {
         let mut runner = Runner::new();
         runner.query = "window".to_string();
-        runner.update();
+        runner.update_with_windows(&[]);
         let first = runner.selected_result().map(|result| result.title.clone());
         runner.select_next();
         let second = runner.selected_result().map(|result| result.title.clone());
@@ -304,7 +300,7 @@ mod tests {
     fn select_should_clamp_to_available_results() {
         let mut runner = Runner::new();
         runner.query = "window".to_string();
-        runner.update();
+        runner.update_with_windows(&[]);
         runner.select(999);
         assert_eq!(runner.selected, runner.results.len() - 1);
     }
@@ -313,7 +309,7 @@ mod tests {
     fn update_should_limit_results_to_six() {
         let mut runner = Runner::new();
         runner.query = "o".to_string();
-        runner.update();
+        runner.update_with_windows(&[]);
         assert!(runner.results.len() <= 6);
     }
 }
