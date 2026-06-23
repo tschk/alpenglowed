@@ -19,6 +19,7 @@ use runner::{Runner, WindowMode};
 use std::process::Command;
 
 const PANES_CREPUS: &str = include_str!("views/panes.crepus");
+const SHELL_CREPUS: &str = include_str!("views/shell.crepus");
 
 actions!(
     alpenglowed,
@@ -492,6 +493,44 @@ fn render_pane_component(component: &str, detail: &str) -> Vec<String> {
         .unwrap_or_else(|_| vec![detail.to_string()])
 }
 
+fn shell_text_component(component: &str, props: &[(&str, &str)]) -> String {
+    let mut ctx = TemplateContext::new();
+    for (key, value) in props {
+        ctx.set(*key, TemplateValue::Str((*value).to_string()));
+    }
+    render_component_file_to_html(SHELL_CREPUS, component, &ctx)
+        .map(|html| html_text_content(&html))
+        .unwrap_or_default()
+}
+
+fn shell_header_component(component: &str) -> (String, String) {
+    render_component_file_to_html(SHELL_CREPUS, component, &TemplateContext::new())
+        .map(|html| {
+            let texts = html_tag_texts(&html, &["h1", "p"]);
+            let title = texts
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "Settings".to_string());
+            let subtitle = texts
+                .get(1)
+                .cloned()
+                .unwrap_or_else(|| "Desktop, launcher, session, and system controls".to_string());
+            (title, subtitle)
+        })
+        .unwrap_or_else(|_| {
+            (
+                "Settings".to_string(),
+                "Desktop, launcher, session, and system controls".to_string(),
+            )
+        })
+}
+
+fn shell_list_component(component: &str) -> Vec<String> {
+    render_component_file_to_html(SHELL_CREPUS, component, &TemplateContext::new())
+        .map(|html| html_list_items(&html))
+        .unwrap_or_default()
+}
+
 fn html_list_items(html: &str) -> Vec<String> {
     let mut lines = Vec::new();
     let mut cursor = 0;
@@ -518,6 +557,38 @@ fn html_list_items(html: &str) -> Vec<String> {
         cursor = content_end + "</li>".len();
     }
     lines
+}
+
+fn html_text_content(html: &str) -> String {
+    let mut text = String::with_capacity(html.len());
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => text.push(ch),
+            _ => {}
+        }
+    }
+    text.replace("&quot;", "\"")
+        .replace("&amp;", "&")
+        .replace("&#39;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .trim()
+        .to_string()
+}
+
+fn html_tag_texts(html: &str, tags: &[&str]) -> Vec<String> {
+    tags.iter()
+        .filter_map(|tag| {
+            let open = format!("<{tag}>");
+            let close = format!("</{tag}>");
+            let start = html.find(&open)? + open.len();
+            let end = html[start..].find(&close)? + start;
+            Some(html_text_content(&html[start..end]))
+        })
+        .collect()
 }
 
 struct LauncherWindow {
@@ -588,7 +659,10 @@ impl LauncherWindow {
         let desktop = self.desktop.read(cx);
         let selection = desktop.runner.selection_label();
         let subtitle = if desktop.query.trim().is_empty() {
-            "type to search desktop actions".to_string()
+            shell_text_component(
+                "LauncherEmpty",
+                &[("message", "type to search desktop actions")],
+            )
         } else {
             desktop
                 .runner
@@ -596,6 +670,10 @@ impl LauncherWindow {
                 .map(|result| result.subtitle.clone())
                 .unwrap_or_else(|| "no match".to_string())
         };
+        let meta = shell_text_component(
+            "LauncherMeta",
+            &[("selection", &selection), ("subtitle", &subtitle)],
+        );
         let query = if desktop.query.is_empty() {
             " ".to_string()
         } else {
@@ -624,7 +702,7 @@ impl LauncherWindow {
                 div()
                     .text_size(px(12.))
                     .text_color(rgb(0xb8b8b8))
-                    .child(format!("{selection} {subtitle}")),
+                    .child(meta),
             )
     }
 
@@ -647,7 +725,10 @@ impl LauncherWindow {
                 .py(px(10.))
                 .text_size(px(12.))
                 .text_color(rgb(0x8d8d8d))
-                .child("No results");
+                .child(shell_text_component(
+                    "LauncherNoResults",
+                    &[("message", "No results")],
+                ));
         }
 
         div()
@@ -884,6 +965,8 @@ impl Render for SettingsWindow {
             "Running local fallbacks"
         };
         let last_action = desktop.last_action.clone();
+        let settings_header = shell_header_component("SettingsHeader");
+        let shortcuts = shell_list_component("SettingsShortcuts");
         div().size_full().bg(rgb(0x080808)).child(
             div().size_full().bg(rgb(0x050505)).p(px(20.)).child(
                 div()
@@ -910,12 +993,13 @@ impl Render for SettingsWindow {
                                         div()
                                             .text_size(px(20.))
                                             .text_color(rgb(0xf0f0f0))
-                                            .child("Settings"),
+                                            .child(settings_header.0),
                                     )
                                     .child(
-                                        div().text_size(px(12.)).text_color(rgb(0x8d8d8d)).child(
-                                            "Desktop, launcher, session, and system controls",
-                                        ),
+                                        div()
+                                            .text_size(px(12.))
+                                            .text_color(rgb(0x8d8d8d))
+                                            .child(settings_header.1),
                                     ),
                             )
                             .child(
@@ -1178,42 +1262,12 @@ impl Render for SettingsWindow {
                                                 .flex()
                                                 .flex_col()
                                                 .gap(px(6.))
-                                                .child(
+                                                .children(shortcuts.into_iter().map(|line| {
                                                     div()
                                                         .text_size(px(11.))
                                                         .text_color(rgb(0x8d8d8d))
-                                                        .child("Cmd-Space launcher"),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_size(px(11.))
-                                                        .text_color(rgb(0x8d8d8d))
-                                                        .child("Cmd-Alt-H split row"),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_size(px(11.))
-                                                        .text_color(rgb(0x8d8d8d))
-                                                        .child("Cmd-Alt-V split column"),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_size(px(11.))
-                                                        .text_color(rgb(0x8d8d8d))
-                                                        .child("Cmd-Alt-R reset"),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_size(px(11.))
-                                                        .text_color(rgb(0x8d8d8d))
-                                                        .child("Cmd-Shift-] focus next"),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_size(px(11.))
-                                                        .text_color(rgb(0x8d8d8d))
-                                                        .child("Cmd-Alt-F toggle float"),
-                                                ),
+                                                        .child(line)
+                                                })),
                                         ),
                                     ),
                             ),
@@ -1725,5 +1779,25 @@ mod tests {
         assert!(lines
             .iter()
             .any(|line| line.contains("Terminal, browser, and launcher")));
+    }
+
+    #[test]
+    fn shell_text_component_should_render_launcher_meta() {
+        let text = shell_text_component(
+            "LauncherMeta",
+            &[("selection", "1/6"), ("subtitle", "window mode")],
+        );
+        assert_eq!(text, "1/6 window mode");
+    }
+
+    #[test]
+    fn shell_list_component_should_render_shortcuts() {
+        let shortcuts = shell_list_component("SettingsShortcuts");
+        assert!(shortcuts
+            .iter()
+            .any(|line| line.contains("Cmd-Space launcher")));
+        assert!(shortcuts
+            .iter()
+            .any(|line| line.contains("Cmd-Alt-F toggle float")));
     }
 }

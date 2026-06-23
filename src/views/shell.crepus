@@ -1,0 +1,51 @@
++++
+[LauncherMeta.defaults]
+selection = ""
+subtitle = ""
+
+[LauncherEmpty.defaults]
+message = "type to search desktop actions"
+
+[LauncherNoResults.defaults]
+message = "No results"
+
+[SettingsHeader.defaults]
+title = "Settings"
+subtitle = "Desktop, launcher, session, and system controls"
+
+[SettingsShortcuts.defaults]
++++
+
+--- LauncherMeta
+span
+  "{selection} {subtitle}"
+
+--- LauncherEmpty
+span
+  "{message}"
+
+--- LauncherNoResults
+span
+  "{message}"
+
+--- SettingsHeader
+div
+  h1
+    "{title}"
+  p
+    "{subtitle}"
+
+--- SettingsShortcuts
+ul
+  li
+    "Cmd-Space launcher"
+  li
+    "Cmd-Alt-H split row"
+  li
+    "Cmd-Alt-V split column"
+  li
+    "Cmd-Alt-R reset"
+  li
+    "Cmd-Shift-] focus next"
+  li
+    "Cmd-Alt-F toggle float"
