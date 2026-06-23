@@ -567,6 +567,20 @@ fn shell_row_component(marker: &str, title: &str, subtitle: &str) -> (String, St
         .unwrap_or_else(|_| (marker.to_string(), title.to_string(), subtitle.to_string()))
 }
 
+fn shell_bar_component(query: &str, meta: &str) -> (String, String) {
+    let mut ctx = TemplateContext::new();
+    ctx.set("query", TemplateValue::Str(query.to_string()));
+    ctx.set("meta", TemplateValue::Str(meta.to_string()));
+    render_component_file_to_html(SHELL_CREPUS, "LauncherBar", &ctx)
+        .map(|html| {
+            let texts = html_tag_texts(&html, &["h1", "p"]);
+            let query = texts.first().cloned().unwrap_or_else(|| query.to_string());
+            let meta = texts.get(1).cloned().unwrap_or_else(|| meta.to_string());
+            (query, meta)
+        })
+        .unwrap_or_else(|_| (query.to_string(), meta.to_string()))
+}
+
 fn html_list_items(html: &str) -> Vec<String> {
     let mut lines = Vec::new();
     let mut cursor = 0;
@@ -715,6 +729,7 @@ impl LauncherWindow {
         } else {
             desktop.query.clone()
         };
+        let bar = shell_bar_component(&query, &meta);
 
         div()
             .w(px(720.))
@@ -732,13 +747,13 @@ impl LauncherWindow {
                     .flex_1()
                     .text_size(px(18.))
                     .text_color(rgb(0xffffff))
-                    .child(query),
+                    .child(bar.0),
             )
             .child(
                 div()
                     .text_size(px(12.))
                     .text_color(rgb(0xb8b8b8))
-                    .child(meta),
+                    .child(bar.1),
             )
     }
 
@@ -1854,5 +1869,12 @@ mod tests {
         assert_eq!(row.0, ">");
         assert_eq!(row.1, "Tile windows");
         assert_eq!(row.2, "window mode");
+    }
+
+    #[test]
+    fn shell_bar_component_should_render_launcher_bar() {
+        let bar = shell_bar_component("window", "1/6 window mode");
+        assert_eq!(bar.0, "window");
+        assert_eq!(bar.1, "1/6 window mode");
     }
 }

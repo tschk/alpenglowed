@@ -14,6 +14,10 @@ marker = ">"
 title = ""
 subtitle = ""
 
+[LauncherBar.defaults]
+query = ""
+meta = ""
+
 [SettingsHeader.defaults]
 title = "Settings"
 subtitle = "Desktop, launcher, session, and system controls"
@@ -41,6 +45,13 @@ div
     "{title}"
   p
     "{subtitle}"
+
+--- LauncherBar
+div
+  h1
+    "{query}"
+  p
+    "{meta}"
 
 --- SettingsHeader
 div
