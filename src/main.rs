@@ -595,6 +595,16 @@ fn shell_section_header_component(title: &str, detail: &str) -> (String, String)
         .unwrap_or_else(|_| (title.to_string(), detail.to_string()))
 }
 
+fn shell_status_row_component(mode: &str, layout: &str, focused: &str) -> Vec<String> {
+    let mut ctx = TemplateContext::new();
+    ctx.set("mode", TemplateValue::Str(mode.to_string()));
+    ctx.set("layout", TemplateValue::Str(layout.to_string()));
+    ctx.set("focused", TemplateValue::Str(focused.to_string()));
+    render_component_file_to_html(SHELL_CREPUS, "SettingsStatusRow", &ctx)
+        .map(|html| html_list_items(&html))
+        .unwrap_or_else(|_| vec![mode.to_string(), layout.to_string(), focused.to_string()])
+}
+
 fn html_list_items(html: &str) -> Vec<String> {
     let mut lines = Vec::new();
     let mut cursor = 0;
@@ -1038,6 +1048,8 @@ impl Render for SettingsWindow {
         };
         let last_action = desktop.last_action.clone();
         let settings_header = shell_header_component("SettingsHeader");
+        let status_row =
+            shell_status_row_component(desktop.mode.label(), &layout_summary, &focused);
         let shortcuts = shell_list_component("SettingsShortcuts");
         div().size_full().bg(rgb(0x080808)).child(
             div().size_full().bg(rgb(0x050505)).p(px(20.)).child(
@@ -1078,11 +1090,11 @@ impl Render for SettingsWindow {
                                 div()
                                     .flex()
                                     .gap(px(8.))
-                                    .child(DesktopWindow::status_pill(
-                                        desktop.mode.label().to_string(),
-                                    ))
-                                    .child(DesktopWindow::status_pill(layout_summary.clone()))
-                                    .child(DesktopWindow::status_pill(focused.clone())),
+                                    .children(
+                                        status_row
+                                            .into_iter()
+                                            .map(DesktopWindow::status_pill),
+                                    ),
                             ),
                     )
                     .child(
@@ -1899,5 +1911,18 @@ mod tests {
         let header = shell_section_header_component("Windows", "root row");
         assert_eq!(header.0, "Windows");
         assert_eq!(header.1, "root row");
+    }
+
+    #[test]
+    fn shell_status_row_component_should_render_settings_pills() {
+        let row = shell_status_row_component("tiling", "3 tiled 1 floating", "Workspace");
+        assert_eq!(
+            row,
+            vec![
+                "tiling".to_string(),
+                "3 tiled 1 floating".to_string(),
+                "Workspace".to_string()
+            ]
+        );
     }
 }

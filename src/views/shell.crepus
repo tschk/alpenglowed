@@ -26,6 +26,11 @@ subtitle = "Desktop, launcher, session, and system controls"
 title = ""
 detail = ""
 
+[SettingsStatusRow.defaults]
+mode = ""
+layout = ""
+focused = ""
+
 [SettingsShortcuts.defaults]
 +++
 
@@ -70,6 +75,15 @@ div
     "{title}"
   p
     "{detail}"
+
+--- SettingsStatusRow
+ul
+  li
+    "{mode}"
+  li
+    "{layout}"
+  li
+    "{focused}"
 
 --- SettingsShortcuts
 ul
