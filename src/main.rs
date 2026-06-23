@@ -548,6 +548,25 @@ fn shell_list_component(component: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn shell_row_component(marker: &str, title: &str, subtitle: &str) -> (String, String, String) {
+    let mut ctx = TemplateContext::new();
+    ctx.set("marker", TemplateValue::Str(marker.to_string()));
+    ctx.set("title", TemplateValue::Str(title.to_string()));
+    ctx.set("subtitle", TemplateValue::Str(subtitle.to_string()));
+    render_component_file_to_html(SHELL_CREPUS, "LauncherRow", &ctx)
+        .map(|html| {
+            let texts = html_tag_texts(&html, &["strong", "h2", "p"]);
+            let marker = texts.first().cloned().unwrap_or_else(|| marker.to_string());
+            let title = texts.get(1).cloned().unwrap_or_else(|| title.to_string());
+            let subtitle = texts
+                .get(2)
+                .cloned()
+                .unwrap_or_else(|| subtitle.to_string());
+            (marker, title, subtitle)
+        })
+        .unwrap_or_else(|_| (marker.to_string(), title.to_string(), subtitle.to_string()))
+}
+
 fn html_list_items(html: &str) -> Vec<String> {
     let mut lines = Vec::new();
     let mut cursor = 0;
@@ -766,6 +785,11 @@ impl LauncherWindow {
                     .map(|(index, result)| {
                         let selected = index == desktop.runner.selected;
                         let desktop = self.desktop.clone();
+                        let row = shell_row_component(
+                            if selected { ">" } else { "$" },
+                            &result.title,
+                            &result.subtitle,
+                        );
                         div()
                             .id(SharedString::from(format!("launcher-result-{index}")))
                             .rounded(px(4.))
@@ -810,7 +834,7 @@ impl LauncherWindow {
                                     } else {
                                         rgb(0xb8b8b8)
                                     })
-                                    .child(if selected { ">" } else { "$" }),
+                                    .child(row.0),
                             )
                             .child(
                                 div()
@@ -821,13 +845,13 @@ impl LauncherWindow {
                                     } else {
                                         rgb(0xf0f0f0)
                                     })
-                                    .child(result.title.clone()),
+                                    .child(row.1),
                             )
                             .child(
                                 div()
                                     .text_size(px(11.))
                                     .text_color(rgb(0x8d8d8d))
-                                    .child(result.subtitle.clone()),
+                                    .child(row.2),
                             )
                     }),
             )
@@ -1822,5 +1846,13 @@ mod tests {
         assert!(shortcuts
             .iter()
             .any(|line| line.contains("Cmd-Alt-F toggle float")));
+    }
+
+    #[test]
+    fn shell_row_component_should_render_launcher_row() {
+        let row = shell_row_component(">", "Tile windows", "window mode");
+        assert_eq!(row.0, ">");
+        assert_eq!(row.1, "Tile windows");
+        assert_eq!(row.2, "window mode");
     }
 }

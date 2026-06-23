@@ -9,6 +9,11 @@ message = "type to search desktop actions"
 [LauncherNoResults.defaults]
 message = "No results"
 
+[LauncherRow.defaults]
+marker = ">"
+title = ""
+subtitle = ""
+
 [SettingsHeader.defaults]
 title = "Settings"
 subtitle = "Desktop, launcher, session, and system controls"
@@ -27,6 +32,15 @@ span
 --- LauncherNoResults
 span
   "{message}"
+
+--- LauncherRow
+div
+  strong
+    "{marker}"
+  h2
+    "{title}"
+  p
+    "{subtitle}"
 
 --- SettingsHeader
 div
