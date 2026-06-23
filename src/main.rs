@@ -581,6 +581,20 @@ fn shell_bar_component(query: &str, meta: &str) -> (String, String) {
         .unwrap_or_else(|_| (query.to_string(), meta.to_string()))
 }
 
+fn shell_section_header_component(title: &str, detail: &str) -> (String, String) {
+    let mut ctx = TemplateContext::new();
+    ctx.set("title", TemplateValue::Str(title.to_string()));
+    ctx.set("detail", TemplateValue::Str(detail.to_string()));
+    render_component_file_to_html(SHELL_CREPUS, "SettingsSectionHeader", &ctx)
+        .map(|html| {
+            let texts = html_tag_texts(&html, &["h2", "p"]);
+            let title = texts.first().cloned().unwrap_or_else(|| title.to_string());
+            let detail = texts.get(1).cloned().unwrap_or_else(|| detail.to_string());
+            (title, detail)
+        })
+        .unwrap_or_else(|_| (title.to_string(), detail.to_string()))
+}
+
 fn html_list_items(html: &str) -> Vec<String> {
     let mut lines = Vec::new();
     let mut cursor = 0;
@@ -966,6 +980,8 @@ impl SettingsWindow {
         detail: impl Into<String>,
         content: impl IntoElement,
     ) -> Div {
+        let detail = detail.into();
+        let header = shell_section_header_component(title, &detail);
         div()
             .flex()
             .flex_col()
@@ -984,13 +1000,13 @@ impl SettingsWindow {
                         div()
                             .text_size(px(13.))
                             .text_color(rgb(0xf0f0f0))
-                            .child(title),
+                            .child(header.0),
                     )
                     .child(
                         div()
                             .text_size(px(11.))
                             .text_color(rgb(0x8d8d8d))
-                            .child(detail.into()),
+                            .child(header.1),
                     ),
             )
             .child(content)
@@ -1876,5 +1892,12 @@ mod tests {
         let bar = shell_bar_component("window", "1/6 window mode");
         assert_eq!(bar.0, "window");
         assert_eq!(bar.1, "1/6 window mode");
+    }
+
+    #[test]
+    fn shell_section_header_component_should_render_settings_header() {
+        let header = shell_section_header_component("Windows", "root row");
+        assert_eq!(header.0, "Windows");
+        assert_eq!(header.1, "root row");
     }
 }

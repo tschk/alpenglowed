@@ -22,6 +22,10 @@ meta = ""
 title = "Settings"
 subtitle = "Desktop, launcher, session, and system controls"
 
+[SettingsSectionHeader.defaults]
+title = ""
+detail = ""
+
 [SettingsShortcuts.defaults]
 +++
 
@@ -59,6 +63,13 @@ div
     "{title}"
   p
     "{subtitle}"
+
+--- SettingsSectionHeader
+div
+  h2
+    "{title}"
+  p
+    "{detail}"
 
 --- SettingsShortcuts
 ul
