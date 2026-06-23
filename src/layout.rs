@@ -291,6 +291,12 @@ impl LayoutState {
         set_floating(&mut self.root, floating);
     }
 
+    pub fn set_window_floating(&mut self, id: usize, floating: bool) {
+        if let Some(window) = find_mut(&mut self.root, id) {
+            window.floating = floating;
+        }
+    }
+
     pub fn set_focused_window_content(
         &mut self,
         title: impl Into<String>,
@@ -736,6 +742,15 @@ mod tests {
         assert_eq!(layout.summary(), "3 tiled 1 floating");
         assert_eq!(layout.focused_title(), "Workspace");
         assert_eq!(layout.view().floating_windows().len(), 1);
+    }
+
+    #[test]
+    fn set_window_floating_should_override_single_window() {
+        let mut layout = LayoutState::demo();
+        layout.set_window_mode(&WindowMode::Tiling);
+        assert_eq!(layout.summary(), "4 tiled 0 floating");
+        layout.set_window_floating(4, true);
+        assert_eq!(layout.summary(), "3 tiled 1 floating");
     }
 
     #[test]

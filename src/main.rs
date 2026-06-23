@@ -89,6 +89,9 @@ impl DesktopModel {
                     LayoutState::new()
                 };
                 layout.set_window_mode(&options.mode);
+                if options.demo_layout && matches!(options.mode, WindowMode::Tiling) {
+                    layout.set_window_floating(4, true);
+                }
                 layout
             },
             status_bar: options.status_bar,
@@ -430,16 +433,7 @@ impl DesktopWindow {
             .top(px(0.))
             .left(px(0.))
             .right(px(0.))
-            .bottom(px(0.))
-            .child(
-                div()
-                    .absolute()
-                    .top(px(0.))
-                    .left(px(0.))
-                    .right(px(0.))
-                    .bottom(px(0.))
-                    .bg(rgb(0x010101)),
-            );
+            .bottom(px(0.));
         for (index, window) in windows.iter().enumerate() {
             layer = layer.child(Self::render_floating_window(desktop, window, index));
         }
