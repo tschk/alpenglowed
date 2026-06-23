@@ -17,6 +17,7 @@ use layout::{Axis, LayoutChildView, LayoutState, LayoutView, LayoutWindowView};
 use plugin::{PluginAction, WindowTarget};
 use runner::{Runner, WindowMode};
 use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 
 const SHELL_CREPUS: &str = include_str!("views/shell.crepus");
@@ -75,6 +76,14 @@ struct DesktopModel {
 }
 
 impl EventEmitter<DesktopEvent> for DesktopModel {}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ExternalBarState {
+    focused_title: String,
+    layout: String,
+    mode: String,
+    last_action: String,
+}
 
 impl DesktopModel {
     fn new(options: UiOptions) -> Self {
@@ -238,6 +247,7 @@ impl DesktopModel {
     }
 
     fn changed(&mut self, cx: &mut Context<Self>) {
+        write_external_bar_state(self);
         cx.notify();
         cx.emit(DesktopEvent::Changed);
     }
@@ -291,11 +301,9 @@ impl DesktopWindow {
     fn render_window(
         desktop: &Entity<DesktopModel>,
         window: &LayoutWindowView,
-        grow: Option<f32>,
+        _grow: Option<f32>,
     ) -> Div {
         let border = if window.focused { 0xe8e8e8 } else { 0x2a2a2a };
-        let label = if window.floating { "floating" } else { "tiled" };
-        let focus = if window.focused { "focused" } else { "ready" };
         let lines = Self::pane_lines(window);
         let window_id = window.id;
         let desktop = desktop.clone();
@@ -309,7 +317,7 @@ impl DesktopWindow {
             .p(px(14.))
             .flex()
             .flex_col()
-            .gap(px(12.))
+            .gap(px(8.))
             .cursor_pointer()
             .on_click(move |_, _, cx| {
                 desktop.update(cx, |desktop, cx| {
@@ -319,41 +327,11 @@ impl DesktopWindow {
             })
             .child(
                 div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(10.))
-                            .child(
-                                div()
-                                    .w(px(5.))
-                                    .h(px(5.))
-                                    .rounded_full()
-                                    .bg(rgb(if window.focused { 0xf0f0f0 } else { 0x3f3f3f })),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(14.))
-                                    .text_color(rgb(0xf5f5f5))
-                                    .child(window.title.clone()),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap(px(8.))
-                            .child(Self::window_pill(label, false))
-                            .child(Self::window_pill(focus, window.focused)),
-                    ),
-            )
-            .child(
-                div()
                     .text_size(px(11.))
                     .text_color(rgb(0xb0b0b0))
-                    .child(window.detail.clone()),
+                    .when(window.detail != "Ready", |label| {
+                        label.child(window.detail.clone())
+                    }),
             )
             .child(
                 div()
@@ -366,46 +344,9 @@ impl DesktopWindow {
                     .when(!lines.is_empty(), |panel| {
                         panel.children(lines.into_iter().map(Self::window_line))
                     }),
-            )
-            .child(
-                div()
-                    .flex()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(rgb(0x7e7e7e))
-                            .child(format!("window {}", window.id)),
-                    )
-                    .child(div().text_size(px(11.)).text_color(rgb(0x7e7e7e)).child(
-                        if window.floating {
-                            format!(
-                                "{:.0}x{:.0} @ {:.0},{:.0}",
-                                window.width, window.height, window.x, window.y
-                            )
-                        } else {
-                            grow.map_or_else(
-                                || "flex layout".to_string(),
-                                |value| format!("flex grow {:.1}", value),
-                            )
-                        },
-                    )),
             );
 
         div().size_full().child(panel)
-    }
-
-    fn window_pill(text: &str, active: bool) -> Div {
-        div()
-            .px(px(7.))
-            .py(px(2.))
-            .rounded(px(999.))
-            .bg(rgb(0x090909))
-            .border_1()
-            .border_color(rgb(if active { 0xd9d9d9 } else { 0x3a3a3a }))
-            .text_size(px(9.))
-            .text_color(rgb(if active { 0xf4f4f4 } else { 0xa0a0a0 }))
-            .child(text.to_string())
     }
 
     fn window_line(text: String) -> Div {
@@ -484,12 +425,9 @@ impl DesktopWindow {
 
     fn render_status_bar(desktop: &DesktopModel) -> Div {
         let metrics = TopBarMetrics::detect(desktop);
-        let detail = desktop
-            .layout
-            .view()
-            .focused_detail()
-            .unwrap_or_else(|| "Ready".to_string());
-        let header = shell_top_bar_title_component("alpenglowed", &detail);
+        let focused = desktop.layout.focused_title().to_string();
+        let detail = desktop.layout.summary();
+        let header = shell_top_bar_title_component(&focused, &detail);
 
         div()
             .absolute()
@@ -935,6 +873,7 @@ impl LauncherWindow {
 
     fn render_bar(&self, cx: &App) -> impl IntoElement {
         let desktop = self.desktop.read(cx);
+        let show_results = !desktop.query.trim().is_empty();
         let selection = desktop.runner.selection_label();
         let subtitle = if desktop.query.trim().is_empty() {
             shell_text_component(
@@ -962,7 +901,8 @@ impl LauncherWindow {
         div()
             .w(px(680.))
             .h(px(44.))
-            .rounded(px(2.))
+            .when(show_results, |bar| bar.rounded_t(px(2.)))
+            .when(!show_results, |bar| bar.rounded(px(2.)))
             .bg(rgb(0x0a0a0a))
             .border_1()
             .border_color(rgb(0x323232))
@@ -1850,7 +1790,7 @@ impl Render for LauncherWindow {
                             .w(px(680.))
                             .flex()
                             .flex_col()
-                            .gap(px(8.))
+                            .gap(px(0.))
                             .child(self.render_bar(cx))
                             .child(self.render_results(cx)),
                     ),
@@ -2293,7 +2233,14 @@ impl UiOptions {
 
 fn polybar_module(name: &str) -> String {
     match name {
-        "mode" => "launcher".to_string(),
+        "title" => external_bar_state()
+            .map(|state| state.focused_title)
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or_else(|| "alpenglowed".to_string()),
+        "mode" => external_bar_state()
+            .map(|state| state.mode)
+            .filter(|mode| !mode.trim().is_empty())
+            .unwrap_or_else(|| "launcher".to_string()),
         "backend" => polybar_backend(&de::DesktopState::detect("tiling")),
         "battery" => battery_value().unwrap_or_else(|| "battery unavailable".to_string()),
         "load" => load_value().unwrap_or_else(|| "load unavailable".to_string()),
@@ -2315,6 +2262,31 @@ fn ensure_wayland_display() {
     if wayland_socket.exists() {
         std::env::set_var("WAYLAND_DISPLAY", "wayland-0");
     }
+}
+
+fn external_bar_state_path() -> PathBuf {
+    let base = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("alpenglowed-polybar.json")
+}
+
+fn write_external_bar_state(desktop: &DesktopModel) {
+    let state = ExternalBarState {
+        focused_title: desktop.layout.focused_title().to_string(),
+        layout: desktop.layout.summary(),
+        mode: desktop.mode.label().to_string(),
+        last_action: desktop.last_action.clone(),
+    };
+    let _ = fs::write(
+        external_bar_state_path(),
+        serde_json::to_vec(&state).unwrap_or_default(),
+    );
+}
+
+fn external_bar_state() -> Option<ExternalBarState> {
+    let data = fs::read(external_bar_state_path()).ok()?;
+    serde_json::from_slice(&data).ok()
 }
 
 #[cfg(test)]
@@ -2381,6 +2353,11 @@ mod tests {
     #[test]
     fn polybar_module_should_return_mode() {
         assert_eq!(polybar_module("mode"), "launcher");
+    }
+
+    #[test]
+    fn polybar_module_should_return_title_fallback() {
+        assert_eq!(polybar_module("title"), "alpenglowed");
     }
 
     #[test]
