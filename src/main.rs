@@ -6,15 +6,19 @@ mod plugin;
 mod runner;
 mod session;
 
+use crepuscularity_core::context::{TemplateContext, TemplateValue};
 use crepuscularity_gpui::prelude::*;
 use crepuscularity_gpui::{
     actions, size, AnyWindowHandle, Div, EventEmitter, KeyBinding, KeyDownEvent, Modifiers, Pixels,
     WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowOptions,
 };
+use crepuscularity_web::render_component_file_to_html;
 use layout::{Axis, LayoutChildView, LayoutState, LayoutView, LayoutWindowView};
 use plugin::PluginAction;
 use runner::{Runner, WindowMode};
 use std::process::Command;
+
+const PANES_CREPUS: &str = include_str!("views/panes.crepus");
 
 actions!(
     alpenglowed,
@@ -379,34 +383,16 @@ impl DesktopWindow {
 
     fn pane_lines(window: &LayoutWindowView) -> Vec<String> {
         let title = window.title.to_lowercase();
-        if title.contains("workspace") {
-            return vec![
-                "launcher ready for app, shell, and os actions".to_string(),
-                "tiling shortcuts stay on desktop surface".to_string(),
-                window.detail.clone(),
-                "terminal and browser stay in main flow".to_string(),
-            ];
-        }
-        if title.contains("scratch") {
-            return vec![
-                "clipboard history and quick notes".to_string(),
-                "transient actions and settings access".to_string(),
-                window.detail.clone(),
-                "good target for floating utility panes".to_string(),
-            ];
-        }
-        if title.contains("shell") {
-            return vec![
-                "command output stays attached to focused pane".to_string(),
-                "enter runs selected launcher action".to_string(),
-                "escape keeps desktop visible".to_string(),
-            ];
-        }
-        vec![
-            window.detail.clone(),
-            "split, focus, float, resize".to_string(),
-            "bar drives window actions".to_string(),
-        ]
+        let component = if title.contains("workspace") {
+            "WorkspacePane"
+        } else if title.contains("scratch") {
+            "ScratchPane"
+        } else if title.contains("shell") {
+            "ShellPane"
+        } else {
+            "GenericPane"
+        };
+        render_pane_component(component, &window.detail)
     }
 
     fn render_floating_window(
@@ -496,6 +482,42 @@ impl DesktopWindow {
             .text_color(rgb(0xcfcfcf))
             .child(text)
     }
+}
+
+fn render_pane_component(component: &str, detail: &str) -> Vec<String> {
+    let mut ctx = TemplateContext::new();
+    ctx.set("detail", TemplateValue::Str(detail.to_string()));
+    render_component_file_to_html(PANES_CREPUS, component, &ctx)
+        .map(|html| html_list_items(&html))
+        .unwrap_or_else(|_| vec![detail.to_string()])
+}
+
+fn html_list_items(html: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut cursor = 0;
+    while let Some(open_rel) = html[cursor..].find("<li") {
+        let open = cursor + open_rel;
+        let Some(content_start_rel) = html[open..].find('>') else {
+            break;
+        };
+        let content_start = open + content_start_rel + 1;
+        let Some(close_rel) = html[content_start..].find("</li>") else {
+            break;
+        };
+        let content_end = content_start + close_rel;
+        let text = html[content_start..content_end]
+            .replace("&quot;", "\"")
+            .replace("&amp;", "&")
+            .replace("&#39;", "'")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">");
+        let text = text.trim();
+        if !text.is_empty() {
+            lines.push(text.to_string());
+        }
+        cursor = content_end + "</li>".len();
+    }
+    lines
 }
 
 struct LauncherWindow {
@@ -1680,5 +1702,28 @@ fn ensure_wayland_display() {
     let wayland_socket = std::path::Path::new(&runtime_dir).join("wayland-0");
     if wayland_socket.exists() {
         std::env::set_var("WAYLAND_DISPLAY", "wayland-0");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn html_list_items_should_extract_li_text() {
+        assert_eq!(
+            html_list_items("<ul><li>one</li><li>two &amp; three</li></ul>"),
+            vec!["one".to_string(), "two & three".to_string()]
+        );
+    }
+
+    #[test]
+    fn render_pane_component_should_use_crepus_view() {
+        let lines = render_pane_component("WorkspacePane", "Terminal, browser, and launcher");
+        assert_eq!(lines.len(), 4);
+        assert!(lines.iter().any(|line| line.contains("launcher ready")));
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("Terminal, browser, and launcher")));
     }
 }

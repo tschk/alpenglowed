@@ -1,0 +1,52 @@
++++
+[WorkspacePane.defaults]
+detail = ""
+
+[ScratchPane.defaults]
+detail = ""
+
+[ShellPane.defaults]
+detail = ""
+
+[GenericPane.defaults]
+detail = ""
+
+--- WorkspacePane
+ul
+  li
+    "launcher ready for app, shell, and os actions"
+  li
+    "tiling shortcuts stay on desktop surface"
+  li
+    "{detail}"
+  li
+    "terminal and browser stay in main flow"
+
+--- ScratchPane
+ul
+  li
+    "clipboard history and quick notes"
+  li
+    "transient actions and settings access"
+  li
+    "{detail}"
+  li
+    "good target for floating utility panes"
+
+--- ShellPane
+ul
+  li
+    "command output stays attached to focused pane"
+  li
+    "enter runs selected launcher action"
+  li
+    "escape keeps desktop visible"
+
+--- GenericPane
+ul
+  li
+    "{detail}"
+  li
+    "split, focus, float, resize"
+  li
+    "bar drives window actions"
