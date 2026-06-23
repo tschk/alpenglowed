@@ -101,13 +101,15 @@ fn window_results(
     matcher: &SkimMatcherV2,
     windows: &[WindowTarget],
 ) -> Vec<PluginResult> {
+    let query = query.trim();
     windows
         .iter()
         .filter_map(|window| {
-            let title = format!("Focus {}", window.title);
-            score(&title, query, matcher).map(|score| PluginResult {
+            let action_title = format!("Focus {}", window.title);
+            let window_title = window.title.as_str();
+            score_window(query, matcher, window_title, &action_title).map(|score| PluginResult {
                 plugin_id: "windows".to_string(),
-                title,
+                title: action_title,
                 subtitle: if window.focused {
                     "focused pane".to_string()
                 } else if window.floating {
@@ -120,6 +122,31 @@ fn window_results(
             })
         })
         .collect()
+}
+
+fn score_window(
+    query: &str,
+    matcher: &SkimMatcherV2,
+    window_title: &str,
+    action_title: &str,
+) -> Option<i64> {
+    if query.eq_ignore_ascii_case(window_title) {
+        return Some(i64::MAX - 2);
+    }
+    if query.eq_ignore_ascii_case(action_title) {
+        return Some(i64::MAX - 1);
+    }
+    let title_score = matcher.fuzzy_match(window_title, query);
+    let action_score = matcher.fuzzy_match(action_title, query);
+    let boosted = title_score
+        .into_iter()
+        .chain(action_score)
+        .max()
+        .map(|score| score + 500);
+    if query.eq_ignore_ascii_case("focus") {
+        return boosted.or(Some(500));
+    }
+    boosted
 }
 
 struct ShellPlugin;

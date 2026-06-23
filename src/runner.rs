@@ -181,6 +181,31 @@ mod tests {
     }
 
     #[test]
+    fn update_should_rank_window_targets_for_plain_focus_query() {
+        let mut runner = Runner::new();
+        runner.query = "focus".to_string();
+        runner.update_with_windows(&[
+            WindowTarget {
+                id: 1,
+                title: "Workspace".to_string(),
+                focused: true,
+                floating: false,
+            },
+            WindowTarget {
+                id: 2,
+                title: "Scratch".to_string(),
+                focused: false,
+                floating: false,
+            },
+        ]);
+
+        assert!(matches!(
+            runner.results.first().map(|result| &result.action),
+            Some(PluginAction::FocusWindow { .. })
+        ));
+    }
+
+    #[test]
     fn update_should_return_os_actions() {
         let mut runner = Runner::new();
         runner.query = "lock".to_string();
