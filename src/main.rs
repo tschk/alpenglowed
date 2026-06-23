@@ -462,9 +462,11 @@ impl DesktopWindow {
 
         div()
             .absolute()
-            .top(px(20.))
-            .left(px(24.))
+            .top(px(18.))
+            .left(px(0.))
+            .right(px(0.))
             .flex()
+            .justify_center()
             .gap(px(8.))
             .children(
                 [
@@ -1201,9 +1203,7 @@ impl Render for SettingsWindow {
 
 impl Render for LauncherWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let status_bar = self.desktop.read(cx).status_bar;
-
-        let mut root = div()
+        div()
             .size_full()
             .key_context("alpenglowed")
             .on_action(cx.listener(|this, _: &Confirm, _, cx| {
@@ -1268,13 +1268,7 @@ impl Render for LauncherWindow {
                             .child(self.render_bar(cx))
                             .child(self.render_results(cx)),
                     ),
-            );
-
-        if status_bar {
-            root = root.child(DesktopWindow::render_status_bar(self.desktop.read(cx)));
-        }
-
-        root
+            )
     }
 }
 
