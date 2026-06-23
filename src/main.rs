@@ -236,7 +236,6 @@ impl DesktopWindow {
             LayoutView::Window(window) => Self::render_window(desktop, window, None),
             LayoutView::Container(container) => {
                 let mut node = div()
-                    .relative()
                     .size_full()
                     .flex()
                     .gap(px(12.))
@@ -244,13 +243,7 @@ impl DesktopWindow {
                 for child in &container.children {
                     node = node.child(Self::render_child(desktop, child));
                 }
-                node.child(
-                    div()
-                        .absolute()
-                        .top(px(8.))
-                        .left(px(8.))
-                        .child(Self::window_pill(container.axis.label(), false)),
-                )
+                node
             }
         }
     }
