@@ -51,6 +51,7 @@ struct UiOptions {
     open_settings: bool,
     initial_query: String,
     mode: WindowMode,
+    demo_layout: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -82,7 +83,11 @@ impl DesktopModel {
             query: options.initial_query,
             mode: options.mode.clone(),
             layout: {
-                let mut layout = LayoutState::new();
+                let mut layout = if options.demo_layout {
+                    LayoutState::demo()
+                } else {
+                    LayoutState::new()
+                };
                 layout.set_window_mode(&options.mode);
                 layout
             },
@@ -1734,12 +1739,18 @@ impl UiOptions {
         } else {
             WindowMode::Tiling
         };
+        let demo_layout = std::env::args().any(|arg| arg == "--demo-layout")
+            || matches!(
+                std::env::var("ALPENGLOWED_DEMO_LAYOUT").as_deref(),
+                Ok("1" | "true" | "yes")
+            );
 
         Self {
             status_bar,
             open_settings,
             initial_query,
             mode,
+            demo_layout,
         }
     }
 }

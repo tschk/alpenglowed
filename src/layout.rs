@@ -131,6 +131,79 @@ impl LayoutState {
         Self::seed()
     }
 
+    pub fn demo() -> Self {
+        Self {
+            root: Node::Container(ContainerNode {
+                axis: Axis::Row,
+                children: vec![
+                    ChildNode {
+                        grow: 1.2,
+                        node: Node::Container(ContainerNode {
+                            axis: Axis::Column,
+                            children: vec![
+                                ChildNode {
+                                    grow: 1.0,
+                                    node: Node::Window(WindowNode {
+                                        id: 1,
+                                        title: "Workspace".to_string(),
+                                        detail: "Terminal, browser, and launcher".to_string(),
+                                        floating: false,
+                                        x: 72.,
+                                        y: 72.,
+                                        width: 420.,
+                                        height: 280.,
+                                    }),
+                                },
+                                ChildNode {
+                                    grow: 0.8,
+                                    node: Node::Window(WindowNode {
+                                        id: 3,
+                                        title: "Shell".to_string(),
+                                        detail: "Command output and task logs".to_string(),
+                                        floating: false,
+                                        x: 112.,
+                                        y: 112.,
+                                        width: 420.,
+                                        height: 260.,
+                                    }),
+                                },
+                            ],
+                        }),
+                    },
+                    ChildNode {
+                        grow: 0.9,
+                        node: Node::Window(WindowNode {
+                            id: 2,
+                            title: "Scratch".to_string(),
+                            detail: "Clipboard, notes, and quick actions".to_string(),
+                            floating: false,
+                            x: 100.,
+                            y: 100.,
+                            width: 420.,
+                            height: 280.,
+                        }),
+                    },
+                    ChildNode {
+                        grow: 0.7,
+                        node: Node::Window(WindowNode {
+                            id: 4,
+                            title: "Inspector".to_string(),
+                            detail: "Settings, session state, and focused action detail"
+                                .to_string(),
+                            floating: true,
+                            x: 920.,
+                            y: 120.,
+                            width: 380.,
+                            height: 320.,
+                        }),
+                    },
+                ],
+            }),
+            focused: 1,
+            next_id: 5,
+        }
+    }
+
     fn seed() -> Self {
         Self {
             root: Node::Container(ContainerNode {
@@ -655,6 +728,14 @@ mod tests {
         assert_eq!(layout.summary(), "0 tiled 2 floating");
         layout.set_window_mode(&WindowMode::Tiling);
         assert_eq!(layout.summary(), "2 tiled 0 floating");
+    }
+
+    #[test]
+    fn demo_layout_should_seed_multiple_windows_and_floating_utility() {
+        let layout = LayoutState::demo();
+        assert_eq!(layout.summary(), "3 tiled 1 floating");
+        assert_eq!(layout.focused_title(), "Workspace");
+        assert_eq!(layout.view().floating_windows().len(), 1);
     }
 
     #[test]
