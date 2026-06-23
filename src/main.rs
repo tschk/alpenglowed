@@ -290,7 +290,7 @@ impl DesktopWindow {
         window: &LayoutWindowView,
         grow: Option<f32>,
     ) -> Div {
-        let border = if window.focused { 0xf0f0f0 } else { 0x1c1c1c };
+        let border = if window.focused { 0xe8e8e8 } else { 0x2a2a2a };
         let label = if window.floating { "floating" } else { "tiled" };
         let focus = if window.focused { "focused" } else { "ready" };
         let lines = Self::pane_lines(window);
@@ -299,14 +299,14 @@ impl DesktopWindow {
         let panel = div()
             .id(SharedString::from(format!("pane-{window_id}")))
             .size_full()
-            .rounded(px(3.))
-            .bg(rgb(0x010101))
+            .rounded(px(2.))
+            .bg(rgb(0x080808))
             .border_1()
             .border_color(rgb(border))
-            .p(px(12.))
+            .p(px(14.))
             .flex()
             .flex_col()
-            .gap(px(10.))
+            .gap(px(12.))
             .cursor_pointer()
             .on_click(move |_, _, cx| {
                 desktop.update(cx, |desktop, cx| {
@@ -326,14 +326,14 @@ impl DesktopWindow {
                             .gap(px(10.))
                             .child(
                                 div()
-                                    .w(px(6.))
-                                    .h(px(6.))
+                                    .w(px(5.))
+                                    .h(px(5.))
                                     .rounded_full()
-                                    .bg(rgb(if window.focused { 0xf0f0f0 } else { 0x5a5a5a })),
+                                    .bg(rgb(if window.focused { 0xf0f0f0 } else { 0x3f3f3f })),
                             )
                             .child(
                                 div()
-                                    .text_size(px(15.))
+                                    .text_size(px(14.))
                                     .text_color(rgb(0xf5f5f5))
                                     .child(window.title.clone()),
                             ),
@@ -348,18 +348,15 @@ impl DesktopWindow {
             )
             .child(
                 div()
-                    .text_size(px(12.))
-                    .text_color(rgb(0x9d9d9d))
+                    .text_size(px(11.))
+                    .text_color(rgb(0xb0b0b0))
                     .child(window.detail.clone()),
             )
             .child(
                 div()
                     .flex_1()
-                    .rounded(px(2.))
-                    .bg(rgb(0x030303))
-                    .border_1()
-                    .border_color(rgb(0x101010))
-                    .p(px(10.))
+                    .bg(rgb(0x101010))
+                    .p(px(2.))
                     .flex()
                     .flex_col()
                     .gap(px(6.))
@@ -395,14 +392,14 @@ impl DesktopWindow {
 
     fn window_pill(text: &str, active: bool) -> Div {
         div()
-            .px(px(8.))
-            .py(px(3.))
+            .px(px(7.))
+            .py(px(2.))
             .rounded(px(999.))
-            .bg(rgb(0x010101))
+            .bg(rgb(0x090909))
             .border_1()
-            .border_color(rgb(if active { 0xf0f0f0 } else { 0x1d1d1d }))
-            .text_size(px(10.))
-            .text_color(rgb(if active { 0xffffff } else { 0x7f7f7f }))
+            .border_color(rgb(if active { 0xd9d9d9 } else { 0x3a3a3a }))
+            .text_size(px(9.))
+            .text_color(rgb(if active { 0xf4f4f4 } else { 0xa0a0a0 }))
             .child(text.to_string())
     }
 
@@ -453,11 +450,9 @@ impl DesktopWindow {
             .child(
                 div()
                     .size_full()
-                    .rounded(px(3.))
-                    .bg(rgb(0x000000))
-                    .border_1()
-                    .border_color(rgb(0x1d1d1d))
-                    .p(px(4.))
+                    .rounded(px(2.))
+                    .bg(rgb(0x0b0b0b))
+                    .p(px(2.))
                     .child(Self::render_window(desktop, window, None)),
             )
     }
@@ -523,16 +518,16 @@ impl DesktopWindow {
 
     fn status_pill(text: String) -> Div {
         div()
-            .h(px(34.))
-            .px(px(12.))
-            .rounded(px(17.))
+            .h(px(32.))
+            .px(px(11.))
+            .rounded(px(16.))
             .bg(rgb(0x000000))
             .border_1()
-            .border_color(rgb(0x1d1d1d))
+            .border_color(rgb(0x323232))
             .flex()
             .items_center()
-            .text_size(px(12.))
-            .text_color(rgb(0xbdbdbd))
+            .text_size(px(11.))
+            .text_color(rgb(0xd0d0d0))
             .child(text)
     }
 }
@@ -792,11 +787,11 @@ impl LauncherWindow {
 
         div()
             .w(px(680.))
-            .h(px(46.))
-            .rounded(px(3.))
-            .bg(rgb(0x010101))
+            .h(px(44.))
+            .rounded(px(2.))
+            .bg(rgb(0x0a0a0a))
             .border_1()
-            .border_color(rgb(0x1d1d1d))
+            .border_color(rgb(0x323232))
             .px(px(14.))
             .flex()
             .items_center()
@@ -804,14 +799,14 @@ impl LauncherWindow {
             .child(
                 div()
                     .flex_1()
-                    .text_size(px(16.))
+                    .text_size(px(15.))
                     .text_color(rgb(0xffffff))
                     .child(bar.0),
             )
             .child(
                 div()
                     .text_size(px(11.))
-                    .text_color(rgb(0x8d8d8d))
+                    .text_color(rgb(0xb0b0b0))
                     .child(bar.1),
             )
     }
@@ -826,15 +821,15 @@ impl LauncherWindow {
         if desktop.runner.results.is_empty() {
             return div()
                 .w(px(680.))
-                .rounded_b(px(3.))
-                .bg(rgb(0x030303))
+                .rounded_b(px(2.))
+                .bg(rgb(0x0a0a0a))
                 .border_1()
-                .border_color(rgb(0x1a1a1a))
+                .border_color(rgb(0x323232))
                 .border_t_0()
                 .px(px(12.))
                 .py(px(8.))
                 .text_size(px(12.))
-                .text_color(rgb(0x8d8d8d))
+                .text_color(rgb(0xb0b0b0))
                 .child(shell_text_component(
                     "LauncherNoResults",
                     &[("message", "No results")],
@@ -843,10 +838,10 @@ impl LauncherWindow {
 
         div()
             .w(px(680.))
-            .rounded_b(px(3.))
-            .bg(rgb(0x030303))
+            .rounded_b(px(2.))
+            .bg(rgb(0x0a0a0a))
             .border_1()
-            .border_color(rgb(0x1a1a1a))
+            .border_color(rgb(0x323232))
             .border_t_0()
             .p(px(4.))
             .gap(px(2.))
@@ -868,9 +863,9 @@ impl LauncherWindow {
                             .id(SharedString::from(format!("launcher-result-{index}")))
                             .rounded(px(2.))
                             .bg(if selected {
-                                rgb(0x0a0a0a)
+                                rgb(0x161616)
                             } else {
-                                rgb(0x030303)
+                                rgb(0x0a0a0a)
                             })
                             .px(px(8.))
                             .py(px(6.))
@@ -924,7 +919,7 @@ impl LauncherWindow {
                             .child(
                                 div()
                                     .text_size(px(11.))
-                                    .text_color(rgb(0x8d8d8d))
+                                    .text_color(rgb(0xb0b0b0))
                                     .child(row.2),
                             )
                     }),
@@ -992,25 +987,17 @@ impl SettingsWindow {
 
     fn mode_button(&self, label: &'static str, mode: WindowMode, active: bool) -> impl IntoElement {
         let desktop = self.desktop.clone();
-        let bg = if active { rgb(0xf0f0f0) } else { rgb(0x1a1a1a) };
-        let fg = if active { rgb(0x050505) } else { rgb(0xe0e0e0) };
-
-        div()
-            .id(SharedString::from(format!("mode-{label}")))
-            .px(px(10.))
-            .py(px(7.))
-            .rounded(px(3.))
-            .bg(bg)
-            .border_1()
-            .border_color(rgb(if active { 0xf0f0f0 } else { 0x1d1d1d }))
-            .text_color(fg)
-            .cursor_pointer()
-            .child(label)
-            .on_click(move |_, _, cx| {
+        self.chip_button(
+            SharedString::from(format!("mode-{label}")),
+            label,
+            active,
+            move |desktop, cx| {
                 desktop.update(cx, |desktop, cx| {
                     desktop.apply(PluginAction::SetWindowMode { mode: mode.clone() }, cx);
                 });
-            })
+            },
+            desktop,
+        )
     }
 
     fn action_button(
@@ -1019,15 +1006,33 @@ impl SettingsWindow {
         on_click: impl Fn(&Entity<DesktopModel>, &mut App) + 'static,
     ) -> impl IntoElement {
         let desktop = self.desktop.clone();
+        self.chip_button(
+            SharedString::from(format!("settings-{label}")),
+            label,
+            false,
+            on_click,
+            desktop,
+        )
+    }
+
+    fn chip_button(
+        &self,
+        id: SharedString,
+        label: &'static str,
+        active: bool,
+        on_click: impl Fn(&Entity<DesktopModel>, &mut App) + 'static,
+        desktop: Entity<DesktopModel>,
+    ) -> impl IntoElement {
         div()
-            .id(SharedString::from(format!("settings-{label}")))
+            .id(id)
             .px(px(10.))
             .py(px(7.))
-            .rounded(px(3.))
-            .bg(rgb(0x050505))
+            .rounded(px(2.))
+            .bg(rgb(if active { 0xf0f0f0 } else { 0x101010 }))
             .border_1()
-            .border_color(rgb(0x1b1b1b))
-            .text_color(rgb(0xdadada))
+            .border_color(rgb(if active { 0xf0f0f0 } else { 0x323232 }))
+            .text_size(px(12.))
+            .text_color(rgb(if active { 0x050505 } else { 0xd8d8d8 }))
             .cursor_pointer()
             .child(label)
             .on_click(move |_, _, cx| on_click(&desktop, cx))
@@ -1078,27 +1083,25 @@ impl SettingsWindow {
         div()
             .flex()
             .flex_col()
-            .gap(px(8.))
-            .rounded(px(3.))
-            .bg(rgb(0x050505))
-            .border_1()
-            .border_color(rgb(0x121212))
-            .p(px(12.))
+            .gap(px(10.))
+            .border_t_1()
+            .border_color(rgb(0x262626))
+            .pt(px(12.))
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(4.))
+                    .gap(px(3.))
                     .child(
                         div()
-                            .text_size(px(12.))
+                            .text_size(px(13.))
                             .text_color(rgb(0xf0f0f0))
                             .child(header.0),
                     )
                     .child(
                         div()
                             .text_size(px(10.))
-                            .text_color(rgb(0x7f7f7f))
+                            .text_color(rgb(0xa0a0a0))
                             .child(header.1),
                     ),
             )
@@ -1112,12 +1115,10 @@ impl SettingsWindow {
                 "settings-nav-{}",
                 section.label()
             )))
-            .px(px(10.))
-            .py(px(8.))
-            .rounded(px(3.))
-            .bg(rgb(if active { 0xf0f0f0 } else { 0x030303 }))
-            .border_1()
-            .border_color(rgb(if active { 0xf0f0f0 } else { 0x1b1b1b }))
+            .px(px(8.))
+            .py(px(7.))
+            .rounded(px(2.))
+            .bg(rgb(if active { 0x161616 } else { 0x050505 }))
             .cursor_pointer()
             .child(
                 div()
@@ -1127,13 +1128,13 @@ impl SettingsWindow {
                     .child(
                         div()
                             .text_size(px(12.))
-                            .text_color(rgb(if active { 0x050505 } else { 0xd0d0d0 }))
+                            .text_color(rgb(if active { 0xffffff } else { 0xcfcfcf }))
                             .child(section.label()),
                     )
                     .child(
                         div()
                             .text_size(px(10.))
-                            .text_color(rgb(if active { 0x4a4a4a } else { 0x737373 }))
+                            .text_color(rgb(if active { 0xb0b0b0 } else { 0x8f8f8f }))
                             .child(section.detail()),
                     ),
             )
@@ -1172,18 +1173,18 @@ impl Render for SettingsWindow {
         let status_row =
             shell_status_row_component(desktop.mode.label(), &layout_summary, &focused);
         let shortcuts = shell_list_component("SettingsShortcuts");
-        div().size_full().bg(rgb(0x030303)).child(
-            div().size_full().bg(rgb(0x030303)).p(px(16.)).child(
+        div().size_full().bg(rgb(0x050505)).child(
+            div().size_full().bg(rgb(0x050505)).p(px(18.)).child(
                 div()
                     .size_full()
-                    .rounded(px(3.))
-                    .bg(rgb(0x030303))
+                    .rounded(px(2.))
+                    .bg(rgb(0x070707))
                     .border_1()
-                    .border_color(rgb(0x161616))
-                    .p(px(14.))
+                    .border_color(rgb(0x2b2b2b))
+                    .p(px(16.))
                     .flex()
                     .flex_col()
-                    .gap(px(12.))
+                    .gap(px(16.))
                     .child(
                         div()
                             .flex()
@@ -1193,17 +1194,17 @@ impl Render for SettingsWindow {
                                 div()
                                     .flex()
                                     .flex_col()
-                                    .gap(px(4.))
+                                    .gap(px(5.))
                                     .child(
                                         div()
-                                            .text_size(px(18.))
+                                            .text_size(px(17.))
                                             .text_color(rgb(0xf0f0f0))
                                             .child(settings_header.0),
                                     )
                                     .child(
                                         div()
                                             .text_size(px(11.))
-                                            .text_color(rgb(0x7f7f7f))
+                                            .text_color(rgb(0xa0a0a0))
                                             .child(settings_header.1),
                                     ),
                             )
@@ -1221,18 +1222,13 @@ impl Render for SettingsWindow {
                     .child(
                         div()
                             .flex()
-                            .gap(px(14.))
+                            .gap(px(24.))
                             .child(
                                 div()
-                                    .w(px(176.))
+                                    .w(px(160.))
                                     .flex()
                                     .flex_col()
-                                    .gap(px(8.))
-                                    .rounded(px(3.))
-                                    .bg(rgb(0x050505))
-                                    .border_1()
-                                    .border_color(rgb(0x121212))
-                                    .p(px(10.))
+                                    .gap(px(4.))
                                     .child(self.nav_button(cx, SettingsSection::Windows))
                                     .child(self.nav_button(cx, SettingsSection::System))
                                     .child(self.nav_button(cx, SettingsSection::Interface))
@@ -1243,7 +1239,7 @@ impl Render for SettingsWindow {
                                     .flex_1()
                                     .flex()
                                     .flex_col()
-                                    .gap(px(14.))
+                                    .gap(px(18.))
                                     .when(self.section == SettingsSection::Windows, |panel| {
                                         panel.child(
                                             self.section_card(
@@ -1439,7 +1435,6 @@ impl Render for SettingsWindow {
                                                 format!("status bar {status_bar}"),
                                                 div()
                                                     .flex()
-                                                    .flex_col()
                                                     .gap(px(8.))
                                                     .child(self.action_button(
                                                         "Toggle status bar",
@@ -1477,17 +1472,17 @@ impl Render for SettingsWindow {
                                                 div()
                                                     .flex()
                                                     .flex_col()
-                                                    .gap(px(6.))
+                                                    .gap(px(8.))
                                                     .child(
                                                         div()
                                                             .text_size(px(11.))
-                                                            .text_color(rgb(0x8d8d8d))
+                                                            .text_color(rgb(0xb0b0b0))
                                                             .child(format!("Focused pane: {focused}")),
                                                     )
                                                     .child(
                                                         div()
                                                             .text_size(px(11.))
-                                                            .text_color(rgb(0x8d8d8d))
+                                                            .text_color(rgb(0xb0b0b0))
                                                             .child(format!(
                                                                 "Mode: {}",
                                                                 desktop.mode.label()
@@ -1496,7 +1491,7 @@ impl Render for SettingsWindow {
                                                     .child(
                                                         div()
                                                             .text_size(px(11.))
-                                                            .text_color(rgb(0x8d8d8d))
+                                                            .text_color(rgb(0xb0b0b0))
                                                             .child(format!(
                                                                 "Layout axis: {layout_axis}"
                                                             )),
@@ -1504,7 +1499,7 @@ impl Render for SettingsWindow {
                                                     .child(
                                                         div()
                                                             .text_size(px(11.))
-                                                            .text_color(rgb(0x8d8d8d))
+                                                            .text_color(rgb(0xb0b0b0))
                                                             .child(format!(
                                                                 "Last action: {last_action}"
                                                             )),
@@ -1512,7 +1507,7 @@ impl Render for SettingsWindow {
                                                     .child(
                                                         div()
                                                             .text_size(px(11.))
-                                                            .text_color(rgb(0x8d8d8d))
+                                                            .text_color(rgb(0xb0b0b0))
                                                             .child(
                                                                 "Desktop actions show session dispatch or local fallback command",
                                                             ),
