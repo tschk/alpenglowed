@@ -1,4 +1,5 @@
 use std::process::Command;
+use std::fs;
 use wayland_client::Connection;
 
 use serde::{Deserialize, Serialize};
@@ -259,6 +260,104 @@ pub fn probe_actions() -> Vec<String> {
         .collect()
 }
 
+pub fn smoke_safe_actions() -> Vec<String> {
+    [
+        DesktopAction::Audio,
+        DesktopAction::Display,
+        DesktopAction::Clipboard,
+        DesktopAction::Notifications,
+        DesktopAction::Processes,
+    ]
+    .into_iter()
+    .map(|action| {
+        let Some(command) = safe_smoke_command(&action) else {
+            return format!("{}\tunavailable", action.title());
+        };
+        let mut process = Command::new("timeout");
+        process.args(["2s", &command.program]).args(&command.args);
+        for (key, value) in runtime_env() {
+            process.env(key, value);
+        }
+        let output = process.output();
+        match output {
+            Ok(output) if output.status.success() => {
+                format!("{}\tok\t{}", action.title(), command.display())
+            }
+            Ok(output) => format!(
+                "{}\tfailed({})\t{}",
+                action.title(),
+                output.status,
+                command.display()
+            ),
+            Err(error) => format!("{}\terror({error})\t{}", action.title(), command.display()),
+        }
+    })
+    .collect()
+}
+
+fn runtime_env() -> Vec<(String, String)> {
+    weston_runtime_env().unwrap_or_default()
+}
+
+fn weston_runtime_env() -> Option<Vec<(String, String)>> {
+    let proc_dir = fs::read_dir("/proc").ok()?;
+    for entry in proc_dir.flatten() {
+        let name = entry.file_name();
+        let pid = name.to_string_lossy();
+        if !pid.chars().all(|ch| ch.is_ascii_digit()) {
+            continue;
+        }
+        let cmdline_path = entry.path().join("cmdline");
+        let cmdline = fs::read(&cmdline_path).ok()?;
+        if !cmdline.windows(6).any(|window| window == b"weston") {
+            continue;
+        }
+        let environ_path = entry.path().join("environ");
+        let environ = fs::read(environ_path).ok()?;
+        let mut vars = Vec::new();
+        for raw in environ.split(|byte| *byte == 0) {
+            let text = String::from_utf8_lossy(raw);
+            if let Some(value) = text.strip_prefix("DISPLAY=") {
+                vars.push(("DISPLAY".to_string(), value.to_string()));
+            } else if let Some(value) = text.strip_prefix("WAYLAND_DISPLAY=") {
+                vars.push(("WAYLAND_DISPLAY".to_string(), value.to_string()));
+            } else if let Some(value) = text.strip_prefix("XDG_RUNTIME_DIR=") {
+                vars.push(("XDG_RUNTIME_DIR".to_string(), value.to_string()));
+            }
+        }
+        if !vars.is_empty() {
+            return Some(vars);
+        }
+    }
+    None
+}
+
+fn safe_smoke_command(action: &DesktopAction) -> Option<ResolvedCommand> {
+    match action {
+        DesktopAction::Audio => Some(ResolvedCommand {
+            program: "wpctl".to_string(),
+            args: vec!["status".to_string()],
+        }),
+        DesktopAction::Display => Some(ResolvedCommand {
+            program: "xrandr".to_string(),
+            args: vec!["--query".to_string()],
+        }),
+        DesktopAction::Clipboard => Some(ResolvedCommand {
+            program: "wl-paste".to_string(),
+            args: vec!["--list-types".to_string()],
+        }),
+        DesktopAction::Notifications => Some(ResolvedCommand {
+            program: "notify-send".to_string(),
+            args: vec!["alpenglowed".to_string(), "notifications smoke".to_string()],
+        }),
+        DesktopAction::Processes => Some(ResolvedCommand {
+            program: "top".to_string(),
+            args: vec!["-b".to_string(), "-n".to_string(), "1".to_string()],
+        }),
+        _ => None,
+    }
+}
+
 pub fn smoke_wayland() -> Result<(), String> {
     std::env::var("WAYLAND_DISPLAY").map_err(|_| "WAYLAND_DISPLAY is not set".to_string())?;
     Connection::connect_to_env()
@@ -331,5 +430,12 @@ mod tests {
         let lines = probe_actions();
         assert_eq!(lines.len(), DesktopAction::all().len());
         assert!(lines.iter().all(|line| line.split('\t').count() == 3));
+    }
+
+    #[test]
+    fn smoke_safe_actions_should_emit_one_line_per_safe_action() {
+        let lines = smoke_safe_actions();
+        assert_eq!(lines.len(), 5);
+        assert!(lines.iter().all(|line| line.split('\t').count() >= 2));
     }
 }

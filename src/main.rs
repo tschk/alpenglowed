@@ -1592,6 +1592,12 @@ fn main() {
         }
         return;
     }
+    if std::env::args().any(|arg| arg == "--smoke-actions-safe") {
+        for line in de::smoke_safe_actions() {
+            println!("{line}");
+        }
+        return;
+    }
     if std::env::args().any(|arg| arg == "--smoke-wayland") {
         match de::smoke_wayland() {
             Ok(()) => println!("wayland ok"),
