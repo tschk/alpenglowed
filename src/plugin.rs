@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 pub enum PluginAction {
     Launch { program: String },
     Shell { command: String },
+    FocusWindow { id: usize },
     SetWindowMode { mode: WindowMode },
     Layout { action: LayoutAction },
     ShowStatusBar,
@@ -45,6 +46,14 @@ pub struct PluginRegistry {
     plugins: Vec<Box<dyn Plugin>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowTarget {
+    pub id: usize,
+    pub title: String,
+    pub focused: bool,
+    pub floating: bool,
+}
+
 impl PluginRegistry {
     pub fn new() -> Self {
         let mut registry = Self {
@@ -69,16 +78,48 @@ impl PluginRegistry {
         self.plugins.push(plugin);
     }
 
-    pub fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+    pub fn query_with_windows(
+        &self,
+        query: &str,
+        matcher: &SkimMatcherV2,
+        windows: &[WindowTarget],
+    ) -> Vec<PluginResult> {
         let mut results = self
             .plugins
             .iter()
             .flat_map(|plugin| plugin.query(query, matcher))
             .collect::<Vec<_>>();
+        results.extend(window_results(query, matcher, windows));
         results.sort_by_key(|result| Reverse(result.score));
         results.truncate(6);
         results
     }
+}
+
+fn window_results(
+    query: &str,
+    matcher: &SkimMatcherV2,
+    windows: &[WindowTarget],
+) -> Vec<PluginResult> {
+    windows
+        .iter()
+        .filter_map(|window| {
+            let title = format!("Focus {}", window.title);
+            score(&title, query, matcher).map(|score| PluginResult {
+                plugin_id: "windows".to_string(),
+                title,
+                subtitle: if window.focused {
+                    "focused pane".to_string()
+                } else if window.floating {
+                    "floating pane".to_string()
+                } else {
+                    "tiled pane".to_string()
+                },
+                score,
+                action: PluginAction::FocusWindow { id: window.id },
+            })
+        })
+        .collect()
 }
 
 struct ShellPlugin;

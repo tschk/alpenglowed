@@ -317,6 +317,12 @@ impl LayoutState {
         }
     }
 
+    pub fn windows(&self) -> Vec<LayoutWindowView> {
+        let mut windows = Vec::new();
+        self.collect_views(&self.root, &mut windows);
+        windows
+    }
+
     fn split(&mut self, axis: Axis) {
         let new_id = self.next_id;
         self.next_id += 1;
@@ -390,6 +396,28 @@ impl LayoutState {
             Node::Container(container) => {
                 for child in &container.children {
                     self.collect(&child.node, windows);
+                }
+            }
+        }
+    }
+
+    fn collect_views(&self, node: &Node, windows: &mut Vec<LayoutWindowView>) {
+        let _ = self;
+        match node {
+            Node::Window(window) => windows.push(LayoutWindowView {
+                id: window.id,
+                title: window.title.clone(),
+                detail: window.detail.clone(),
+                floating: window.floating,
+                focused: window.id == self.focused,
+                x: window.x,
+                y: window.y,
+                width: window.width,
+                height: window.height,
+            }),
+            Node::Container(container) => {
+                for child in &container.children {
+                    self.collect_views(&child.node, windows);
                 }
             }
         }

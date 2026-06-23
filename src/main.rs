@@ -14,7 +14,7 @@ use crepuscularity_gpui::{
 };
 use crepuscularity_web::render_component_file_to_html;
 use layout::{Axis, LayoutChildView, LayoutState, LayoutView, LayoutWindowView};
-use plugin::PluginAction;
+use plugin::{PluginAction, WindowTarget};
 use runner::{Runner, WindowMode};
 use std::process::Command;
 
@@ -107,7 +107,7 @@ impl DesktopModel {
     fn set_query(&mut self, query: String, cx: &mut Context<Self>) {
         self.query = query.clone();
         self.runner.query = query;
-        self.runner.update();
+        self.refresh_runner();
         self.changed(cx);
     }
 
@@ -118,8 +118,35 @@ impl DesktopModel {
         self.layout.set_focused_window_content(title, detail);
     }
 
+    fn set_action_log(&mut self, title: impl Into<String>, detail: impl Into<String>) {
+        self.last_action = format!("{}: {}", title.into(), detail.into());
+    }
+
+    fn focus_targets(&self) -> Vec<WindowTarget> {
+        self.layout
+            .windows()
+            .into_iter()
+            .map(|window| WindowTarget {
+                id: window.id,
+                title: window.title,
+                focused: window.focused,
+                floating: window.floating,
+            })
+            .collect()
+    }
+
+    fn refresh_runner(&mut self) {
+        let windows = self.focus_targets();
+        self.runner.update_with_windows(&windows);
+    }
+
     fn apply(&mut self, action: PluginAction, cx: &mut Context<Self>) {
         match action {
+            PluginAction::FocusWindow { id } => {
+                self.layout.focus_window(id);
+                let focused = self.layout.focused_title().to_string();
+                self.set_action_log("Focus window", focused);
+            }
             PluginAction::SetWindowMode { mode } => {
                 self.mode = mode.clone();
                 self.layout.set_window_mode(&mode);
@@ -204,6 +231,7 @@ impl DesktopModel {
             }
             PluginAction::None => {}
         }
+        self.refresh_runner();
         self.changed(cx);
     }
 

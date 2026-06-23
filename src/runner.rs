@@ -1,4 +1,4 @@
-use crate::plugin::{PluginAction, PluginRegistry, PluginResult};
+use crate::plugin::{PluginAction, PluginRegistry, PluginResult, WindowTarget};
 use fuzzy_matcher::skim::SkimMatcherV2;
 use serde::{Deserialize, Serialize};
 
@@ -38,13 +38,19 @@ impl Runner {
     }
 
     pub fn update(&mut self) {
+        self.update_with_windows(&[]);
+    }
+
+    pub fn update_with_windows(&mut self, windows: &[WindowTarget]) {
         let query = self.query.trim();
         if query.is_empty() {
             self.results.clear();
             self.selected = 0;
             return;
         }
-        self.results = self.plugins.query(query, &self.matcher);
+        self.results = self
+            .plugins
+            .query_with_windows(query, &self.matcher, windows);
         if self.results.is_empty() {
             self.selected = 0;
         } else {
@@ -99,6 +105,7 @@ impl Runner {
 mod tests {
     use super::*;
     use crate::de::DesktopAction;
+    use crate::plugin::WindowTarget;
 
     #[test]
     fn update_should_return_shell_action_when_query_starts_with_prompt() {
@@ -158,6 +165,23 @@ mod tests {
                 }
             )
         }));
+    }
+
+    #[test]
+    fn update_should_return_focus_window_action_for_named_pane() {
+        let mut runner = Runner::new();
+        runner.query = "focus workspace".to_string();
+        runner.update_with_windows(&[WindowTarget {
+            id: 1,
+            title: "Workspace".to_string(),
+            focused: false,
+            floating: false,
+        }]);
+
+        assert!(runner
+            .results
+            .iter()
+            .any(|result| { result.action == PluginAction::FocusWindow { id: 1 } }));
     }
 
     #[test]
