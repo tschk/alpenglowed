@@ -1347,16 +1347,12 @@ impl Render for SettingsWindow {
                                     .when(self.section == SettingsSection::System, |panel| {
                                         panel.child(
                                             self.section_card(
-                                                "System",
-                                                "fast desktop actions from launcher and control center",
+                                                "Access",
+                                                "launcher and workspace tools",
                                                 div()
                                                     .flex()
                                                     .flex_wrap()
                                                     .gap(px(8.))
-                                                    .child(self.desktop_action_button(
-                                                        "Lock",
-                                                        de::DesktopAction::Lock,
-                                                    ))
                                                     .child(self.desktop_action_button(
                                                         "Terminal",
                                                         de::DesktopAction::Terminal,
@@ -1366,6 +1362,24 @@ impl Render for SettingsWindow {
                                                         de::DesktopAction::Files,
                                                     ))
                                                     .child(self.desktop_action_button(
+                                                        "Wi-Fi",
+                                                        de::DesktopAction::Wifi,
+                                                    ))
+                                                    .child(self.desktop_action_button(
+                                                        "Notifications",
+                                                        de::DesktopAction::Notifications,
+                                                    )),
+                                            ),
+                                        )
+                                        .child(
+                                            self.section_card(
+                                                "Capture",
+                                                "clipboard and screenshots",
+                                                div()
+                                                    .flex()
+                                                    .flex_wrap()
+                                                    .gap(px(8.))
+                                                    .child(self.desktop_action_button(
                                                         "Screenshot",
                                                         de::DesktopAction::Screenshot,
                                                     ))
@@ -1373,13 +1387,19 @@ impl Render for SettingsWindow {
                                                         "Clipboard",
                                                         de::DesktopAction::Clipboard,
                                                     ))
+                                            ),
+                                        )
+                                        .child(
+                                            self.section_card(
+                                                "Session",
+                                                "lock and power controls",
+                                                div()
+                                                    .flex()
+                                                    .flex_wrap()
+                                                    .gap(px(8.))
                                                     .child(self.desktop_action_button(
-                                                        "Wi-Fi",
-                                                        de::DesktopAction::Wifi,
-                                                    ))
-                                                    .child(self.desktop_action_button(
-                                                        "Notifications",
-                                                        de::DesktopAction::Notifications,
+                                                        "Lock",
+                                                        de::DesktopAction::Lock,
                                                     ))
                                                     .child(self.desktop_action_button(
                                                         "Logout",
