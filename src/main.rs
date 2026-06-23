@@ -954,6 +954,15 @@ impl SettingsSection {
             Self::Session => "Session",
         }
     }
+
+    fn detail(self) -> &'static str {
+        match self {
+            Self::Windows => "layout and pane flow",
+            Self::System => "desktop and os actions",
+            Self::Interface => "launcher and chrome",
+            Self::Session => "state and shortcuts",
+        }
+    }
 }
 
 impl SettingsWindow {
@@ -1092,14 +1101,30 @@ impl SettingsWindow {
                 section.label()
             )))
             .px(px(10.))
-            .py(px(7.))
+            .py(px(8.))
             .rounded(px(3.))
             .bg(rgb(if active { 0xf0f0f0 } else { 0x030303 }))
             .border_1()
             .border_color(rgb(if active { 0xf0f0f0 } else { 0x1b1b1b }))
-            .text_color(rgb(if active { 0x050505 } else { 0xd0d0d0 }))
             .cursor_pointer()
-            .child(section.label())
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(rgb(if active { 0x050505 } else { 0xd0d0d0 }))
+                            .child(section.label()),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(10.))
+                            .text_color(rgb(if active { 0x4a4a4a } else { 0x737373 }))
+                            .child(section.detail()),
+                    ),
+            )
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.section = section;
                 cx.notify();
@@ -1143,10 +1168,10 @@ impl Render for SettingsWindow {
                     .bg(rgb(0x030303))
                     .border_1()
                     .border_color(rgb(0x161616))
-                    .p(px(16.))
+                    .p(px(14.))
                     .flex()
                     .flex_col()
-                    .gap(px(14.))
+                    .gap(px(12.))
                     .child(
                         div()
                             .flex()
@@ -1159,14 +1184,14 @@ impl Render for SettingsWindow {
                                     .gap(px(4.))
                                     .child(
                                         div()
-                                            .text_size(px(20.))
+                                            .text_size(px(18.))
                                             .text_color(rgb(0xf0f0f0))
                                             .child(settings_header.0),
                                     )
                                     .child(
                                         div()
-                                            .text_size(px(12.))
-                                            .text_color(rgb(0x8d8d8d))
+                                            .text_size(px(11.))
+                                            .text_color(rgb(0x7f7f7f))
                                             .child(settings_header.1),
                                     ),
                             )
@@ -1187,7 +1212,7 @@ impl Render for SettingsWindow {
                             .gap(px(14.))
                             .child(
                                 div()
-                                    .w(px(136.))
+                                    .w(px(176.))
                                     .flex()
                                     .flex_col()
                                     .gap(px(8.))
