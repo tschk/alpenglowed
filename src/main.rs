@@ -19,7 +19,6 @@ use runner::{Runner, WindowMode};
 use std::fs;
 use std::process::Command;
 
-const PANES_CREPUS: &str = include_str!("views/panes.crepus");
 const SHELL_CREPUS: &str = include_str!("views/shell.crepus");
 
 actions!(
@@ -364,7 +363,9 @@ impl DesktopWindow {
                     .flex()
                     .flex_col()
                     .gap(px(6.))
-                    .children(lines.into_iter().map(Self::window_line)),
+                    .when(!lines.is_empty(), |panel| {
+                        panel.children(lines.into_iter().map(Self::window_line))
+                    }),
             )
             .child(
                 div()
@@ -427,17 +428,11 @@ impl DesktopWindow {
     }
 
     fn pane_lines(window: &LayoutWindowView) -> Vec<String> {
-        let title = window.title.to_lowercase();
-        let component = if title.contains("workspace") {
-            "WorkspacePane"
-        } else if title.contains("scratch") {
-            "ScratchPane"
-        } else if title.contains("shell") {
-            "ShellPane"
+        if window.detail.trim().is_empty() || window.detail == "Ready" {
+            Vec::new()
         } else {
-            "GenericPane"
-        };
-        render_pane_component(component, &window.detail)
+            vec![window.detail.clone()]
+        }
     }
 
     fn render_floating_window(
@@ -592,14 +587,6 @@ impl DesktopWindow {
             .text_color(rgb(0xd0d0d0))
             .child(value)
     }
-}
-
-fn render_pane_component(component: &str, detail: &str) -> Vec<String> {
-    let mut ctx = TemplateContext::new();
-    ctx.set("detail", TemplateValue::Str(detail.to_string()));
-    render_component_file_to_html(PANES_CREPUS, component, &ctx)
-        .map(|html| html_list_items(&html))
-        .unwrap_or_else(|_| vec![detail.to_string()])
 }
 
 fn shell_text_component(component: &str, props: &[(&str, &str)]) -> String {
@@ -2340,16 +2327,6 @@ mod tests {
             html_list_items("<ul><li>one</li><li>two &amp; three</li></ul>"),
             vec!["one".to_string(), "two & three".to_string()]
         );
-    }
-
-    #[test]
-    fn render_pane_component_should_use_crepus_view() {
-        let lines = render_pane_component("WorkspacePane", "Terminal, browser, and launcher");
-        assert_eq!(lines.len(), 4);
-        assert!(lines.iter().any(|line| line.contains("launcher ready")));
-        assert!(lines
-            .iter()
-            .any(|line| line.contains("Terminal, browser, and launcher")));
     }
 
     #[test]
