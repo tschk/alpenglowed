@@ -30,6 +30,7 @@ actions!(
         Confirm,
         SplitRow,
         SplitColumn,
+        FlipAxis,
         ResetLayout,
         NudgeLeft,
         NudgeRight,
@@ -232,9 +233,10 @@ impl DesktopWindow {
 
     fn render_layout(desktop: &Entity<DesktopModel>, view: &LayoutView) -> Div {
         match view {
-            LayoutView::Window(window) => Self::render_window(desktop, window),
+            LayoutView::Window(window) => Self::render_window(desktop, window, None),
             LayoutView::Container(container) => {
                 let mut node = div()
+                    .relative()
                     .size_full()
                     .flex()
                     .gap(px(12.))
@@ -242,22 +244,47 @@ impl DesktopWindow {
                 for child in &container.children {
                     node = node.child(Self::render_child(desktop, child));
                 }
-                node
+                node.child(
+                    div()
+                        .absolute()
+                        .top(px(8.))
+                        .left(px(8.))
+                        .child(Self::window_pill(container.axis.label(), false)),
+                )
             }
         }
     }
 
     fn render_child(desktop: &Entity<DesktopModel>, child: &LayoutChildView) -> Div {
         let mut slot = div()
+            .relative()
             .min_w(px(0.))
             .min_h(px(0.))
-            .child(Self::render_layout(desktop, &child.node));
+            .child(Self::render_child_overlay(child.grow))
+            .child(match &child.node {
+                LayoutView::Window(window) => {
+                    Self::render_window(desktop, window, Some(child.grow))
+                }
+                _ => Self::render_layout(desktop, &child.node),
+            });
         slot.style().flex_grow = Some(child.grow.max(0.1));
         slot.style().flex_shrink = Some(1.);
         slot
     }
 
-    fn render_window(desktop: &Entity<DesktopModel>, window: &LayoutWindowView) -> Div {
+    fn render_child_overlay(grow: f32) -> Div {
+        div()
+            .absolute()
+            .right(px(8.))
+            .bottom(px(8.))
+            .child(Self::window_pill(&format!("grow {:.1}", grow), false))
+    }
+
+    fn render_window(
+        desktop: &Entity<DesktopModel>,
+        window: &LayoutWindowView,
+        grow: Option<f32>,
+    ) -> Div {
         let border = if window.focused { 0xf0f0f0 } else { 0x2a2a2a };
         let label = if window.floating { "floating" } else { "tiled" };
         let focus = if window.focused { "focused" } else { "ready" };
@@ -350,7 +377,10 @@ impl DesktopWindow {
                                 window.width, window.height, window.x, window.y
                             )
                         } else {
-                            "flex layout".to_string()
+                            grow.map_or_else(
+                                || "flex layout".to_string(),
+                                |value| format!("flex grow {:.1}", value),
+                            )
                         },
                     )),
             );
@@ -423,7 +453,7 @@ impl DesktopWindow {
                     .border_1()
                     .border_color(rgb(0x343434))
                     .p(px(8.))
-                    .child(Self::render_window(desktop, window)),
+                    .child(Self::render_window(desktop, window, None)),
             )
     }
 
@@ -1134,6 +1164,10 @@ impl Render for SettingsWindow {
                                                     layout::LayoutAction::SplitColumn,
                                                 ))
                                                 .child(self.layout_action_button(
+                                                    "Flip layout axis",
+                                                    layout::LayoutAction::FlipAxis,
+                                                ))
+                                                .child(self.layout_action_button(
                                                     "Focus next",
                                                     layout::LayoutAction::FocusNext,
                                                 ))
@@ -1465,6 +1499,16 @@ impl Render for DesktopWindow {
                     );
                 });
             }))
+            .on_action(cx.listener(|this, _: &FlipAxis, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::FlipAxis,
+                        },
+                        cx,
+                    );
+                });
+            }))
             .on_action(cx.listener(|this, _: &ResetLayout, _, cx| {
                 this.desktop.update(cx, |desktop, cx| {
                     desktop.apply(
@@ -1776,6 +1820,7 @@ fn main() {
             KeyBinding::new("cmd-alt-f", ToggleFloatPane, None),
             KeyBinding::new("cmd-alt-h", SplitRow, None),
             KeyBinding::new("cmd-alt-v", SplitColumn, None),
+            KeyBinding::new("cmd-alt-x", FlipAxis, None),
             KeyBinding::new("cmd-alt-r", ResetLayout, None),
             KeyBinding::new("cmd-alt-left", NudgeLeft, None),
             KeyBinding::new("cmd-alt-right", NudgeRight, None),

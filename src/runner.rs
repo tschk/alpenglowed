@@ -145,6 +145,22 @@ mod tests {
     }
 
     #[test]
+    fn update_should_return_layout_action_for_flip_axis_query() {
+        let mut runner = Runner::new();
+        runner.query = "flip axis".to_string();
+        runner.update();
+
+        assert!(runner.results.iter().any(|result| {
+            matches!(
+                result.action,
+                PluginAction::Layout {
+                    action: crate::layout::LayoutAction::FlipAxis
+                }
+            )
+        }));
+    }
+
+    #[test]
     fn update_should_return_os_actions() {
         let mut runner = Runner::new();
         runner.query = "lock".to_string();

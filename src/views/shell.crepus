@@ -94,6 +94,8 @@ ul
   li
     "Cmd-Alt-V split column"
   li
+    "Cmd-Alt-X flip axis"
+  li
     "Cmd-Alt-R reset"
   li
     "Cmd-Shift-] focus next"

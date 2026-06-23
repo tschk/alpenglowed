@@ -189,6 +189,7 @@ impl Plugin for LayoutPlugin {
     fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
         [
             ("Reset layout", "layout", LayoutAction::Reset),
+            ("Flip layout axis", "layout", LayoutAction::FlipAxis),
             ("Nudge window left", "layout", LayoutAction::NudgeLeft),
             ("Nudge window right", "layout", LayoutAction::NudgeRight),
             ("Nudge window up", "layout", LayoutAction::NudgeUp),

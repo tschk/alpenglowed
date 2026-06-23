@@ -23,6 +23,7 @@ impl Axis {
 pub enum LayoutAction {
     SplitRow,
     SplitColumn,
+    FlipAxis,
     Reset,
     NudgeLeft,
     NudgeRight,
@@ -42,6 +43,7 @@ impl LayoutAction {
         match self {
             Self::SplitRow => "Split row",
             Self::SplitColumn => "Split column",
+            Self::FlipAxis => "Flip layout axis",
             Self::Reset => "Reset layout",
             Self::NudgeLeft => "Nudge left",
             Self::NudgeRight => "Nudge right",
@@ -246,6 +248,7 @@ impl LayoutState {
         match action {
             LayoutAction::SplitRow => self.split(Axis::Row),
             LayoutAction::SplitColumn => self.split(Axis::Column),
+            LayoutAction::FlipAxis => flip_axes(&mut self.root),
             LayoutAction::Reset => *self = Self::seed(),
             LayoutAction::NudgeLeft => self.nudge_focused(-24., 0.),
             LayoutAction::NudgeRight => self.nudge_focused(24., 0.),
@@ -582,6 +585,21 @@ fn set_floating(node: &mut Node, floating: bool) {
     }
 }
 
+fn flip_axes(node: &mut Node) {
+    match node {
+        Node::Window(_) => {}
+        Node::Container(container) => {
+            container.axis = match container.axis {
+                Axis::Row => Axis::Column,
+                Axis::Column => Axis::Row,
+            };
+            for child in &mut container.children {
+                flip_axes(&mut child.node);
+            }
+        }
+    }
+}
+
 fn resize_focused(node: &mut Node, focused: usize, delta: f32) -> bool {
     match node {
         Node::Window(_) => false,
@@ -840,6 +858,21 @@ mod tests {
                 assert!(container.children[0].grow >= 0.3);
                 assert!(container.children[1].grow >= 0.3);
             }
+            _ => panic!("expected container"),
+        }
+    }
+
+    #[test]
+    fn flip_axis_should_toggle_container_directions() {
+        let mut layout = LayoutState::demo();
+        assert_eq!(layout.axis(), "row");
+        layout.apply(&LayoutAction::FlipAxis);
+        assert_eq!(layout.axis(), "column");
+        match layout.view() {
+            LayoutView::Container(container) => match &container.children[0].node {
+                LayoutView::Container(nested) => assert_eq!(nested.axis, Axis::Row),
+                _ => panic!("expected nested container"),
+            },
             _ => panic!("expected container"),
         }
     }
