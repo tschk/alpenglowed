@@ -1147,7 +1147,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-core"
-version = "0.4.16"
+version = "0.4.17"
 dependencies = [
  "notify",
  "sha2 0.11.0",
@@ -1158,7 +1158,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-gpui"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "crepuscularity-core",
  "crepuscularity-runtime",
@@ -1173,7 +1173,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-runtime"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "crepuscularity-core",
  "gpui",
@@ -1185,7 +1185,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-web"
-version = "0.4.8"
+version = "0.4.9"
 dependencies = [
  "ammonia",
  "base64 0.22.1",
@@ -1197,7 +1197,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity_macros"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "crepuscularity-core",
  "proc-macro2",
