@@ -101,6 +101,12 @@ struct DesktopModel {
     terminal: Option<terminal::TerminalConsole>,
     terminal_open: bool,
     terminal_input: String,
+    #[cfg(feature = "compositor")]
+    compositor_events: Option<std::sync::mpsc::Receiver<compositor::CompositorEvent>>,
+    #[cfg(feature = "compositor")]
+    compositor_cmd: Option<std::sync::mpsc::Sender<compositor::CompositorCommand>>,
+    #[cfg(feature = "compositor")]
+    compositor_surfaces: std::collections::HashMap<u32, usize>,
 }
 
 impl EventEmitter<DesktopEvent> for DesktopModel {}
@@ -114,7 +120,15 @@ struct ExternalBarState {
 }
 
 impl DesktopModel {
-    fn new(options: UiOptions) -> Self {
+    fn new(
+        options: UiOptions,
+        #[cfg(feature = "compositor")] compositor_rx: Option<
+            std::sync::mpsc::Receiver<compositor::CompositorEvent>,
+        >,
+        #[cfg(feature = "compositor")] compositor_tx: Option<
+            std::sync::mpsc::Sender<compositor::CompositorCommand>,
+        >,
+    ) -> Self {
         let mut notifications = notifications::NotificationState::new();
         notifications.start();
         let mut desktop = Self {
@@ -143,6 +157,12 @@ impl DesktopModel {
             terminal: None,
             terminal_open: false,
             terminal_input: String::new(),
+            #[cfg(feature = "compositor")]
+            compositor_events: compositor_rx,
+            #[cfg(feature = "compositor")]
+            compositor_cmd: compositor_tx,
+            #[cfg(feature = "compositor")]
+            compositor_surfaces: std::collections::HashMap::new(),
         };
         desktop.runner.query = desktop.query.clone();
         desktop.refresh_runner();
@@ -302,6 +322,38 @@ impl DesktopModel {
         write_external_bar_state(self);
         cx.notify();
         cx.emit(DesktopEvent::Changed);
+    }
+
+    #[cfg(feature = "compositor")]
+    fn poll_compositor(&mut self) {
+        let Some(ref events) = self.compositor_events else {
+            return;
+        };
+        while let Ok(event) = events.try_recv() {
+            match event {
+                compositor::CompositorEvent::SurfaceCreated {
+                    id,
+                    title,
+                    app_id: _,
+                } => {
+                    // Create a new layout pane for this surface
+                    let window_id = self.layout.split_next(title.clone());
+                    self.compositor_surfaces.insert(id, window_id);
+                    self.last_action = format!("Compositor: {title} connected");
+                }
+                compositor::CompositorEvent::SurfaceUpdated { id } => {
+                    if let Some(window_id) = self.compositor_surfaces.get(&id) {
+                        self.layout.set_focused_window_content("Surface", "updated");
+                    }
+                }
+                compositor::CompositorEvent::SurfaceClosed { id } => {
+                    if let Some(window_id) = self.compositor_surfaces.remove(&id) {
+                        self.layout.set_window_floating(window_id, true);
+                        self.last_action = format!("Compositor: surface {id} closed");
+                    }
+                }
+            }
+        }
     }
 
     fn toggle_status_bar(&mut self, cx: &mut Context<Self>) {
@@ -2082,6 +2134,8 @@ impl Render for DesktopWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.desktop.update(cx, |desktop, _| {
             desktop.notifications.poll();
+            #[cfg(feature = "compositor")]
+            desktop.poll_compositor();
         });
         let desktop_entity = self.desktop.clone();
         let desktop = self.desktop.read(cx);
@@ -2510,17 +2564,19 @@ fn main() {
     }
 
     #[cfg(feature = "compositor")]
-    let _compositor_cmd = if std::env::args().any(|arg| arg == "--compositor") {
+    let (_compositor_tx, _compositor_rx) = if std::env::args().any(|arg| arg == "--compositor") {
         let (cmd, rx) = compositor::start();
         std::env::set_var("ALPENGLOW_COMPOSITOR", "1");
-        Some((cmd, rx))
+        (Some(cmd), Some(rx))
     } else {
-        None
+        (None, None)
     };
 
     #[cfg(not(feature = "compositor"))]
-    let _compositor_cmd: Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)> =
-        None;
+    let (_compositor_tx, _compositor_rx): (
+        Option<std::sync::mpsc::Sender<()>>,
+        Option<std::sync::mpsc::Receiver<()>>,
+    ) = (None, None);
 
     if !std::env::args().any(|arg| arg == "--compositor") || cfg!(not(feature = "compositor")) {
         ensure_wayland_display();
@@ -2553,6 +2609,10 @@ fn main() {
         ]);
 
         let desktop_options = options.clone();
+        #[cfg(feature = "compositor")]
+        let desktop =
+            cx.new(|_| DesktopModel::new(desktop_options, _compositor_rx, _compositor_tx));
+        #[cfg(not(feature = "compositor"))]
         let desktop = cx.new(|_| DesktopModel::new(desktop_options));
         open_desktop_window(&desktop, cx);
 

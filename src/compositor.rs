@@ -84,9 +84,10 @@ pub struct AlpenglowCompositor {
     pub data_device_state: DataDeviceState,
     pub seat: Seat<Self>,
     pub socket_name: String,
-    pub surfaces: Vec<ToplevelSurface>,
+    pub surfaces: Vec<(u32, ToplevelSurface)>,
     pub event_tx: mpsc::Sender<CompositorEvent>,
     pub cmd_rx: mpsc::Receiver<CompositorCommand>,
+    pub next_surface_id: u32,
 }
 
 impl AlpenglowCompositor {
@@ -115,6 +116,7 @@ impl AlpenglowCompositor {
             surfaces: Vec::new(),
             event_tx,
             cmd_rx,
+            next_surface_id: 1,
         }
     }
 
@@ -136,7 +138,7 @@ impl AlpenglowCompositor {
     }
 
     fn send_frames(&self, time: u32) {
-        for toplevel in &self.surfaces {
+        for (_id, toplevel) in &self.surfaces {
             let surface = toplevel.wl_surface();
             smithay::wayland::compositor::with_surface_tree_downward(
                 surface,
@@ -159,7 +161,7 @@ impl AlpenglowCompositor {
     }
 
     fn keyboard_focus_first(&mut self) {
-        if let Some(surface) = self.surfaces.first().cloned() {
+        if let Some((_, surface)) = self.surfaces.first() {
             if let Some(kb) = self.seat.get_keyboard() {
                 kb.set_focus(self, Some(surface.wl_surface().clone()), 0.into());
             }
@@ -184,14 +186,14 @@ impl CompositorHandler for AlpenglowCompositor {
 
     fn commit(&mut self, surface: &WlSurface) {
         smithay::backend::renderer::utils::on_commit_buffer_handler::<Self>(surface);
-        // Find toplevel for this surface and notify GPUI
-        for toplevel in &self.surfaces {
-            if toplevel.wl_surface() == surface {
-                let _ = self
-                    .event_tx
-                    .send(CompositorEvent::SurfaceUpdated { id: 0 });
-                break;
-            }
+        let id = self
+            .surfaces
+            .iter()
+            .find(|(_, s)| s.wl_surface() == surface)
+            .map(|(id, _)| *id)
+            .unwrap_or(0);
+        if id > 0 {
+            let _ = self.event_tx.send(CompositorEvent::SurfaceUpdated { id });
         }
     }
 }
@@ -208,12 +210,13 @@ impl XdgShellHandler for AlpenglowCompositor {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
-        let id = self.surfaces.len() as u32;
+        let id = self.next_surface_id;
+        self.next_surface_id += 1;
         surface.with_pending_state(|state| {
             state.states.set(xdg_toplevel::State::Activated);
         });
         surface.send_configure();
-        self.surfaces.push(surface);
+        self.surfaces.push((id, surface));
 
         let _ = self.event_tx.send(CompositorEvent::SurfaceCreated {
             id,
@@ -298,6 +301,13 @@ pub struct ClientState {
 impl ClientData for ClientState {
     fn initialized(&self, _client_id: ClientId) {}
     fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
+}
+
+/// Handle for communicating with the compositor from GPUI thread.
+/// Used by DesktopModel to receive events and send commands.
+pub struct CompositorHandle {
+    pub cmd: mpsc::Sender<CompositorCommand>,
+    pub events: mpsc::Receiver<CompositorEvent>,
 }
 
 // ── Start ──

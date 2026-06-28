@@ -293,6 +293,15 @@ impl LayoutState {
         set_floating(&mut self.root, floating);
     }
 
+    pub fn split_next(&mut self, title: String) -> usize {
+        let new_id = self.next_id;
+        self.next_id += 1;
+        let focused = self.focused;
+        let _ = split_window(&mut self.root, focused, Axis::Row, new_id, title);
+        self.focused = new_id;
+        new_id
+    }
+
     pub fn set_window_floating(&mut self, id: usize, floating: bool) {
         if let Some(window) = find_mut(&mut self.root, id) {
             window.floating = floating;
