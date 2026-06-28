@@ -62,6 +62,7 @@ impl PluginRegistry {
         };
         registry.register(Box::new(WebSearchPlugin));
         registry.register(Box::new(EmojiPlugin));
+        registry.register(Box::new(FileSearchPlugin));
         registry.register(Box::new(ShellPlugin));
         registry.register(Box::new(CalculatorPlugin));
         registry.register(Box::new(WindowModePlugin));
@@ -260,6 +261,60 @@ impl Plugin for EmojiPlugin {
                         ),
                     },
                 })
+            })
+            .collect();
+        results.sort_by_key(|r| std::cmp::Reverse(r.score));
+        results.truncate(6);
+        results
+    }
+}
+
+struct FileSearchPlugin;
+
+impl Plugin for FileSearchPlugin {
+    fn id(&self) -> &str {
+        "files"
+    }
+
+    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        let search = query.trim().strip_prefix('/').map(str::trim).unwrap_or("");
+        if search.is_empty() {
+            return Vec::new();
+        }
+
+        let output = Command::new("sh")
+            .args(["-c", &format!("locate -i -l 8 '{}' 2>/dev/null || fd -t f -l 8 '{}' 2>/dev/null || find ~ -maxdepth 4 -iname '*{}*' -type f 2>/dev/null | head -8", search, search, search)])
+            .output()
+            .ok();
+        let output = match output {
+            Some(o) if o.status.success() => o,
+            _ => return Vec::new(),
+        };
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let paths: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+        if paths.is_empty() {
+            return Vec::new();
+        }
+
+        let mut results: Vec<PluginResult> = paths
+            .iter()
+            .filter_map(|path| {
+                let filename = std::path::Path::new(path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy())
+                    .unwrap_or((*path).into());
+                matcher
+                    .fuzzy_match(&filename, search)
+                    .or_else(|| Some(if path.contains(search) { 10 } else { 1 }))
+                    .map(|score| PluginResult {
+                        plugin_id: self.id().to_string(),
+                        title: filename.to_string(),
+                        subtitle: path.to_string(),
+                        score: score.min(100),
+                        action: PluginAction::Shell {
+                            command: format!("xdg-open '{}'", path),
+                        },
+                    })
             })
             .collect();
         results.sort_by_key(|r| std::cmp::Reverse(r.score));

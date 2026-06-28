@@ -488,6 +488,7 @@ impl DesktopWindow {
                                 ("layout".to_string(), desktop.layout.summary()),
                                 ("time".to_string(), metrics.clock),
                                 ("date".to_string(), metrics.date),
+                                ("temp".to_string(), metrics.temp),
                                 ("power".to_string(), metrics.battery),
                                 ("wifi".to_string(), metrics.wifi),
                                 ("load".to_string(), metrics.load),
@@ -673,6 +674,7 @@ struct TopBarMetrics {
     clock: String,
     date: String,
     battery: String,
+    temp: String,
     wifi: String,
     load: String,
     memory: String,
@@ -685,6 +687,7 @@ impl TopBarMetrics {
             clock: date_value("+%H:%M").unwrap_or_else(|| "--:--".to_string()),
             date: date_value("+%a %b %e").unwrap_or_else(|| "date unavailable".to_string()),
             battery: battery_value().unwrap_or_else(|| "battery unavailable".to_string()),
+            temp: temp_value().unwrap_or_else(|| "--°".to_string()),
             wifi: wifi_value().unwrap_or_else(|| "wifi unavailable".to_string()),
             load: load_value().unwrap_or_else(|| "load unavailable".to_string()),
             memory: memory_value().unwrap_or_else(|| "memory unavailable".to_string()),
@@ -720,6 +723,28 @@ fn battery_value() -> Option<String> {
         ));
     }
     None
+}
+
+fn temp_value() -> Option<String> {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static CACHE: std::sync::OnceLock<Mutex<(Instant, String)>> = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new((Instant::now(), String::new())));
+    let mut guard = cache.lock().ok()?;
+    if guard.0.elapsed() < Duration::from_secs(300) {
+        return Some(guard.1.clone()).filter(|s| !s.is_empty());
+    }
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg("curl -s 'wttr.in?format=%t' 2>/dev/null")
+        .output()
+        .ok()?;
+    let temp = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if temp.is_empty() {
+        return None;
+    }
+    *guard = (Instant::now(), temp.clone());
+    Some(temp)
 }
 
 fn wifi_value() -> Option<String> {
