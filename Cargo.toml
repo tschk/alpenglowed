@@ -26,3 +26,6 @@ crepuscularity-gpui = { path = "../crepuscularity/crates/crepuscularity-gpui", f
 lto = "thin"
 codegen-units = 1
 strip = true
+
+[patch.crates-io]
+gpui = { path = "../crepuscularity/vendor/gpui" }
