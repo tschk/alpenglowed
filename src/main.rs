@@ -2461,6 +2461,28 @@ fn main() {
         }
         return;
     }
+    if let Some(notif) =
+        std::env::args().find_map(|arg| arg.strip_prefix("--notify=").map(ToString::to_string))
+    {
+        let path = std::env::var_os("XDG_RUNTIME_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join("alpenglowed")
+            .join("notifications");
+        if let Ok(mut stream) = std::os::unix::net::UnixStream::connect(&path) {
+            let _ = std::io::Write::write_all(
+                &mut stream,
+                format!(
+                    "{{\"title\":\"alpenglowed\",\"body\":\"{notif}\",\"urgency\":\"normal\"}}"
+                )
+                .as_bytes(),
+            );
+        } else {
+            eprintln!("notification daemon not running");
+            std::process::exit(1);
+        }
+        return;
+    }
     if std::env::args().any(|arg| arg == "--smoke-wayland") {
         match de::smoke_wayland() {
             Ok(()) => println!("wayland ok"),
