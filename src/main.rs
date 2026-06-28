@@ -2439,6 +2439,20 @@ fn open_or_focus_settings(desktop: &Entity<DesktopModel>, cx: &mut App) {
 fn main() {
     let options = UiOptions::from_env();
 
+    if std::env::args().any(|arg| arg == "--help") {
+        eprintln!("alpenglowed — Alpenglow desktop shell");
+        eprintln!("Flags:");
+        eprintln!("  --compositor      Enable embedded smithay compositor (Linux, needs `features compositor`)");
+        eprintln!("  --polybar         Emit polybar status line");
+        eprintln!("  --polybar-module=  Emit a single polybar module");
+        eprintln!("  --probe-actions   List available desktop actions");
+        eprintln!("  --notify=msg      Send notification to daemon");
+        eprintln!("  --smoke-wayland   Test Wayland connection");
+        eprintln!("  --open-settings   Open settings window at startup");
+        eprintln!("  --floating        Start in floating mode");
+        eprintln!("  --demo-layout     Use demo layout with 4 panes");
+        return;
+    }
     if std::env::args().any(|arg| arg == "--polybar") {
         println!("{}", de::DesktopState::detect("tiling").polybar());
         return;

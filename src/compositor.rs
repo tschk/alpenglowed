@@ -316,16 +316,12 @@ pub fn start() -> (
         let mut display: Display<AlpenglowCompositor> = Display::new().unwrap();
         let dh = display.handle();
 
-        // Create socket directory
-        let runtime = std::env::var("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| std::env::temp_dir());
-        let sock_dir = runtime.join("alpenglowed");
-        let _ = std::fs::create_dir_all(&sock_dir);
-
-        // Find available wayland socket name
+        // ListeningSocket::bind prepends XDG_RUNTIME_DIR, so 'alpenglowed-0'
+        // becomes $XDG_RUNTIME_DIR/alpenglowed-0
         let sock_name = "alpenglowed-0";
-        let sock_path = sock_dir.join(sock_name);
+        let sock_path = std::env::var("XDG_RUNTIME_DIR")
+            .map(|d| PathBuf::from(d).join(sock_name))
+            .unwrap_or_else(|_| PathBuf::from(sock_name));
         let _ = std::fs::remove_file(&sock_path);
 
         let listener = ListeningSocket::bind(sock_name).unwrap();
