@@ -60,6 +60,8 @@ impl PluginRegistry {
         let mut registry = Self {
             plugins: Vec::new(),
         };
+        registry.register(Box::new(WebSearchPlugin));
+        registry.register(Box::new(EmojiPlugin));
         registry.register(Box::new(ShellPlugin));
         registry.register(Box::new(CalculatorPlugin));
         registry.register(Box::new(WindowModePlugin));
@@ -148,6 +150,122 @@ fn score_window(
         return boosted.or(Some(500));
     }
     boosted
+}
+
+struct WebSearchPlugin;
+
+impl Plugin for WebSearchPlugin {
+    fn id(&self) -> &str {
+        "web"
+    }
+
+    fn query(&self, query: &str, _matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        let search = query.trim().strip_prefix('?').map(str::trim).unwrap_or("");
+        if search.is_empty() {
+            return Vec::new();
+        }
+        vec![PluginResult {
+            plugin_id: self.id().to_string(),
+            title: format!("Search web for \"{search}\""),
+            subtitle: "duckduckgo".to_string(),
+            score: i64::MAX,
+            action: PluginAction::Shell {
+                command: format!("xdg-open 'https://duckduckgo.com/?q={search}'"),
+            },
+        }]
+    }
+}
+
+struct EmojiPlugin;
+
+const EMOJIS: &[(&str, &str)] = &[
+    ("smile", "😄"),
+    ("grin", "😁"),
+    ("joy", "😂"),
+    ("wink", "😉"),
+    ("heart_eyes", "😍"),
+    ("kiss", "😘"),
+    ("thinking", "🤔"),
+    ("neutral", "😐"),
+    ("sunglasses", "😎"),
+    ("cool", "😎"),
+    ("cry", "😢"),
+    ("sob", "😭"),
+    ("angry", "😠"),
+    ("sleeping", "😴"),
+    ("poop", "💩"),
+    ("fire", "🔥"),
+    ("star", "⭐"),
+    ("heart", "❤️"),
+    ("broken_heart", "💔"),
+    ("hundred", "💯"),
+    ("clap", "👏"),
+    ("wave", "👋"),
+    ("thumbsup", "👍"),
+    ("thumbsdown", "👎"),
+    ("ok", "👌"),
+    ("pray", "🙏"),
+    ("muscle", "💪"),
+    ("party", "🎉"),
+    ("rocket", "🚀"),
+    ("computer", "💻"),
+    ("globe", "🌍"),
+    ("check", "✅"),
+    ("cross", "❌"),
+    ("warning", "⚠️"),
+    ("lock", "🔒"),
+    ("unlock", "🔓"),
+    ("bell", "🔔"),
+    ("link", "🔗"),
+    ("search", "🔍"),
+    ("pencil", "✏️"),
+    ("trash", "🗑️"),
+    ("folder", "📁"),
+    ("mail", "📧"),
+    ("home", "🏠"),
+    ("music", "🎵"),
+    ("coffee", "☕"),
+    ("beer", "🍺"),
+    ("pizza", "🍕"),
+    ("burger", "🍔"),
+    ("cat", "🐱"),
+    ("dog", "🐶"),
+    ("robot", "🤖"),
+    ("ghost", "👻"),
+    ("eyes", "👀"),
+];
+
+impl Plugin for EmojiPlugin {
+    fn id(&self) -> &str {
+        "emoji"
+    }
+
+    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        let search = query.trim().strip_prefix(':').map(str::trim).unwrap_or("");
+        if search.is_empty() {
+            return Vec::new();
+        }
+        let mut results: Vec<PluginResult> = EMOJIS
+            .iter()
+            .filter_map(|(name, emoji)| {
+                matcher.fuzzy_match(name, search).map(|score| PluginResult {
+                    plugin_id: self.id().to_string(),
+                    title: format!("{emoji}  :{name}"),
+                    subtitle: "emoji".to_string(),
+                    score,
+                    action: PluginAction::Shell {
+                        command: format!(
+                            "printf '%s' '{}' | wl-copy 2>/dev/null || printf '%s' '{}' | xclip -selection clipboard",
+                            emoji, emoji
+                        ),
+                    },
+                })
+            })
+            .collect();
+        results.sort_by_key(|r| std::cmp::Reverse(r.score));
+        results.truncate(6);
+        results
+    }
 }
 
 struct ShellPlugin;

@@ -380,12 +380,7 @@ impl DesktopWindow {
                     .text_color(rgb(TEXT_FAINT))
                     .child("~"),
             )
-            .child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(rgb(TEXT))
-                    .child(text),
-            )
+            .child(div().text_size(px(12.)).text_color(rgb(TEXT)).child(text))
     }
 
     fn pane_lines(window: &LayoutWindowView) -> Vec<String> {
@@ -494,6 +489,7 @@ impl DesktopWindow {
                                 ("time".to_string(), metrics.clock),
                                 ("date".to_string(), metrics.date),
                                 ("power".to_string(), metrics.battery),
+                                ("wifi".to_string(), metrics.wifi),
                                 ("load".to_string(), metrics.load),
                                 ("mem".to_string(), metrics.memory),
                                 ("wl".to_string(), metrics.backend),
@@ -677,6 +673,7 @@ struct TopBarMetrics {
     clock: String,
     date: String,
     battery: String,
+    wifi: String,
     load: String,
     memory: String,
     backend: String,
@@ -688,6 +685,7 @@ impl TopBarMetrics {
             clock: date_value("+%H:%M").unwrap_or_else(|| "--:--".to_string()),
             date: date_value("+%a %b %e").unwrap_or_else(|| "date unavailable".to_string()),
             battery: battery_value().unwrap_or_else(|| "battery unavailable".to_string()),
+            wifi: wifi_value().unwrap_or_else(|| "wifi unavailable".to_string()),
             load: load_value().unwrap_or_else(|| "load unavailable".to_string()),
             memory: memory_value().unwrap_or_else(|| "memory unavailable".to_string()),
             backend: top_bar_backend(desktop),
@@ -720,6 +718,24 @@ fn battery_value() -> Option<String> {
             capacity.trim(),
             status.trim().to_lowercase()
         ));
+    }
+    None
+}
+
+fn wifi_value() -> Option<String> {
+    let text = fs::read_to_string("/proc/net/wireless").ok()?;
+    for line in text.lines().skip(2) {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 4 {
+            continue;
+        }
+        let iface = parts.first()?.trim_end_matches(':');
+        if iface == "lo" {
+            continue;
+        }
+        let link_quality = parts.get(2).filter(|q| **q != "0").or(parts.get(3))?;
+        let signal = parts.get(3).or(parts.get(2))?;
+        return Some(format!("{iface} {link_quality}/{signal} db"));
     }
     None
 }
@@ -1044,11 +1060,7 @@ impl LauncherWindow {
                                 div()
                                     .flex_1()
                                     .text_size(px(13.))
-                                    .text_color(if selected {
-                                        rgb(TEXT)
-                                    } else {
-                                        rgb(TEXT_DIM)
-                                    })
+                                    .text_color(if selected { rgb(TEXT) } else { rgb(TEXT_DIM) })
                                     .child(row.1),
                             )
                             .child(
