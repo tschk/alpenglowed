@@ -1,5 +1,6 @@
 extern crate crepuscularity_gpui as gpui;
 
+#[cfg(feature = "compositor")]
 mod compositor;
 mod de;
 mod layout;
@@ -2494,7 +2495,22 @@ fn main() {
         return;
     }
 
-    ensure_wayland_display();
+    #[cfg(feature = "compositor")]
+    let _compositor_cmd = if std::env::args().any(|arg| arg == "--compositor") {
+        let (cmd, rx) = compositor::start();
+        std::env::set_var("ALPENGLOW_COMPOSITOR", "1");
+        Some((cmd, rx))
+    } else {
+        None
+    };
+
+    #[cfg(not(feature = "compositor"))]
+    let _compositor_cmd: Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)> =
+        None;
+
+    if !std::env::args().any(|arg| arg == "--compositor") || cfg!(not(feature = "compositor")) {
+        ensure_wayland_display();
+    }
 
     Application::new().run(move |cx: &mut App| {
         let _ = cx.text_system().add_fonts(vec![Cow::Borrowed(NOTO_SANS)]);

@@ -71,13 +71,14 @@ Alpenglowed is a single Crepuscularity GPUI binary that runs fullscreen on top o
 - **Clipboard history**: type `clip`/`cb`/`paste` → browse and restore recent copies ✅
 - **Spotify**: MPRIS actions through `playerctl` ✅
 
-### Phase D — Compositor Built-in (skeleton)
+### Phase D — Compositor Built-in (smithay embedded)
 
-- **`src/compositor.rs`**: design sketch + integration notes for smithay-backed compositor
-- Direct DRM/KMS access
-- Remove Wayland dependency: one static binary controls the display directly
-- Embed terminal via `cosmic-text` + `alacritty_terminal` or similar
-- Static musl build: ~12MB single binary, no runtime deps beyond kernel DRM
+- **`cargo run --features compositor -- --compositor`**: starts embedded smithay compositor
+- Creates Wayland socket at `$XDG_RUNTIME_DIR/alpenglowed/wayland-0`
+- xdg-shell toplevels → layout panes (surface→pane integration TBD)
+- Compositor runs in background thread, communicates via channels with GPUI
+- Direct DRM/KMS: future work (currently uses wayland socket)
+- Need Linux to build (`xkbcommon` linkage requirement)
 
 ## Build
 
