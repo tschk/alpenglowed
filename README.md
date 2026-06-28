@@ -55,13 +55,13 @@ Alpenglowed is a single Crepuscularity GPUI binary that runs fullscreen on top o
 
 ### Phase B — Windows & Status (partial)
 
-- **App launch**: launched apps appear as managed windows below the bar
+- **App launch**: launched apps appear as managed windows below the bar — needs compositor (Phase D)
 - **Window manager**: simple tiling (two columns) or floating ✅
 - **More pills**: WiFi SSID + signal ✅, weather via curl wttr.in ✅, CPU% ✅
 - **Inline terminal**: `>' command` runs and shows stdout in results ✅
 - **Terminal pane**: `Cmd-Alt-T` toggles shell console docked at bottom ✅
-- **Notifications**: Unix socket daemon → toast popups, auto-dismiss after 6s ✅
-- **Terminal widget**: embedded terminal in the bar area (`>' command` shows output inline)
+- **Terminal clear**: `clear`/`cls`/`reset` action clears output buffer ✅
+- **Notifications**: Unix socket daemon → toast popups, auto-dismiss 6s ✅
 
 ### Phase C — Files & Clipboard ✅
 
