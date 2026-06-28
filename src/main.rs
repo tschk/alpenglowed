@@ -1850,6 +1850,21 @@ impl Render for LauncherWindow {
                     cx.stop_propagation();
                     return;
                 }
+                if key == "tab" {
+                    let title = this
+                        .desktop
+                        .read(cx)
+                        .runner
+                        .selected_result()
+                        .map(|r| r.title.clone());
+                    if let Some(title) = title {
+                        this.desktop.update(cx, |desktop, cx| {
+                            desktop.set_query(title, cx);
+                        });
+                        cx.stop_propagation();
+                        return;
+                    }
+                }
                 if event.keystroke.modifiers == Modifiers::default() {
                     if let Some(ch) = event.keystroke.key_char.as_deref() {
                         if ch.chars().count() == 1 && !ch.chars().all(|c| c.is_control()) {

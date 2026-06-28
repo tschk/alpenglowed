@@ -505,7 +505,12 @@ impl Plugin for CalculatorPlugin {
                 title: format!("= {value}"),
                 subtitle: "calculator".to_string(),
                 score: i64::MAX,
-                action: PluginAction::None,
+                action: PluginAction::Shell {
+                    command: format!(
+                        "printf '%s' '{}' | wl-copy 2>/dev/null || printf '%s' '{}' | xclip -selection clipboard",
+                        value, value
+                    ),
+                },
             }]
         })
     }
