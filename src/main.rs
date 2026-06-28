@@ -275,6 +275,13 @@ impl DesktopModel {
                     let _ = Command::new("sh").arg("-c").arg(command).spawn();
                 }
             }
+            PluginAction::TerminalClear => {
+                if let Some(ref term) = self.terminal {
+                    term.clear();
+                    self.last_action = "Terminal: cleared".to_string();
+                }
+                self.changed(cx);
+            }
             PluginAction::ToggleTerminal => {
                 self.toggle_terminal(cx);
             }
@@ -2004,13 +2011,18 @@ impl DesktopWindow {
             .child(line.to_string())
     }
 
-    fn render_toast(toast: &notifications::Notification) -> Div {
-        let border = match toast.urgency.as_str() {
+    fn render_toast(
+        notif: &notifications::Notification,
+        desktop: Entity<DesktopModel>,
+        index: usize,
+    ) -> impl IntoElement {
+        let border = match notif.urgency.as_str() {
             "critical" => 0xff4444,
             "low" => 0x444466,
             _ => 0x4488ff,
         };
         div()
+            .id(SharedString::from(format!("toast-{index}")))
             .w(px(320.))
             .rounded(px(10.))
             .bg(rgb(SURFACE_2))
@@ -2020,17 +2032,21 @@ impl DesktopWindow {
             .flex()
             .flex_col()
             .gap(px(4.))
+            .cursor_pointer()
+            .on_click(move |_, _, cx| {
+                desktop.update(cx, |d, _| d.notifications.dismiss(index));
+            })
             .child(
                 div()
                     .text_size(px(13.))
                     .text_color(rgb(TEXT))
-                    .child(toast.title.clone()),
+                    .child(notif.title.clone()),
             )
             .child(
                 div()
                     .text_size(px(11.))
                     .text_color(rgb(TEXT_DIM))
-                    .child(toast.body.clone()),
+                    .child(notif.body.clone()),
             )
     }
 }
@@ -2040,6 +2056,7 @@ impl Render for DesktopWindow {
         self.desktop.update(cx, |desktop, _| {
             desktop.notifications.poll();
         });
+        let desktop_entity = self.desktop.clone();
         let desktop = self.desktop.read(cx);
         let layout = desktop.layout.view();
         let status = desktop.status_bar && !desktop.external_polybar;
@@ -2240,7 +2257,10 @@ impl Render for DesktopWindow {
                             .notifications
                             .active
                             .iter()
-                            .map(|n| Self::render_toast(&n.notification)),
+                            .enumerate()
+                            .map(|(i, n)| {
+                                Self::render_toast(&n.notification, desktop_entity.clone(), i)
+                            }),
                     ),
             );
         }

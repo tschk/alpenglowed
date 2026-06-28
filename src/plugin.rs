@@ -27,6 +27,7 @@ pub enum PluginAction {
     CloseSettings,
     Desktop { action: DesktopAction },
     ToggleTerminal,
+    TerminalClear,
     TerminalWrite { line: String },
     None,
 }
@@ -72,6 +73,7 @@ impl PluginRegistry {
         registry.register(Box::new(LayoutPlugin));
         registry.register(Box::new(InterfacePlugin));
         registry.register(Box::new(TerminalPlugin));
+        registry.register(Box::new(TerminalClearPlugin));
         registry.register(Box::new(SettingsPlugin));
         registry.register(Box::new(DesktopActionsPlugin));
         registry.register(Box::new(AppLauncherPlugin));
@@ -679,6 +681,33 @@ impl Plugin for TerminalPlugin {
                 PluginAction::ToggleTerminal,
             ),
             ("Shell", "open shell console", PluginAction::ToggleTerminal),
+        ]
+        .into_iter()
+        .filter_map(|(title, subtitle, action)| {
+            score(title, query, matcher).map(|score| PluginResult {
+                plugin_id: self.id().to_string(),
+                title: title.to_string(),
+                subtitle: subtitle.to_string(),
+                score,
+                action: action.clone(),
+            })
+        })
+        .collect()
+    }
+}
+
+struct TerminalClearPlugin;
+
+impl Plugin for TerminalClearPlugin {
+    fn id(&self) -> &str {
+        "terminal-clear"
+    }
+
+    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        [
+            ("Clear terminal", "console", PluginAction::TerminalClear),
+            ("Clear console", "console", PluginAction::TerminalClear),
+            ("Reset terminal", "console", PluginAction::TerminalClear),
         ]
         .into_iter()
         .filter_map(|(title, subtitle, action)| {
