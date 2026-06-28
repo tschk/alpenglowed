@@ -342,7 +342,7 @@ impl DesktopModel {
                     self.last_action = format!("Compositor: {title} connected");
                 }
                 compositor::CompositorEvent::SurfaceUpdated { id } => {
-                    if let Some(window_id) = self.compositor_surfaces.get(&id) {
+                    if self.compositor_surfaces.contains_key(&id) {
                         self.layout.set_focused_window_content("Surface", "updated");
                     }
                 }

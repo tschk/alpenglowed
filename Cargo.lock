@@ -59,6 +59,7 @@ dependencies = [
  "serde_json",
  "smithay",
  "wayland-client",
+ "xkbcommon",
 ]
 
 [[package]]

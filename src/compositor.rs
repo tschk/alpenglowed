@@ -48,6 +48,7 @@ use smithay::{
 };
 
 /// Commands: GPUI thread → compositor thread
+#[allow(dead_code)]
 pub enum CompositorCommand {
     KeyboardInput { key: u32, state: KeyState },
     PointerMotion { x: f64, y: f64 },
@@ -56,12 +57,14 @@ pub enum CompositorCommand {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum KeyState {
     Pressed,
     Released,
 }
 
 /// Events: compositor thread → GPUI thread
+#[allow(dead_code)]
 pub enum CompositorEvent {
     SurfaceCreated {
         id: u32,
@@ -83,7 +86,6 @@ pub struct AlpenglowCompositor {
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
     pub seat: Seat<Self>,
-    pub socket_name: String,
     pub surfaces: Vec<(u32, ToplevelSurface)>,
     pub event_tx: mpsc::Sender<CompositorEvent>,
     pub cmd_rx: mpsc::Receiver<CompositorCommand>,
@@ -95,7 +97,6 @@ impl AlpenglowCompositor {
         dh: &smithay::reexports::wayland_server::DisplayHandle,
         event_tx: mpsc::Sender<CompositorEvent>,
         cmd_rx: mpsc::Receiver<CompositorCommand>,
-        socket_name: String,
     ) -> Self {
         let compositor_state = CompositorState::new::<Self>(dh);
         let xdg_shell_state = XdgShellState::new::<Self>(dh);
@@ -112,7 +113,7 @@ impl AlpenglowCompositor {
             seat_state,
             data_device_state,
             seat,
-            socket_name,
+
             surfaces: Vec::new(),
             event_tx,
             cmd_rx,
@@ -303,8 +304,8 @@ impl ClientData for ClientState {
     fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
 }
 
-/// Handle for communicating with the compositor from GPUI thread.
-/// Used by DesktopModel to receive events and send commands.
+// ponytail: CompositorHandle — wire into DesktopModel when input forwarding is needed
+#[allow(dead_code)]
 pub struct CompositorHandle {
     pub cmd: mpsc::Sender<CompositorCommand>,
     pub events: mpsc::Receiver<CompositorEvent>,
@@ -337,7 +338,7 @@ pub fn start() -> (
         let listener = ListeningSocket::bind(sock_name).unwrap();
         let _ = std::fs::set_permissions(&sock_path, std::fs::Permissions::from_mode(0o666));
 
-        let mut state = AlpenglowCompositor::new(&dh, event_tx, cmd_rx, sock_name.to_string());
+        let mut state = AlpenglowCompositor::new(&dh, event_tx, cmd_rx);
 
         // Add keyboard and pointer
         let _ = state.seat.add_keyboard(Default::default(), 200, 25);
@@ -345,7 +346,6 @@ pub fn start() -> (
 
         // Set env so child processes connect to our compositor
         std::env::set_var("WAYLAND_DISPLAY", sock_name);
-        std::env::set_var("ALPENGLOW_COMPOSITOR", "1");
 
         let start_time = std::time::Instant::now();
 

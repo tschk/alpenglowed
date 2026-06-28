@@ -16,6 +16,8 @@ smithay = { version = "0.7", default-features = false, features = ["wayland_fron
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 wayland-client = "0.31.14"
+# Override gpui's xkbcommon/x11 to avoid -lxkbcommon-x11 link failure on cross-compile
+xkbcommon = { version = "0.8", default-features = false, features = ["wayland"] }
 
 [build-dependencies]
 crepuscularity-gpui = { path = "../crepuscularity/crates/crepuscularity-gpui", features = ["wayland"] }
