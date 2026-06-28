@@ -65,7 +65,8 @@ actions!(
         ShrinkPane,
         FocusNextPane,
         ClosePane,
-        ToggleFloatPane
+        ToggleFloatPane,
+        ToggleTerminalPane
     ]
 );
 
@@ -96,6 +97,8 @@ struct DesktopModel {
     launcher: Option<AnyWindowHandle>,
     settings: Option<AnyWindowHandle>,
     notifications: notifications::NotificationState,
+    terminal: Option<terminal::TerminalConsole>,
+    terminal_open: bool,
 }
 
 impl EventEmitter<DesktopEvent> for DesktopModel {}
@@ -135,6 +138,8 @@ impl DesktopModel {
             launcher: None,
             settings: None,
             notifications,
+            terminal: None,
+            terminal_open: false,
         };
         desktop.runner.query = desktop.query.clone();
         desktop.refresh_runner();
@@ -263,8 +268,19 @@ impl DesktopModel {
                 let _ = Command::new(program).spawn();
             }
             PluginAction::Shell { command } => {
-                self.set_last_action("Shell", command.clone());
-                let _ = Command::new("sh").arg("-c").arg(command).spawn();
+                if self.terminal_open {
+                    self.terminal_write(&command);
+                } else {
+                    self.set_last_action("Shell", command.clone());
+                    let _ = Command::new("sh").arg("-c").arg(command).spawn();
+                }
+            }
+            PluginAction::ToggleTerminal => {
+                self.toggle_terminal(cx);
+            }
+            PluginAction::TerminalWrite { line } => {
+                self.terminal_write(&line);
+                self.changed(cx);
             }
             PluginAction::None => {}
         }
@@ -281,6 +297,37 @@ impl DesktopModel {
     fn toggle_status_bar(&mut self, cx: &mut Context<Self>) {
         self.status_bar = !self.status_bar;
         self.changed(cx);
+    }
+
+    fn toggle_terminal(&mut self, cx: &mut Context<Self>) {
+        self.terminal_open = !self.terminal_open;
+        if self.terminal_open && self.terminal.is_none() {
+            self.terminal = terminal::TerminalConsole::spawn();
+            if self.terminal.is_some() {
+                self.last_action = "Terminal: opened".to_string();
+            } else {
+                self.last_action = "Terminal: spawn failed".to_string();
+                self.terminal_open = false;
+            }
+        } else if !self.terminal_open {
+            self.terminal = None;
+            self.last_action = "Terminal: closed".to_string();
+        }
+        self.changed(cx);
+    }
+
+    fn terminal_write(&mut self, line: &str) {
+        if let Some(ref term) = self.terminal {
+            let trimmed = line.trim().to_string();
+            if trimmed == "exit" || trimmed == "quit" {
+                self.terminal = None;
+                self.terminal_open = false;
+                self.last_action = "Terminal: closed".to_string();
+            } else {
+                term.write(&trimmed);
+                self.last_action = format!("$ {trimmed}");
+            }
+        }
     }
 }
 
@@ -1901,6 +1948,62 @@ impl Render for LauncherWindow {
 }
 
 impl DesktopWindow {
+    fn render_terminal_panel(desktop: &DesktopModel) -> Div {
+        let lines = desktop
+            .terminal
+            .as_ref()
+            .map(|t| t.output())
+            .unwrap_or_default();
+        div()
+            .absolute()
+            .bottom(px(0.))
+            .left(px(0.))
+            .right(px(0.))
+            .h(px(240.))
+            .bg(rgb(0x0a0e14))
+            .border_t_1()
+            .border_color(rgb(BORDER))
+            .p(px(12.))
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .mb(px(6.))
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(rgb(0x88ff88))
+                            .child("$ terminal"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(rgb(TEXT_FAINT))
+                            .child("type in launcher bar, enter to send, 'exit' to close"),
+                    ),
+            )
+            .child(
+                div().flex_1().flex().flex_col().gap(px(2.)).children(
+                    lines
+                        .iter()
+                        .rev()
+                        .take(40)
+                        .rev()
+                        .map(|line| Self::render_terminal_line(line)),
+                ),
+            )
+    }
+
+    fn render_terminal_line(line: &str) -> Div {
+        div()
+            .text_size(px(12.))
+            .text_color(rgb(0xc0c0c0))
+            .font(ui_font())
+            .child(line.to_string())
+    }
+
     fn render_toast(toast: &notifications::Notification) -> Div {
         let border = match toast.urgency.as_str() {
             "critical" => 0xff4444,
@@ -2106,6 +2209,11 @@ impl Render for DesktopWindow {
                     );
                 });
             }))
+            .on_action(cx.listener(|this, _: &ToggleTerminalPane, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(PluginAction::ToggleTerminal, cx);
+                });
+            }))
             .child(
                 div()
                     .size_full()
@@ -2135,6 +2243,10 @@ impl Render for DesktopWindow {
                             .map(|n| Self::render_toast(&n.notification)),
                     ),
             );
+        }
+
+        if desktop.terminal_open {
+            root = root.child(Self::render_terminal_panel(desktop));
         }
 
         root
@@ -2339,6 +2451,7 @@ fn main() {
             KeyBinding::new("cmd-alt--", ContractWindow, None),
             KeyBinding::new("cmd-alt-l", GrowPane, None),
             KeyBinding::new("cmd-alt-j", ShrinkPane, None),
+            KeyBinding::new("cmd-alt-t", ToggleTerminalPane, None),
         ]);
 
         let desktop_options = options.clone();

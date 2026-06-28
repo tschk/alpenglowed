@@ -26,6 +26,8 @@ pub enum PluginAction {
     OpenSettings,
     CloseSettings,
     Desktop { action: DesktopAction },
+    ToggleTerminal,
+    TerminalWrite { line: String },
     None,
 }
 
@@ -69,6 +71,7 @@ impl PluginRegistry {
         registry.register(Box::new(WindowModePlugin));
         registry.register(Box::new(LayoutPlugin));
         registry.register(Box::new(InterfacePlugin));
+        registry.register(Box::new(TerminalPlugin));
         registry.register(Box::new(SettingsPlugin));
         registry.register(Box::new(DesktopActionsPlugin));
         registry.register(Box::new(AppLauncherPlugin));
@@ -636,6 +639,46 @@ impl Plugin for SettingsPlugin {
                 "desktop settings",
                 PluginAction::OpenSettings,
             ),
+        ]
+        .into_iter()
+        .filter_map(|(title, subtitle, action)| {
+            score(title, query, matcher).map(|score| PluginResult {
+                plugin_id: self.id().to_string(),
+                title: title.to_string(),
+                subtitle: subtitle.to_string(),
+                score,
+                action: action.clone(),
+            })
+        })
+        .collect()
+    }
+}
+
+struct TerminalPlugin;
+
+impl Plugin for TerminalPlugin {
+    fn id(&self) -> &str {
+        "terminal"
+    }
+
+    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        [
+            (
+                "Terminal",
+                "open shell console",
+                PluginAction::ToggleTerminal,
+            ),
+            (
+                "Console",
+                "open shell console",
+                PluginAction::ToggleTerminal,
+            ),
+            (
+                "Toggle terminal",
+                "open or close shell",
+                PluginAction::ToggleTerminal,
+            ),
+            ("Shell", "open shell console", PluginAction::ToggleTerminal),
         ]
         .into_iter()
         .filter_map(|(title, subtitle, action)| {

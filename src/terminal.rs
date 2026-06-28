@@ -1,6 +1,4 @@
 // ponytail: pipe-based console, no PTY yet — proper TTY support needs forkpty (Linux-only)
-// ponytail: dead_code — wire into layout pane when terminal UI is built
-#![allow(dead_code)]
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
@@ -98,6 +96,11 @@ impl TerminalConsole {
         let _ = self.input_tx.send(line.to_string());
     }
 
+    #[allow(dead_code)]
+    pub fn is_alive(&self) -> bool {
+        self.running.load(Ordering::Relaxed)
+    }
+
     pub fn output(&self) -> Vec<String> {
         self.output
             .lock()
@@ -106,6 +109,7 @@ impl TerminalConsole {
             .unwrap_or_default()
     }
 
+    #[allow(dead_code)]
     pub fn clear(&self) {
         if let Ok(mut g) = self.output.lock() {
             g.clear();
