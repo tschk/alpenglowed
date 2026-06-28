@@ -41,7 +41,7 @@ Alpenglowed is a single Crepuscularity GPUI binary that runs fullscreen on top o
 
 ## Phases
 
-### Phase A — Pills + Launcher (MVP)
+### Phase A — Pills + Launcher (MVP) ✅
 
 - Fullscreen GPUI window
 - **Pill row** (top): clock, date, battery percentage
@@ -53,21 +53,21 @@ Alpenglowed is a single Crepuscularity GPUI binary that runs fullscreen on top o
 - **Keybind**: Super+Space toggles focus in/out of the bar
 - **Dismiss**: Esc to unfocus; the bar stays visible but inactive
 
-### Phase B — Windows & Status
+### Phase B — Windows & Status (partial)
 
 - **App launch**: launched apps appear as managed windows below the bar
-- **Window manager**: simple tiling (two columns) or floating
-- **More pills**: WiFi SSID + signal, weather via curl wttr.in, CPU%
+- **Window manager**: simple tiling (two columns) or floating ✅
+- **More pills**: WiFi SSID + signal ✅, weather via curl wttr.in ✅, CPU% ✅
 - **Notifications**: simple FIFO-based notification daemon
 - **Terminal widget**: embedded terminal in the bar area (`>' command` shows output inline)
 
-### Phase C — Files & Clipboard
+### Phase C — Files & Clipboard (partial)
 
-- **File search**: fuzzy find files by name under ~ and /
+- **File search**: `/query` → fuzzy find via locate/fd/find ✅
+- **Web search**: `?query` → DuckDuckGo search ✅
+- **Emoji picker**: `:smile` → emoji search, copies to clipboard ✅
 - **Clipboard history**: store and search recent copies
-- **Emoji picker**: `:smile` → emoji search
-- **Web search**: `?query` → search DuckDuckGo
-- **Spotify**: MPRIS actions through `playerctl`
+- **Spotify**: MPRIS actions through `playerctl` ✅
 
 ### Phase D — Compositor Built-in
 

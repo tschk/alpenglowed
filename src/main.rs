@@ -491,7 +491,7 @@ impl DesktopWindow {
                                 ("temp".to_string(), metrics.temp),
                                 ("power".to_string(), metrics.battery),
                                 ("wifi".to_string(), metrics.wifi),
-                                ("load".to_string(), metrics.load),
+                                ("cpu".to_string(), metrics.load),
                                 ("mem".to_string(), metrics.memory),
                                 ("wl".to_string(), metrics.backend),
                             ]
@@ -689,7 +689,7 @@ impl TopBarMetrics {
             battery: battery_value().unwrap_or_else(|| "battery unavailable".to_string()),
             temp: temp_value().unwrap_or_else(|| "--°".to_string()),
             wifi: wifi_value().unwrap_or_else(|| "wifi unavailable".to_string()),
-            load: load_value().unwrap_or_else(|| "load unavailable".to_string()),
+            load: cpu_value().unwrap_or_else(|| "cpu unavailable".to_string()),
             memory: memory_value().unwrap_or_else(|| "memory unavailable".to_string()),
             backend: top_bar_backend(desktop),
         }
@@ -769,6 +769,26 @@ fn load_value() -> Option<String> {
     let text = fs::read_to_string("/proc/loadavg").ok()?;
     let first = text.split_whitespace().next()?;
     Some(first.to_string())
+}
+
+fn cpu_value() -> Option<String> {
+    let text = fs::read_to_string("/proc/stat").ok()?;
+    let line = text.lines().next()?;
+    let vals: Vec<u64> = line
+        .split_whitespace()
+        .skip(1)
+        .filter_map(|v| v.parse().ok())
+        .collect();
+    if vals.len() < 4 {
+        return None;
+    }
+    let total: u64 = vals.iter().sum();
+    let idle = vals[3];
+    if total == 0 {
+        return None;
+    }
+    // ponytail: since-boot avg, not delta between samples
+    Some(format!("{}%", ((total - idle) * 100) / total))
 }
 
 fn memory_value() -> Option<String> {
