@@ -63,6 +63,7 @@ impl PluginRegistry {
         registry.register(Box::new(WebSearchPlugin));
         registry.register(Box::new(EmojiPlugin));
         registry.register(Box::new(FileSearchPlugin));
+        registry.register(Box::new(ClipboardPlugin));
         registry.register(Box::new(ShellPlugin));
         registry.register(Box::new(CalculatorPlugin));
         registry.register(Box::new(WindowModePlugin));
@@ -323,6 +324,135 @@ impl Plugin for FileSearchPlugin {
     }
 }
 
+struct ClipboardPlugin;
+
+impl Plugin for ClipboardPlugin {
+    fn id(&self) -> &str {
+        "clipboard"
+    }
+
+    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        let search = query.trim().to_lowercase();
+        if !search.starts_with("clip") && !search.starts_with("paste") && !search.starts_with("cb")
+        {
+            return Vec::new();
+        }
+
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg("cliphist list 2>/dev/null | head -10")
+            .output()
+            .ok();
+        if let Some(o) = output.filter(|o| o.status.success()) {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            let mut results: Vec<PluginResult> = stdout
+                .lines()
+                .filter_map(|line| {
+                    let (id, preview) = line.split_once('\t')?;
+                    let preview = preview.trim();
+                    if preview.is_empty() {
+                        return None;
+                    }
+                    let score = matcher.fuzzy_match(preview, &search).unwrap_or(1);
+                    Some(PluginResult {
+                        plugin_id: self.id().to_string(),
+                        title: preview.chars().take(60).collect(),
+                        subtitle: "clipboard".to_string(),
+                        score,
+                        action: PluginAction::Shell {
+                            command: format!(
+                                "cliphist decode '{}' | wl-copy 2>/dev/null || cliphist decode '{}' | xclip -selection clipboard",
+                                id, id
+                            ),
+                        },
+                    })
+                })
+                .collect();
+            results.sort_by_key(|r| std::cmp::Reverse(r.score));
+            results.truncate(6);
+            return results;
+        }
+
+        let current = Command::new("sh")
+            .arg("-c")
+            .arg("wl-paste 2>/dev/null || xclip -o -selection clipboard 2>/dev/null")
+            .output()
+            .ok();
+        if let Some(o) = current.filter(|o| o.status.success()) {
+            let text = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if !text.is_empty() {
+                return vec![PluginResult {
+                    plugin_id: self.id().to_string(),
+                    title: text.chars().take(60).collect(),
+                    subtitle: "clipboard (current)".to_string(),
+                    score: 100,
+                    action: PluginAction::None,
+                }];
+            }
+        }
+
+        vec![PluginResult {
+            plugin_id: self.id().to_string(),
+            title: "Clipboard unavailable".to_string(),
+            subtitle: "install cliphist".to_string(),
+            score: 1,
+            action: PluginAction::None,
+        }]
+    }
+}
+
+fn run_capture(command: &str) -> Vec<PluginResult> {
+    let output = Command::new("sh").arg("-c").arg(command).output().ok();
+    let output = match output {
+        Some(o) if o.status.success() || !o.stdout.is_empty() => o,
+        _ => {
+            return vec![PluginResult {
+                plugin_id: "shell".to_string(),
+                title: format!("{command}: no output"),
+                subtitle: "shell".to_string(),
+                score: i64::MAX,
+                action: PluginAction::Shell {
+                    command: command.to_string(),
+                },
+            }]
+        }
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    let mut results = Vec::new();
+    for line in stdout.lines().chain(stderr.lines()) {
+        if results.len() >= 6 {
+            break;
+        }
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        results.push(PluginResult {
+            plugin_id: "shell".to_string(),
+            title: line.chars().take(80).collect(),
+            subtitle: format!("$ {command}"),
+            score: i64::MAX - results.len() as i64,
+            action: PluginAction::Shell {
+                command: command.to_string(),
+            },
+        });
+    }
+    if results.is_empty() {
+        results.push(PluginResult {
+            plugin_id: "shell".to_string(),
+            title: "(empty output)".to_string(),
+            subtitle: format!("$ {command}"),
+            score: i64::MAX,
+            action: PluginAction::Shell {
+                command: command.to_string(),
+            },
+        });
+    }
+    results
+}
+
 struct ShellPlugin;
 
 impl Plugin for ShellPlugin {
@@ -331,7 +461,18 @@ impl Plugin for ShellPlugin {
     }
 
     fn query(&self, query: &str, _matcher: &SkimMatcherV2) -> Vec<PluginResult> {
-        let command = query.trim().strip_prefix('>').map(str::trim).unwrap_or("");
+        let trimmed = query.trim();
+        if trimmed.is_empty() || !trimmed.starts_with('>') {
+            return Vec::new();
+        }
+
+        if let Some(cmd) = trimmed.strip_prefix(">'").map(str::trim) {
+            if !cmd.is_empty() {
+                return run_capture(cmd);
+            }
+        }
+
+        let command = trimmed.strip_prefix('>').map(str::trim).unwrap_or("");
         if command.is_empty() {
             return Vec::new();
         }

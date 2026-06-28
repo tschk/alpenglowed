@@ -61,12 +61,21 @@ Alpenglowed is a single Crepuscularity GPUI binary that runs fullscreen on top o
 - **Notifications**: simple FIFO-based notification daemon
 - **Terminal widget**: embedded terminal in the bar area (`>' command` shows output inline)
 
+### Phase B — Windows & Status (partial)
+
+- **App launch**: launched apps appear as managed windows below the bar
+- **Window manager**: simple tiling (two columns) or floating ✅
+- **More pills**: WiFi SSID + signal ✅, weather via curl wttr.in ✅, CPU% ✅
+- **Inline terminal**: `>' command` runs and shows stdout in results ✅
+- **Notifications**: simple FIFO-based notification daemon
+- **Terminal widget**: embedded terminal in the bar area
+
 ### Phase C — Files & Clipboard (partial)
 
 - **File search**: `/query` → fuzzy find via locate/fd/find ✅
 - **Web search**: `?query` → DuckDuckGo search ✅
 - **Emoji picker**: `:smile` → emoji search, copies to clipboard ✅
-- **Clipboard history**: store and search recent copies
+- **Clipboard history**: type `clip`/`cb`/`paste` → browse and restore recent copies ✅
 - **Spotify**: MPRIS actions through `playerctl` ✅
 
 ### Phase D — Compositor Built-in
