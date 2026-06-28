@@ -99,6 +99,7 @@ struct DesktopModel {
     notifications: notifications::NotificationState,
     terminal: Option<terminal::TerminalConsole>,
     terminal_open: bool,
+    terminal_input: String,
 }
 
 impl EventEmitter<DesktopEvent> for DesktopModel {}
@@ -140,6 +141,7 @@ impl DesktopModel {
             notifications,
             terminal: None,
             terminal_open: false,
+            terminal_input: String::new(),
         };
         desktop.runner.query = desktop.query.clone();
         desktop.refresh_runner();
@@ -1988,7 +1990,7 @@ impl DesktopWindow {
                         div()
                             .text_size(px(11.))
                             .text_color(rgb(TEXT_FAINT))
-                            .child("type in launcher bar, enter to send, 'exit' to close"),
+                            .child("type directly, Ctrl-C to interrupt, 'exit' to close"),
                     ),
             )
             .child(
@@ -2000,6 +2002,30 @@ impl DesktopWindow {
                         .rev()
                         .map(|line| Self::render_terminal_line(line)),
                 ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .px(px(4.))
+                    .py(px(6.))
+                    .bg(rgb(0x11151a))
+                    .rounded(px(6.))
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(rgb(0x88ff88))
+                            .child("$"),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(px(12.))
+                            .text_color(rgb(TEXT))
+                            .child(desktop.terminal_input.clone()),
+                    )
+                    .child(div().w(px(6.)).h(px(14.)).bg(rgb(0x88ff88))),
             )
     }
 
