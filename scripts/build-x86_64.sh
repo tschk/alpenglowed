@@ -1,10 +1,10 @@
 #!/bin/sh
-# Build alpenglowed for aarch64-linux-musl using cargo-zigbuild
+# Build alpenglowed for x86_64-linux-musl using cargo-zigbuild
 # Provides a stub libxkbcommon-x11.a since gpui hard-enables xkbcommon/x11
 set -eu
 cd "$(dirname "$0")/.."
 
-TARGET="aarch64-unknown-linux-musl"
+TARGET="x86_64-unknown-linux-musl"
 echo "=== Alpenglowed ${TARGET} cross-build ==="
 
 rustup target add "${TARGET}" 2>/dev/null || true
@@ -14,7 +14,6 @@ STUB_DIR="/tmp/xkb-stub-${TARGET}"
 mkdir -p "${STUB_DIR}"
 if [ ! -f "${STUB_DIR}/libxkbcommon-x11.a" ]; then
   echo "→ Building stub libxkbcommon-x11.a..."
-  # Map Rust target triple to zig target
   ZIG_TARGET="${TARGET}"
   cat > /tmp/xkb-stub.c << 'STUB'
 int xkb_x11_setup_xkb_extension(void*a,int b,int c,int*d,int*e,int*f){if(d)*d=0;if(e)*e=b;if(f)*f=c;return 1;}
@@ -32,4 +31,4 @@ cargo zigbuild --release --target "${TARGET}" --features compositor "$@"
 
 echo ""
 echo "Binary: target/${TARGET}/release/alpenglowed"
-file "target/${TARGET}/release/alpenglowed" 2>/dev/null || file "target/aarch64-unknown-linux-musl/release/alpenglowed"
+file "target/${TARGET}/release/alpenglowed"
