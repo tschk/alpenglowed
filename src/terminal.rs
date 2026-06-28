@@ -1,6 +1,23 @@
 // ponytail: pipe-based console, no PTY yet — proper TTY support needs forkpty (Linux-only)
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
+
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_escape = false;
+    for ch in s.chars() {
+        if in_escape {
+            if ch == 'm' || ch.is_ascii_alphabetic() {
+                in_escape = false;
+            }
+        } else if ch == '\u{1b}' || ch == '\u{9b}' {
+            in_escape = true;
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -41,10 +58,11 @@ impl TerminalConsole {
                 }
                 if let Ok(line) = line {
                     if let Ok(mut g) = out.lock() {
+                        let clean = strip_ansi(&line);
                         if g.len() >= 1000 {
                             g.pop_front();
                         }
-                        g.push_back(line);
+                        g.push_back(clean);
                     }
                 }
             }
@@ -60,10 +78,11 @@ impl TerminalConsole {
                 }
                 if let Ok(line) = line {
                     if let Ok(mut g) = out2.lock() {
+                        let clean = strip_ansi(&line);
                         if g.len() >= 1000 {
                             g.pop_front();
                         }
-                        g.push_back(format!("err: {line}"));
+                        g.push_back(format!("err: {clean}"));
                     }
                 }
             }
