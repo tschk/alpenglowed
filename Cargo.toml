@@ -11,6 +11,8 @@ compositor = ["smithay"]
 crepuscularity-core = { path = "../crepuscularity/crates/crepuscularity-core" }
 crepuscularity-gpui = { path = "../crepuscularity/crates/crepuscularity-gpui", features = ["wayland"] }
 crepuscularity-web = { path = "../crepuscularity/crates/crepuscularity-web" }
+# When using published crates instead of path:
+# crepuscularity-gpui = { version = "0.5", features = ["wayland"] }
 fuzzy-matcher = "0.3"
 smithay = { version = "0.7", default-features = false, features = ["wayland_frontend", "desktop"], optional = true }
 serde = { version = "1", features = ["derive"] }
