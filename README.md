@@ -67,10 +67,10 @@ Alpenglowed is a single Crepuscularity GPUI binary that runs fullscreen on top o
 - **Window manager**: simple tiling (two columns) or floating ✅
 - **More pills**: WiFi SSID + signal ✅, weather via curl wttr.in ✅, CPU% ✅
 - **Inline terminal**: `>' command` runs and shows stdout in results ✅
-- **Notifications**: simple FIFO-based notification daemon
-- **Terminal widget**: embedded terminal in the bar area
+- **Notifications**: Unix socket daemon → toast popups, auto-dismiss after 6s ✅
+- **Terminal console**: `src/terminal.rs` — shell spawn, pipe I/O, output ring buffer
 
-### Phase C — Files & Clipboard (partial)
+### Phase C — Files & Clipboard ✅
 
 - **File search**: `/query` → fuzzy find via locate/fd/find ✅
 - **Web search**: `?query` → DuckDuckGo search ✅
@@ -78,9 +78,9 @@ Alpenglowed is a single Crepuscularity GPUI binary that runs fullscreen on top o
 - **Clipboard history**: type `clip`/`cb`/`paste` → browse and restore recent copies ✅
 - **Spotify**: MPRIS actions through `playerctl` ✅
 
-### Phase D — Compositor Built-in
+### Phase D — Compositor Built-in (skeleton)
 
-- Use `smithay` crate as compositor backend in the same binary
+- **`src/compositor.rs`**: design sketch + integration notes for smithay-backed compositor
 - Direct DRM/KMS access
 - Remove Wayland dependency: one static binary controls the display directly
 - Embed terminal via `cosmic-text` + `alacritty_terminal` or similar

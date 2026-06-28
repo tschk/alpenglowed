@@ -1,10 +1,13 @@
 extern crate crepuscularity_gpui as gpui;
 
+mod compositor;
 mod de;
 mod layout;
+mod notifications;
 mod plugin;
 mod runner;
 mod session;
+mod terminal;
 
 use crepuscularity_core::context::{TemplateContext, TemplateValue};
 use crepuscularity_gpui::prelude::*;
@@ -92,6 +95,7 @@ struct DesktopModel {
     session_control: bool,
     launcher: Option<AnyWindowHandle>,
     settings: Option<AnyWindowHandle>,
+    notifications: notifications::NotificationState,
 }
 
 impl EventEmitter<DesktopEvent> for DesktopModel {}
@@ -106,6 +110,8 @@ struct ExternalBarState {
 
 impl DesktopModel {
     fn new(options: UiOptions) -> Self {
+        let mut notifications = notifications::NotificationState::new();
+        notifications.start();
         let mut desktop = Self {
             query: options.initial_query,
             mode: options.mode.clone(),
@@ -128,6 +134,7 @@ impl DesktopModel {
             session_control: std::env::var_os("ALPENGLOW_SESSION_CONTROL").is_some(),
             launcher: None,
             settings: None,
+            notifications,
         };
         desktop.runner.query = desktop.query.clone();
         desktop.refresh_runner();
@@ -1893,8 +1900,43 @@ impl Render for LauncherWindow {
     }
 }
 
+impl DesktopWindow {
+    fn render_toast(toast: &notifications::Notification) -> Div {
+        let border = match toast.urgency.as_str() {
+            "critical" => 0xff4444,
+            "low" => 0x444466,
+            _ => 0x4488ff,
+        };
+        div()
+            .w(px(320.))
+            .rounded(px(10.))
+            .bg(rgb(SURFACE_2))
+            .border_1()
+            .border_color(rgb(border))
+            .p(px(12.))
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .child(
+                div()
+                    .text_size(px(13.))
+                    .text_color(rgb(TEXT))
+                    .child(toast.title.clone()),
+            )
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(rgb(TEXT_DIM))
+                    .child(toast.body.clone()),
+            )
+    }
+}
+
 impl Render for DesktopWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.desktop.update(cx, |desktop, _| {
+            desktop.notifications.poll();
+        });
         let desktop = self.desktop.read(cx);
         let layout = desktop.layout.view();
         let status = desktop.status_bar && !desktop.external_polybar;
@@ -2074,6 +2116,25 @@ impl Render for DesktopWindow {
 
         if status {
             root = root.child(Self::render_status_bar(desktop));
+        }
+
+        if !desktop.notifications.active.is_empty() {
+            root = root.child(
+                div()
+                    .absolute()
+                    .bottom(px(24.))
+                    .right(px(24.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .children(
+                        desktop
+                            .notifications
+                            .active
+                            .iter()
+                            .map(|n| Self::render_toast(&n.notification)),
+                    ),
+            );
         }
 
         root
