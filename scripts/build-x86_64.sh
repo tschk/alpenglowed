@@ -1,16 +1,20 @@
 #!/bin/sh
-# Build alpenglowed for x86_64-linux-musl using cargo-zigbuild
-# Requires: vendored gpui in crepuscularity/vendor/gpui with xkbcommon/x11 removed
+# Build alpenglowed for x86_64-linux-musl — fully static binary
 set -eu
 cd "$(dirname "$0")/.."
 
 TARGET="x86_64-unknown-linux-musl"
 echo "=== Alpenglowed ${TARGET} cross-build ==="
 
+# Ensure libxkbcommon.a is available
+XKB_DIR="/tmp/xkb-cross-x86_64/lib"
+if [ ! -f "${XKB_DIR}/libxkbcommon.a" ]; then
+  echo "→ Building libxkbcommon first..."
+  "$(dirname "$0")/cross-build-libxkbcommon.sh" x86_64-linux-musl
+fi
+
 rustup target add "${TARGET}" 2>/dev/null || true
 
-# Still needs libxkbcommon.a for the target — not available on macOS.
-# Build on ultramarine instead for musl targets, or use native glibc target.
 cargo zigbuild --release --target "${TARGET}" --features compositor "$@"
 
 echo ""
