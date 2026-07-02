@@ -1,0 +1,16 @@
+[package]
+name = "alpenglow-greeter"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "GPUI login greeter for greetd (black & white). Separate from alpenglowed shell."
+
+[[bin]]
+name = "alpenglow-greeter"
+path = "src/main.rs"
+
+[dependencies]
+crepuscularity-gpui = { path = "../../crepuscularity/crates/crepuscularity-gpui", features = ["wayland"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+greetd_ipc = { version = "0.10", features = ["sync-codec"] }

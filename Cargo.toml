@@ -1,3 +1,7 @@
+[workspace]
+members = ["alpenglow-greeter"]
+resolver = "2"
+
 [package]
 name = "alpenglowed"
 version = "0.1.0"
@@ -26,6 +30,3 @@ crepuscularity-gpui = { path = "../crepuscularity/crates/crepuscularity-gpui", f
 lto = "thin"
 codegen-units = 1
 strip = true
-
-[patch.crates-io]
-gpui = { path = "../crepuscularity/vendor/gpui" }

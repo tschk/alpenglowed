@@ -80,10 +80,17 @@ Alpenglowed is a single Crepuscularity GPUI binary that runs fullscreen on top o
 - Direct DRM/KMS: future work (currently uses wayland socket)
 - Need Linux to build (`xkbcommon` linkage requirement)
 
+## Greeter (`alpenglow-greeter`)
+
+Separate crate — black & white GPUI login for greetd. See [alpenglow-greeter/README.md](alpenglow-greeter/README.md).
+
+E2E in QEMU: `../alpenglow/scripts/boot-native.sh --graphical` (greetd → greeter → session). Autologin: `ALPENGLOW_AUTOLOGIN=1` at build time or `config-autologin.toml`.
+
 ## Build
 
 ```sh
 cargo build --release
+cargo build --release -p alpenglow-greeter
 SDKROOT=$(xcrun --show-sdk-path) cargo run    # macOS dev
 cargo run                                       # Linux dev
 cargo run -- --polybar                          # status output
