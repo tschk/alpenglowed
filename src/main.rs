@@ -2,6 +2,7 @@ extern crate crepuscularity_gpui as gpui;
 
 #[cfg(feature = "compositor")]
 mod compositor;
+mod config;
 mod de;
 mod layout;
 mod notifications;
@@ -262,6 +263,13 @@ impl DesktopModel {
                     self.settings = None;
                 }
                 self.set_last_action("Settings", "closed");
+            }
+            PluginAction::FactoryReset => {
+                crate::config::Config::factory_reset();
+                self.set_last_action(
+                    "Factory reset",
+                    "settings cleared; restart to restore defaults",
+                );
             }
             PluginAction::Desktop { action } => {
                 let resolved = action
@@ -2626,23 +2634,30 @@ fn main() {
 
 impl UiOptions {
     fn from_env() -> Self {
+        let cfg = config::Config::load();
+
         let status_bar = std::env::args().any(|arg| arg == "--status-bar")
             || matches!(
                 std::env::var("ALPENGLOWED_STATUS_BAR").as_deref(),
                 Ok("1" | "true" | "yes")
-            );
+            )
+            || cfg.status_bar.unwrap_or(false);
         let external_polybar = std::env::args().any(|arg| arg == "--external-polybar")
             || matches!(
                 std::env::var("ALPENGLOWED_EXTERNAL_BAR").as_deref(),
                 Ok("polybar")
-            );
-        let open_settings = std::env::args().any(|arg| arg == "--open-settings");
+            )
+            || cfg.external_polybar.unwrap_or(false);
+        let open_settings = std::env::args().any(|arg| arg == "--open-settings")
+            || cfg.open_settings.unwrap_or(false);
         let initial_query = std::env::args()
             .find_map(|arg| arg.strip_prefix("--query=").map(ToString::to_string))
             .or_else(|| std::env::var("ALPENGLOWED_QUERY").ok())
+            .or_else(|| cfg.initial_query.clone())
             .unwrap_or_default();
         let mode = if std::env::args().any(|arg| arg == "--floating")
             || matches!(std::env::var("ALPENGLOWED_MODE").as_deref(), Ok("floating"))
+            || cfg.mode.as_deref() == Some("floating")
         {
             WindowMode::Floating
         } else {
@@ -2652,7 +2667,8 @@ impl UiOptions {
             || matches!(
                 std::env::var("ALPENGLOWED_DEMO_LAYOUT").as_deref(),
                 Ok("1" | "true" | "yes")
-            );
+            )
+            || cfg.demo_layout.unwrap_or(false);
 
         Self {
             status_bar,

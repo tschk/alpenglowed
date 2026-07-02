@@ -66,6 +66,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smithay",
+ "toml 0.8.23",
  "wayland-client",
 ]
 
