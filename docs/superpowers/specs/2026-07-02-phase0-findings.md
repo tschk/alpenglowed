@@ -43,4 +43,4 @@ None of these are wired into `.github/workflows/ci.yml` — `grep aarch64 .githu
 
 ## 0.5 bcachefs-on-brd RAM-root spike (gates Phase 8 desktop branch)
 
-Delegated to background subagent on `ultramarine` (has qemu+kvm, docker). See addendum below once it reports back.
+Not completed in this session. The parallel subagent could not run because the Devin subagent daily quota was exhausted, and the spike requires a real QEMU boot on `ultramarine` with a custom kernel build (10+ minutes) plus bcachefs-tools setup. This gates Phase 8's desktop-root branch decision: until the spike runs, Phase 8 should fall back to the safe path (erofs root for both profiles, bcachefs only for the persistent state layer) rather than assuming bcachefs-on-brd is viable.
