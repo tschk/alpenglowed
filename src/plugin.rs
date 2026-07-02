@@ -25,6 +25,7 @@ pub enum PluginAction {
     ToggleSettings,
     OpenSettings,
     CloseSettings,
+    FactoryReset,
     Desktop { action: DesktopAction },
     ToggleTerminal,
     TerminalClear,
@@ -75,6 +76,7 @@ impl PluginRegistry {
         registry.register(Box::new(TerminalPlugin));
         registry.register(Box::new(TerminalClearPlugin));
         registry.register(Box::new(SettingsPlugin));
+        registry.register(Box::new(FactoryResetPlugin));
         registry.register(Box::new(DesktopActionsPlugin));
         registry.register(Box::new(AppLauncherPlugin));
         registry.register(Box::new(SpotifyPlugin));
@@ -640,6 +642,40 @@ impl Plugin for SettingsPlugin {
                 "Preferences",
                 "desktop settings",
                 PluginAction::OpenSettings,
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(title, subtitle, action)| {
+            score(title, query, matcher).map(|score| PluginResult {
+                plugin_id: self.id().to_string(),
+                title: title.to_string(),
+                subtitle: subtitle.to_string(),
+                score,
+                action: action.clone(),
+            })
+        })
+        .collect()
+    }
+}
+
+struct FactoryResetPlugin;
+
+impl Plugin for FactoryResetPlugin {
+    fn id(&self) -> &str {
+        "factory-reset"
+    }
+
+    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        [
+            (
+                "Factory reset",
+                "reset desktop settings to shipped defaults",
+                PluginAction::FactoryReset,
+            ),
+            (
+                "Reset settings",
+                "restore default desktop configuration",
+                PluginAction::FactoryReset,
             ),
         ]
         .into_iter()

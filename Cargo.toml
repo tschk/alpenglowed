@@ -1,3 +1,7 @@
+[workspace]
+members = ["alpenglow-greeter"]
+resolver = "2"
+
 [package]
 name = "alpenglowed"
 version = "0.1.0"
@@ -17,6 +21,7 @@ fuzzy-matcher = "0.3"
 smithay = { version = "0.7", default-features = false, features = ["wayland_frontend", "desktop"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "0.8"
 wayland-client = "0.31.14"
 
 [build-dependencies]
@@ -26,6 +31,3 @@ crepuscularity-gpui = { path = "../crepuscularity/crates/crepuscularity-gpui", f
 lto = "thin"
 codegen-units = 1
 strip = true
-
-[patch.crates-io]
-gpui = { path = "../crepuscularity/vendor/gpui" }

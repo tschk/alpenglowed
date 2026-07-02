@@ -80,10 +80,38 @@ Alpenglowed is a single Crepuscularity GPUI binary that runs fullscreen on top o
 - Direct DRM/KMS: future work (currently uses wayland socket)
 - Need Linux to build (`xkbcommon` linkage requirement)
 
+## Greeter (`alpenglow-greeter`)
+
+Separate crate — black & white GPUI login for greetd. See [alpenglow-greeter/README.md](alpenglow-greeter/README.md).
+
+E2E in QEMU: `../alpenglow/scripts/boot-native.sh --graphical` (greetd → greeter → session). Autologin: `ALPENGLOW_AUTOLOGIN=1` at build time or `config-autologin.toml`.
+
+## Configuration
+
+Alpenglowed reads `/etc/alpenglowed/config.toml` at startup. If that file
+does not exist, it falls back to the shipped defaults at
+`/usr/share/defaults/alpenglowed/config.toml`.
+
+Edit `/etc/alpenglowed/config.toml` to override defaults. Run the
+`factory-reset` action from the launcher (`> factory-reset`) to delete the
+user config and restore shipped defaults on the next session start.
+
+Available config keys mirror the CLI/env flags:
+
+```toml
+status_bar = false
+external_polybar = false
+open_settings = false
+initial_query = ""
+mode = "tiling"          # "tiling" or "floating"
+demo_layout = false
+```
+
 ## Build
 
 ```sh
 cargo build --release
+cargo build --release -p alpenglow-greeter
 SDKROOT=$(xcrun --show-sdk-path) cargo run    # macOS dev
 cargo run                                       # Linux dev
 cargo run -- --polybar                          # status output
