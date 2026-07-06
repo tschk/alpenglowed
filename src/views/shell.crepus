@@ -27,8 +27,8 @@ label = ""
 value = ""
 
 [SettingsHeader.defaults]
-title = "Settings"
-subtitle = "Desktop, launcher, session, and system controls"
+title = "Actions"
+subtitle = "Keyboard-first desktop controls"
 
 [SettingsSectionHeader.defaults]
 title = ""
@@ -111,6 +111,12 @@ ul
 ul
   li
     "Cmd-Space launcher"
+  li
+    "Cmd-, actions"
+  li
+    "Cmd-B status bar"
+  li
+    "Cmd-Alt-T terminal"
   li
     "Cmd-Alt-H split row"
   li

@@ -33,13 +33,13 @@ fn ui_font() -> Font {
     font("Geist")
 }
 
-const ACCENT: u32 = 0x8ab4ff;
-const ACCENT_DIM: u32 = 0x2a3a5a;
-const SURFACE: u32 = 0x11141a;
-const SURFACE_2: u32 = 0x161a22;
-const SURFACE_3: u32 = 0x1c2129;
-const BORDER: u32 = 0x2a3140;
-const BORDER_SOFT: u32 = 0x1f2530;
+const ACCENT: u32 = 0x33ccff;
+const ACCENT_DIM: u32 = 0x123142;
+const SURFACE: u32 = 0x080b10;
+const SURFACE_2: u32 = 0x0d1118;
+const SURFACE_3: u32 = 0x111722;
+const BORDER: u32 = 0x23313d;
+const BORDER_SOFT: u32 = 0x18222c;
 const TEXT: u32 = 0xe6e9ef;
 const TEXT_DIM: u32 = 0x9aa3b2;
 const TEXT_FAINT: u32 = 0x6b7384;
@@ -69,7 +69,9 @@ actions!(
         FocusNextPane,
         ClosePane,
         ToggleFloatPane,
-        ToggleTerminalPane
+        ToggleTerminalPane,
+        ToggleSettingsWindow,
+        ToggleStatusBarAction
     ]
 );
 
@@ -106,8 +108,6 @@ struct DesktopModel {
     #[cfg(feature = "compositor")]
     compositor_events: Option<std::sync::mpsc::Receiver<compositor::CompositorEvent>>,
     #[cfg(feature = "compositor")]
-    compositor_cmd: Option<std::sync::mpsc::Sender<compositor::CompositorCommand>>,
-    #[cfg(feature = "compositor")]
     compositor_surfaces: std::collections::HashMap<u32, usize>,
 }
 
@@ -127,7 +127,7 @@ impl DesktopModel {
         #[cfg(feature = "compositor")] compositor_rx: Option<
             std::sync::mpsc::Receiver<compositor::CompositorEvent>,
         >,
-        #[cfg(feature = "compositor")] compositor_tx: Option<
+        #[cfg(feature = "compositor")] _compositor_tx: Option<
             std::sync::mpsc::Sender<compositor::CompositorCommand>,
         >,
     ) -> Self {
@@ -161,8 +161,6 @@ impl DesktopModel {
             terminal_input: String::new(),
             #[cfg(feature = "compositor")]
             compositor_events: compositor_rx,
-            #[cfg(feature = "compositor")]
-            compositor_cmd: compositor_tx,
             #[cfg(feature = "compositor")]
             compositor_surfaces: std::collections::HashMap::new(),
         };
@@ -340,7 +338,7 @@ impl DesktopModel {
         };
         while let Ok(event) = events.try_recv() {
             match event {
-                compositor::CompositorEvent::SurfaceCreated {
+                compositor::CompositorEvent::Created {
                     id,
                     title,
                     app_id: _,
@@ -350,12 +348,12 @@ impl DesktopModel {
                     self.compositor_surfaces.insert(id, window_id);
                     self.last_action = format!("Compositor: {title} connected");
                 }
-                compositor::CompositorEvent::SurfaceUpdated { id } => {
+                compositor::CompositorEvent::Updated { id } => {
                     if self.compositor_surfaces.contains_key(&id) {
                         self.layout.set_focused_window_content("Surface", "updated");
                     }
                 }
-                compositor::CompositorEvent::SurfaceClosed { id } => {
+                compositor::CompositorEvent::Closed { id } => {
                     if let Some(window_id) = self.compositor_surfaces.remove(&id) {
                         self.layout.set_window_floating(window_id, true);
                         self.last_action = format!("Compositor: surface {id} closed");
@@ -1280,8 +1278,8 @@ impl LauncherWindow {
         div()
             .w(px(680.))
             .h(px(48.))
-            .when(show_results, |bar| bar.rounded_t(px(12.)))
-            .when(!show_results, |bar| bar.rounded(px(12.)))
+            .when(show_results, |bar| bar.rounded_t(px(6.)))
+            .when(!show_results, |bar| bar.rounded(px(6.)))
             .bg(rgb(SURFACE_2))
             .border_1()
             .border_color(rgb(BORDER))
@@ -1314,7 +1312,7 @@ impl LauncherWindow {
         if desktop.runner.results.is_empty() {
             return div()
                 .w(px(680.))
-                .rounded_b(px(12.))
+                .rounded_b(px(6.))
                 .bg(rgb(SURFACE_2))
                 .border_1()
                 .border_color(rgb(BORDER))
@@ -1331,7 +1329,7 @@ impl LauncherWindow {
 
         div()
             .w(px(680.))
-            .rounded_b(px(12.))
+            .rounded_b(px(6.))
             .bg(rgb(SURFACE_2))
             .border_1()
             .border_color(rgb(BORDER))
@@ -1355,7 +1353,7 @@ impl LauncherWindow {
                         );
                         div()
                             .id(SharedString::from(format!("launcher-result-{index}")))
-                            .rounded(px(8.))
+                            .rounded(px(4.))
                             .bg(if selected {
                                 rgb(ACCENT_DIM)
                             } else {
@@ -1517,7 +1515,7 @@ impl SettingsWindow {
             .id(id)
             .px(px(12.))
             .py(px(8.))
-            .rounded(px(8.))
+            .rounded(px(4.))
             .bg(rgb(if active { ACCENT } else { SURFACE_3 }))
             .border_1()
             .border_color(rgb(if active { ACCENT } else { BORDER }))
@@ -1607,7 +1605,7 @@ impl SettingsWindow {
             )))
             .px(px(10.))
             .py(px(9.))
-            .rounded(px(8.))
+            .rounded(px(4.))
             .bg(rgb(if active { ACCENT_DIM } else { SURFACE }))
             .border_1()
             .border_color(rgb(if active { ACCENT } else { BORDER_SOFT }))
@@ -1665,11 +1663,30 @@ impl Render for SettingsWindow {
         let status_row =
             shell_status_row_component(desktop.mode.label(), &layout_summary, &focused);
         let shortcuts = shell_list_component("SettingsShortcuts");
-        div().size_full().font(ui_font()).bg(rgb(SURFACE)).child(
+        div().size_full().font(ui_font()).bg(rgb(SURFACE)).key_context("alpenglowed")
+            .on_action(cx.listener(|this, _: &FocusBar, _, cx| {
+                focus_or_open_launcher(&this.desktop, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ToggleSettingsWindow, window, cx| {
+                let id = window.window_handle().window_id();
+                this.desktop.update(cx, move |desktop, cx| {
+                    if desktop.settings.is_some_and(|handle| handle.window_id() == id) {
+                        desktop.settings = None;
+                        desktop.changed(cx);
+                    }
+                });
+                window.remove_window();
+            }))
+            .on_action(cx.listener(|this, _: &ToggleStatusBarAction, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.toggle_status_bar(cx);
+                });
+            }))
+            .child(
             div().size_full().bg(rgb(SURFACE)).p(px(18.)).child(
                 div()
                     .size_full()
-                    .rounded(px(12.))
+                    .rounded(px(6.))
                     .bg(rgb(SURFACE_2))
                     .border_1()
                     .border_color(rgb(BORDER))
@@ -2339,6 +2356,16 @@ impl Render for DesktopWindow {
             .on_action(cx.listener(|this, _: &FocusBar, _, cx| {
                 focus_or_open_launcher(&this.desktop, cx);
             }))
+            .on_action(cx.listener(|this, _: &ToggleSettingsWindow, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(PluginAction::ToggleSettings, cx);
+                });
+            }))
+            .on_action(cx.listener(|this, _: &ToggleStatusBarAction, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.toggle_status_bar(cx);
+                });
+            }))
             .on_action(cx.listener(|this, _: &SplitRow, _, cx| {
                 this.desktop.update(cx, |desktop, cx| {
                     desktop.apply(
@@ -2811,6 +2838,8 @@ fn main() {
             KeyBinding::new("cmd-alt-l", GrowPane, None),
             KeyBinding::new("cmd-alt-j", ShrinkPane, None),
             KeyBinding::new("cmd-alt-t", ToggleTerminalPane, None),
+            KeyBinding::new("cmd-,", ToggleSettingsWindow, None),
+            KeyBinding::new("cmd-b", ToggleStatusBarAction, None),
         ]);
 
         let desktop_options = options.clone();

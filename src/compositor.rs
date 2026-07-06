@@ -66,15 +66,15 @@ pub enum KeyState {
 /// Events: compositor thread → GPUI thread
 #[allow(dead_code)]
 pub enum CompositorEvent {
-    SurfaceCreated {
+    Created {
         id: u32,
         title: String,
         app_id: String,
     },
-    SurfaceUpdated {
+    Updated {
         id: u32,
     },
-    SurfaceClosed {
+    Closed {
         id: u32,
     },
 }
@@ -131,10 +131,10 @@ impl AlpenglowCompositor {
 
     fn process_commands(&mut self) {
         while let Ok(cmd) = self.cmd_rx.try_recv() {
-            match cmd {
-                CompositorCommand::Shutdown => return,
-                _ => {} // TBD: input forwarding
+            if matches!(cmd, CompositorCommand::Shutdown) {
+                return;
             }
+            // TBD: input forwarding
         }
     }
 
@@ -194,7 +194,7 @@ impl CompositorHandler for AlpenglowCompositor {
             .map(|(id, _)| *id)
             .unwrap_or(0);
         if id > 0 {
-            let _ = self.event_tx.send(CompositorEvent::SurfaceUpdated { id });
+            let _ = self.event_tx.send(CompositorEvent::Updated { id });
         }
     }
 }
@@ -219,7 +219,7 @@ impl XdgShellHandler for AlpenglowCompositor {
         surface.send_configure();
         self.surfaces.push((id, surface));
 
-        let _ = self.event_tx.send(CompositorEvent::SurfaceCreated {
+        let _ = self.event_tx.send(CompositorEvent::Created {
             id,
             title: format!("client-{id}"),
             app_id: "unknown".to_string(),

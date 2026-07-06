@@ -293,6 +293,7 @@ impl LayoutState {
         set_floating(&mut self.root, floating);
     }
 
+    #[cfg(feature = "compositor")]
     pub fn split_next(&mut self, title: String) -> usize {
         let new_id = self.next_id;
         self.next_id += 1;
