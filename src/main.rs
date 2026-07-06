@@ -406,6 +406,179 @@ struct DesktopWindow {
     desktop: Entity<DesktopModel>,
 }
 
+struct InstallerWindow {
+    source: PathBuf,
+    target: PathBuf,
+    status: String,
+}
+
+impl InstallerWindow {
+    fn new(source: PathBuf, target: PathBuf) -> Self {
+        let status = format!("Ready to install to {}", target.display());
+        Self {
+            source,
+            target,
+            status,
+        }
+    }
+
+    fn install(&mut self, _: &gpui::ClickEvent, _: &mut gpui::Window, cx: &mut Context<Self>) {
+        let result = copy_install_image(&self.source, &self.target);
+        self.status = match result {
+            Ok(bytes) => format!("Wrote {bytes} bytes to {}", self.target.display()),
+            Err(error) => format!("Install failed: {error}"),
+        };
+        cx.notify();
+    }
+}
+
+fn copy_install_image(source: &PathBuf, target: &PathBuf) -> std::io::Result<u64> {
+    std::fs::File::open(source).and_then(|mut input| {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(target)
+            .and_then(|mut output| std::io::copy(&mut input, &mut output))
+    })
+}
+
+impl Render for InstallerWindow {
+    fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let source = self.source.display().to_string();
+        let target = self.target.display().to_string();
+        let status = self.status.clone();
+
+        div()
+            .size_full()
+            .bg(rgb(0x050505))
+            .text_color(rgb(TEXT))
+            .font(ui_font())
+            .p(px(24.))
+            .flex()
+            .flex_col()
+            .gap(px(18.))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(
+                        div()
+                            .w(px(14.))
+                            .h(px(14.))
+                            .rounded(px(7.))
+                            .bg(rgb(0xffffff)),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(18.))
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child("Alpenglow Installer"),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap(px(10.))
+                    .child(step_pill("1 Choose disk", true))
+                    .child(step_pill("2 Review", false))
+                    .child(step_pill("3 Install", false)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_end()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(30.))
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child("Select disk"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(rgb(TEXT_DIM))
+                            .child("This will overwrite the selected disk."),
+                    ),
+            )
+            .child(installer_field("Source", source))
+            .child(installer_field("Target", target))
+            .child(installer_field("Status", status))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .border_t_1()
+                    .border_color(rgb(BORDER))
+                    .pt(px(16.))
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(rgb(TEXT_DIM))
+                            .child("No changes are made until Install is clicked."),
+                    )
+                    .child(
+                        div()
+                            .id("alpenglowed-installer-install")
+                            .px(px(22.))
+                            .py(px(12.))
+                            .rounded(px(8.))
+                            .bg(rgb(0xffffff))
+                            .cursor_pointer()
+                            .on_click(cx.listener(Self::install))
+                            .child(
+                                div()
+                                    .text_color(rgb(0x000000))
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .child("Install"),
+                            ),
+                    ),
+            )
+    }
+}
+
+fn step_pill(label: &'static str, active: bool) -> Div {
+    div()
+        .px(px(14.))
+        .py(px(9.))
+        .rounded(px(8.))
+        .border_1()
+        .border_color(rgb(if active { 0xffffff } else { BORDER }))
+        .bg(rgb(if active { 0xffffff } else { SURFACE_2 }))
+        .text_color(rgb(if active { 0x000000 } else { TEXT_DIM }))
+        .text_size(px(13.))
+        .font_weight(if active {
+            gpui::FontWeight::BOLD
+        } else {
+            gpui::FontWeight::NORMAL
+        })
+        .child(label)
+}
+
+fn installer_field(label: &'static str, value: String) -> Div {
+    div()
+        .rounded(px(8.))
+        .border_1()
+        .border_color(rgb(BORDER))
+        .bg(rgb(SURFACE_2))
+        .p(px(14.))
+        .flex()
+        .flex_col()
+        .gap(px(6.))
+        .child(
+            div()
+                .text_size(px(11.))
+                .text_color(rgb(TEXT_DIM))
+                .child(label),
+        )
+        .child(div().text_size(px(14.)).text_color(rgb(TEXT)).child(value))
+}
+
 impl DesktopWindow {
     fn new(desktop: Entity<DesktopModel>, cx: &mut Context<Self>) -> Self {
         cx.subscribe(&desktop, |_, _, _: &DesktopEvent, cx| {
@@ -2391,6 +2564,19 @@ fn settings_window_options(cx: &App) -> WindowOptions {
     }
 }
 
+fn installer_window_options(cx: &App) -> WindowOptions {
+    WindowOptions {
+        app_id: Some("alpenglowed-installer".into()),
+        titlebar: None,
+        window_bounds: Some(WindowBounds::centered(size(px(760.), px(560.)), cx)),
+        kind: WindowKind::PopUp,
+        is_resizable: false,
+        window_background: WindowBackgroundAppearance::Opaque,
+        window_decorations: Some(WindowDecorations::Client),
+        ..Default::default()
+    }
+}
+
 fn desktop_window_options(cx: &App) -> WindowOptions {
     let display_bounds = cx
         .primary_display()
@@ -2453,6 +2639,14 @@ fn open_settings_window(desktop: &Entity<DesktopModel>, cx: &mut App) -> AnyWind
         desktop.changed(cx);
     });
     any_handle
+}
+
+fn open_installer_window(source: PathBuf, target: PathBuf, cx: &mut App) {
+    let _ = cx.open_window(installer_window_options(cx), move |window, cx| {
+        let view = cx.new(|_| InstallerWindow::new(source, target));
+        window.activate_window();
+        view
+    });
 }
 
 fn focus_or_open_launcher(desktop: &Entity<DesktopModel>, cx: &mut App) {
@@ -2627,7 +2821,13 @@ fn main() {
         let desktop = cx.new(|_| DesktopModel::new(desktop_options));
         open_desktop_window(&desktop, cx);
 
-        if options.open_settings {
+        let installer = std::env::var_os("ALPENGLOWED_INSTALLER_SOURCE")
+            .zip(std::env::var_os("ALPENGLOWED_INSTALLER_TARGET"))
+            .map(|(source, target)| (PathBuf::from(source), PathBuf::from(target)));
+
+        if let Some((source, target)) = installer {
+            open_installer_window(source, target, cx);
+        } else if options.open_settings {
             open_or_focus_settings(&desktop, cx);
         } else {
             focus_or_open_launcher(&desktop, cx);
@@ -2836,5 +3036,23 @@ mod tests {
                 "Workspace".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn installer_copy_should_write_source_to_target() {
+        let dir = std::env::temp_dir();
+        let suffix = std::process::id();
+        let source = dir.join(format!("alpenglowed-installer-source-{suffix}"));
+        let target = dir.join(format!("alpenglowed-installer-target-{suffix}"));
+        let source_bytes = b"ALPENGLOWED-INSTALL\n";
+        std::fs::write(&source, source_bytes).unwrap();
+        std::fs::write(&target, b"....................").unwrap();
+
+        let bytes = copy_install_image(&source, &target).unwrap();
+
+        assert_eq!(bytes, source_bytes.len() as u64);
+        assert_eq!(std::fs::read(&target).unwrap(), source_bytes);
+        let _ = std::fs::remove_file(source);
+        let _ = std::fs::remove_file(target);
     }
 }
