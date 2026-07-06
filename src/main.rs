@@ -26,10 +26,11 @@ use std::borrow::Cow;
 use std::fs;
 use std::path::PathBuf;
 
-const NOTO_SANS: &[u8] = include_bytes!("../assets/fonts/noto-sans-regular.ttf");
+const GEIST: &[u8] = include_bytes!("../assets/fonts/geist-regular.ttf");
+const GEIST_MONO: &[u8] = include_bytes!("../assets/fonts/geist-mono-regular.ttf");
 
 fn ui_font() -> Font {
-    font("Noto Sans")
+    font("Geist")
 }
 
 const ACCENT: u32 = 0x8ab4ff;
@@ -2591,7 +2592,9 @@ fn main() {
     }
 
     Application::new().run(move |cx: &mut App| {
-        let _ = cx.text_system().add_fonts(vec![Cow::Borrowed(NOTO_SANS)]);
+        let _ = cx
+            .text_system()
+            .add_fonts(vec![Cow::Borrowed(GEIST), Cow::Borrowed(GEIST_MONO)]);
 
         cx.bind_keys([
             KeyBinding::new("cmd-space", FocusBar, None),

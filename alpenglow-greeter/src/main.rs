@@ -10,7 +10,8 @@ use gpui::{
 };
 use std::borrow::Cow;
 
-const NOTO_SANS: &[u8] = include_bytes!("../../assets/fonts/noto-sans-regular.ttf");
+const GEIST: &[u8] = include_bytes!("../../assets/fonts/geist-regular.ttf");
+const GEIST_MONO: &[u8] = include_bytes!("../../assets/fonts/geist-mono-regular.ttf");
 
 const BG: u32 = 0x000000;
 const FG: u32 = 0xffffff;
@@ -217,20 +218,8 @@ impl Render for GreeterView {
                     .flex()
                     .flex_col()
                     .gap(px(20.))
-                    .child(self.field(
-                        "USER",
-                        &model.username,
-                        false,
-                        focus_user,
-                        cx,
-                    ))
-                    .child(self.field(
-                        "PASSWORD",
-                        &model.password,
-                        true,
-                        !focus_user,
-                        cx,
-                    ))
+                    .child(self.field("USER", &model.username, false, focus_user, cx))
+                    .child(self.field("PASSWORD", &model.password, true, !focus_user, cx))
                     .when(!model.error.is_empty(), |col| {
                         col.child(
                             div()
@@ -296,7 +285,9 @@ fn main() {
     }
 
     Application::new().run(|cx: &mut App| {
-        let _ = cx.text_system().add_fonts(vec![Cow::Borrowed(NOTO_SANS)]);
+        let _ = cx
+            .text_system()
+            .add_fonts(vec![Cow::Borrowed(GEIST), Cow::Borrowed(GEIST_MONO)]);
         let model = cx.new(|_| GreeterModel::new());
         open_greeter_window(model, cx);
     });
@@ -309,9 +300,8 @@ mod greetd {
     use std::os::unix::net::UnixStream;
 
     pub fn login(username: &str, password: &str) -> Result<(), String> {
-        let path = std::env::var_os("GREETD_SOCK").unwrap_or_else(|| {
-            std::ffi::OsString::from("/run/greetd.sock")
-        });
+        let path = std::env::var_os("GREETD_SOCK")
+            .unwrap_or_else(|| std::ffi::OsString::from("/run/greetd.sock"));
         let mut stream = UnixStream::connect(&path).map_err(|e| format!("greetd: {e}"))?;
 
         Request::CreateSession {

@@ -1200,7 +1200,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-core"
-version = "0.4.17"
+version = "0.4.18"
 dependencies = [
  "notify",
  "sha2 0.11.0",
@@ -1238,7 +1238,7 @@ dependencies = [
 
 [[package]]
 name = "crepuscularity-web"
-version = "0.4.9"
+version = "0.4.11"
 dependencies = [
  "ammonia",
  "base64 0.22.1",
