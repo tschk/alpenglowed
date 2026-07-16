@@ -3033,7 +3033,11 @@ fn main() {
         return;
     }
     if std::env::args().any(|arg| arg == "--polybar") {
-        println!("{}", de::DesktopState::detect("tiling").polybar());
+        let mode = std::env::var("ALPENGLOWED_MODE")
+            .ok()
+            .and_then(|m| WindowMode::from_label(&m))
+            .unwrap_or(WindowMode::Tiling);
+        println!("{}", de::DesktopState::detect(mode.label()).polybar());
         return;
     }
     if let Some(module) = std::env::args().find_map(|arg| {
