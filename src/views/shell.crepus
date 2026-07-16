@@ -116,6 +116,12 @@ ul
   li
     "Cmd-B status bar"
   li
+    "Cmd-K clear query"
+  li
+    "Cmd-1..8 select result"
+  li
+    "Cmd-Backspace delete word"
+  li
     "Cmd-Alt-T terminal"
   li
     "Cmd-Alt-H split row"
@@ -126,6 +132,20 @@ ul
   li
     "Cmd-Alt-R reset"
   li
+    "Cmd-Alt-M cycle window mode"
+  li
+    "Cmd-Alt-B balance panes"
+  li
+    "Cmd-Alt-C center focused"
+  li
     "Cmd-Shift-] focus next"
+  li
+    "Cmd-Shift-[ focus previous"
+  li
+    "Cmd-Alt-1 focus first"
+  li
+    "Cmd-Alt-9 focus last"
+  li
+    "Cmd-Shift-Arrows move window"
   li
     "Cmd-Alt-F toggle float"

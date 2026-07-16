@@ -67,11 +67,30 @@ actions!(
         GrowPane,
         ShrinkPane,
         FocusNextPane,
+        FocusPreviousPane,
         ClosePane,
         ToggleFloatPane,
         ToggleTerminalPane,
         ToggleSettingsWindow,
-        ToggleStatusBarAction
+        ToggleStatusBarAction,
+        CycleWindowModeAction,
+        ClearQueryAction,
+        BalancePanesAction,
+        CenterFocusedAction,
+        MoveWindowLeft,
+        MoveWindowRight,
+        MoveWindowUp,
+        MoveWindowDown,
+        FocusFirstPane,
+        FocusLastPane,
+        SelectResult1,
+        SelectResult2,
+        SelectResult3,
+        SelectResult4,
+        SelectResult5,
+        SelectResult6,
+        SelectResult7,
+        SelectResult8
     ]
 );
 
@@ -135,7 +154,7 @@ impl DesktopModel {
         notifications.start();
         let mut desktop = Self {
             query: options.initial_query,
-            mode: options.mode.clone(),
+            mode: options.mode,
             layout: {
                 let mut layout = if options.demo_layout {
                     LayoutState::demo()
@@ -213,10 +232,20 @@ impl DesktopModel {
                 self.set_action_log("Focus window", focused);
             }
             PluginAction::SetWindowMode { mode } => {
-                self.mode = mode.clone();
-                self.layout.set_window_mode(&mode);
-                self.set_last_action("Window mode", mode.label());
-                let _ = session::dispatch(&session::SessionRequest::SetWindowMode { mode });
+                self.mode = mode;
+                self.layout.set_window_mode(&self.mode);
+                self.set_last_action("Window mode", self.mode.label());
+                let _ = session::dispatch(&session::SessionRequest::SetWindowMode {
+                    mode: self.mode,
+                });
+            }
+            PluginAction::CycleWindowMode => {
+                self.mode = self.mode.next();
+                self.layout.set_window_mode(&self.mode);
+                self.set_last_action("Window mode", self.mode.label());
+                let _ = session::dispatch(&session::SessionRequest::SetWindowMode {
+                    mode: self.mode,
+                });
             }
             PluginAction::Layout { action } => {
                 self.layout.apply(&action);
@@ -318,6 +347,28 @@ impl DesktopModel {
             PluginAction::TerminalWrite { line } => {
                 self.terminal_write(&line);
                 self.changed(cx);
+            }
+            PluginAction::ClearQuery => {
+                self.set_query(String::new(), cx);
+                self.set_action_log("Clear query", "cleared");
+            }
+            PluginAction::CycleSelection { forward } => {
+                if forward {
+                    self.runner.select_next();
+                } else {
+                    self.runner.select_previous();
+                }
+                self.set_action_log(
+                    "Selection",
+                    self.runner.selection_label(),
+                );
+            }
+            PluginAction::SelectResult { index } => {
+                self.runner.select(index);
+                self.set_action_log(
+                    "Selection",
+                    self.runner.selection_label(),
+                );
             }
             PluginAction::None => {}
         }
@@ -721,7 +772,17 @@ impl DesktopWindow {
         layer
     }
 
-    fn render_workspace(desktop: &Entity<DesktopModel>, layout: &LayoutView) -> Div {
+    fn render_workspace(
+        desktop: &Entity<DesktopModel>,
+        layout: &LayoutView,
+        mode: &WindowMode,
+        cx: &App,
+    ) -> Div {
+        if matches!(mode, WindowMode::Monocle) {
+            if let Some(window) = desktop.read(cx).layout.focused_window() {
+                return div().size_full().child(Self::render_window(desktop, &window, None));
+            }
+        }
         let tiled = layout.tiled();
         let floating = layout.floating_windows();
         let mut root = div().size_full();
@@ -1220,7 +1281,16 @@ impl LauncherWindow {
         let action = self.desktop.read(cx).runner.confirm();
         if let Some(action) = action {
             if !matches!(action, PluginAction::None) {
+                let title = self
+                    .desktop
+                    .read(cx)
+                    .runner
+                    .selected_result()
+                    .map(|r| r.title.clone());
                 self.desktop.update(cx, |desktop, cx| {
+                    if let Some(title) = &title {
+                        desktop.runner.record_recent(title);
+                    }
                     desktop.apply(action, cx);
                 });
                 if let Some(handle) = self.desktop.read(cx).launcher {
@@ -1232,6 +1302,32 @@ impl LauncherWindow {
                 });
             }
         }
+    }
+
+    fn select_and_confirm(&mut self, index: usize, cx: &mut Context<Self>) {
+        let count = self.desktop.read(cx).runner.results.len();
+        if count == 0 || index >= count {
+            return;
+        }
+        self.desktop.update(cx, |desktop, cx| {
+            desktop.runner.select(index);
+            desktop.changed(cx);
+        });
+        self.confirm(cx);
+    }
+
+    fn delete_word(&mut self, cx: &mut Context<Self>) {
+        let query = self.desktop.read(cx).query.clone();
+        let trimmed_end = query.trim_end();
+        let mut next = trimmed_end.to_string();
+        if let Some(idx) = next.rfind(|c: char| c.is_whitespace()) {
+            next.truncate(idx);
+        } else {
+            next.clear();
+        }
+        self.desktop.update(cx, |desktop, cx| {
+            desktop.set_query(next, cx);
+        });
     }
 
     fn select_next(&mut self, cx: &mut Context<Self>) {
@@ -1481,7 +1577,7 @@ impl SettingsWindow {
             active,
             move |desktop, cx| {
                 desktop.update(cx, |desktop, cx| {
-                    desktop.apply(PluginAction::SetWindowMode { mode: mode.clone() }, cx);
+                    desktop.apply(PluginAction::SetWindowMode { mode }, cx);
                 });
             },
             desktop,
@@ -1640,6 +1736,10 @@ impl Render for SettingsWindow {
         let desktop = self.desktop.read(cx);
         let tiling = desktop.mode == WindowMode::Tiling;
         let floating = desktop.mode == WindowMode::Floating;
+        let monocle = desktop.mode == WindowMode::Monocle;
+        let stack = desktop.mode == WindowMode::Stack;
+        let center = desktop.mode == WindowMode::Center;
+        let grid = desktop.mode == WindowMode::Grid;
         let status_bar = if desktop.status_bar {
             "enabled"
         } else {
@@ -1768,6 +1868,37 @@ impl Render for SettingsWindow {
                                                         WindowMode::Floating,
                                                         floating,
                                                     ))
+                                                    .child(self.mode_button(
+                                                        "Monocle",
+                                                        WindowMode::Monocle,
+                                                        monocle,
+                                                    ))
+                                                    .child(self.mode_button(
+                                                        "Stack",
+                                                        WindowMode::Stack,
+                                                        stack,
+                                                    ))
+                                                    .child(self.mode_button(
+                                                        "Center",
+                                                        WindowMode::Center,
+                                                        center,
+                                                    ))
+                                                    .child(self.mode_button(
+                                                        "Grid",
+                                                        WindowMode::Grid,
+                                                        grid,
+                                                    ))
+                                                    .child(self.action_button(
+                                                        "Cycle mode",
+                                                        |desktop, cx| {
+                                                            desktop.update(cx, |desktop, cx| {
+                                                                desktop.apply(
+                                                                    PluginAction::CycleWindowMode,
+                                                                    cx,
+                                                                );
+                                                            });
+                                                        },
+                                                    ))
                                                     .child(self.layout_action_button(
                                                         "Split row",
                                                         layout::LayoutAction::SplitRow,
@@ -1795,19 +1926,35 @@ impl Render for SettingsWindow {
                                                         layout::LayoutAction::FocusNext,
                                                     ))
                                                     .child(self.layout_action_button(
+                                                        "Focus previous",
+                                                        layout::LayoutAction::FocusPrevious,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Focus first",
+                                                        layout::LayoutAction::FocusFirst,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Focus last",
+                                                        layout::LayoutAction::FocusLast,
+                                                    ))
+                                                    .child(self.layout_action_button(
                                                         "Toggle float",
                                                         layout::LayoutAction::ToggleFloat,
                                                     ))
                                                     .child(self.layout_action_button(
                                                         "Close focused",
                                                         layout::LayoutAction::CloseFocused,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Center focused",
+                                                        layout::LayoutAction::CenterFocused,
                                                     )),
                                             ),
                                         )
                                         .child(
                                             self.section_card(
                                                 "Move",
-                                                "position and reset",
+                                                "position, swap, and reset",
                                                 div()
                                                     .flex()
                                                     .flex_wrap()
@@ -1815,6 +1962,22 @@ impl Render for SettingsWindow {
                                                     .child(self.layout_action_button(
                                                         "Reset layout",
                                                         layout::LayoutAction::Reset,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Move left",
+                                                        layout::LayoutAction::MoveLeft,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Move right",
+                                                        layout::LayoutAction::MoveRight,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Move up",
+                                                        layout::LayoutAction::MoveUp,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Move down",
+                                                        layout::LayoutAction::MoveDown,
                                                     ))
                                                     .child(self.layout_action_button(
                                                         "Nudge left",
@@ -1857,6 +2020,10 @@ impl Render for SettingsWindow {
                                                     .child(self.layout_action_button(
                                                         "Shrink focused",
                                                         layout::LayoutAction::ShrinkFocused,
+                                                    ))
+                                                    .child(self.layout_action_button(
+                                                        "Balance panes",
+                                                        layout::LayoutAction::BalancePanes,
                                                     )),
                                             ),
                                         )
@@ -2130,6 +2297,35 @@ impl Render for LauncherWindow {
             .on_action(cx.listener(|this, _: &Confirm, _, cx| {
                 this.confirm(cx);
             }))
+            .on_action(cx.listener(|this, _: &ClearQueryAction, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.set_query(String::new(), cx);
+                });
+            }))
+            .on_action(cx.listener(|this, _: &SelectResult1, _, cx| {
+                this.select_and_confirm(0, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SelectResult2, _, cx| {
+                this.select_and_confirm(1, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SelectResult3, _, cx| {
+                this.select_and_confirm(2, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SelectResult4, _, cx| {
+                this.select_and_confirm(3, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SelectResult5, _, cx| {
+                this.select_and_confirm(4, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SelectResult6, _, cx| {
+                this.select_and_confirm(5, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SelectResult7, _, cx| {
+                this.select_and_confirm(6, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SelectResult8, _, cx| {
+                this.select_and_confirm(7, cx);
+            }))
             .on_action(cx.listener(|this, _: &DefocusBar, window, cx| {
                 let id = window.window_handle().window_id();
                 this.desktop.update(cx, move |desktop, cx| {
@@ -2146,7 +2342,11 @@ impl Render for LauncherWindow {
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 let key = event.keystroke.key.as_str();
                 if key == "backspace" {
-                    this.backspace(cx);
+                    if event.keystroke.modifiers.platform {
+                        this.delete_word(cx);
+                    } else {
+                        this.backspace(cx);
+                    }
                     cx.stop_propagation();
                     return;
                 }
@@ -2496,6 +2696,101 @@ impl Render for DesktopWindow {
                     );
                 });
             }))
+            .on_action(cx.listener(|this, _: &FocusPreviousPane, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::FocusPrevious,
+                        },
+                        cx,
+                    );
+                });
+            }))
+            .on_action(cx.listener(|this, _: &FocusFirstPane, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::FocusFirst,
+                        },
+                        cx,
+                    );
+                });
+            }))
+            .on_action(cx.listener(|this, _: &FocusLastPane, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::FocusLast,
+                        },
+                        cx,
+                    );
+                });
+            }))
+            .on_action(cx.listener(|this, _: &CycleWindowModeAction, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(PluginAction::CycleWindowMode, cx);
+                });
+            }))
+            .on_action(cx.listener(|this, _: &BalancePanesAction, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::BalancePanes,
+                        },
+                        cx,
+                    );
+                });
+            }))
+            .on_action(cx.listener(|this, _: &CenterFocusedAction, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::CenterFocused,
+                        },
+                        cx,
+                    );
+                });
+            }))
+            .on_action(cx.listener(|this, _: &MoveWindowLeft, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::MoveLeft,
+                        },
+                        cx,
+                    );
+                });
+            }))
+            .on_action(cx.listener(|this, _: &MoveWindowRight, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::MoveRight,
+                        },
+                        cx,
+                    );
+                });
+            }))
+            .on_action(cx.listener(|this, _: &MoveWindowUp, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::MoveUp,
+                        },
+                        cx,
+                    );
+                });
+            }))
+            .on_action(cx.listener(|this, _: &MoveWindowDown, _, cx| {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.apply(
+                        PluginAction::Layout {
+                            action: layout::LayoutAction::MoveDown,
+                        },
+                        cx,
+                    );
+                });
+            }))
             .on_action(cx.listener(|this, _: &ClosePane, _, cx| {
                 this.desktop.update(cx, |desktop, cx| {
                     desktop.apply(
@@ -2526,7 +2821,7 @@ impl Render for DesktopWindow {
                     .size_full()
                     .p(px(24.))
                     .pt(px(top_inset))
-                    .child(Self::render_workspace(&self.desktop, &layout)),
+                    .child(Self::render_workspace(&self.desktop, &layout, &desktop.mode, cx)),
             );
 
         if status {
@@ -2823,6 +3118,7 @@ fn main() {
             KeyBinding::new("enter", Confirm, None),
             KeyBinding::new("cmd-q", Quit, None),
             KeyBinding::new("cmd-shift-]", FocusNextPane, None),
+            KeyBinding::new("cmd-shift-[", FocusPreviousPane, None),
             KeyBinding::new("cmd-shift--", ClosePane, None),
             KeyBinding::new("cmd-alt-f", ToggleFloatPane, None),
             KeyBinding::new("cmd-alt-h", SplitRow, None),
@@ -2840,6 +3136,24 @@ fn main() {
             KeyBinding::new("cmd-alt-t", ToggleTerminalPane, None),
             KeyBinding::new("cmd-,", ToggleSettingsWindow, None),
             KeyBinding::new("cmd-b", ToggleStatusBarAction, None),
+            KeyBinding::new("cmd-alt-m", CycleWindowModeAction, None),
+            KeyBinding::new("cmd-k", ClearQueryAction, None),
+            KeyBinding::new("cmd-alt-b", BalancePanesAction, None),
+            KeyBinding::new("cmd-alt-c", CenterFocusedAction, None),
+            KeyBinding::new("cmd-shift-left", MoveWindowLeft, None),
+            KeyBinding::new("cmd-shift-right", MoveWindowRight, None),
+            KeyBinding::new("cmd-shift-up", MoveWindowUp, None),
+            KeyBinding::new("cmd-shift-down", MoveWindowDown, None),
+            KeyBinding::new("cmd-alt-1", FocusFirstPane, None),
+            KeyBinding::new("cmd-alt-9", FocusLastPane, None),
+            KeyBinding::new("cmd-1", SelectResult1, None),
+            KeyBinding::new("cmd-2", SelectResult2, None),
+            KeyBinding::new("cmd-3", SelectResult3, None),
+            KeyBinding::new("cmd-4", SelectResult4, None),
+            KeyBinding::new("cmd-5", SelectResult5, None),
+            KeyBinding::new("cmd-6", SelectResult6, None),
+            KeyBinding::new("cmd-7", SelectResult7, None),
+            KeyBinding::new("cmd-8", SelectResult8, None),
         ]);
 
         let desktop_options = options.clone();
@@ -2887,11 +3201,19 @@ impl UiOptions {
             .or_else(|| std::env::var("ALPENGLOWED_QUERY").ok())
             .or_else(|| cfg.initial_query.clone())
             .unwrap_or_default();
-        let mode = if std::env::args().any(|arg| arg == "--floating")
-            || matches!(std::env::var("ALPENGLOWED_MODE").as_deref(), Ok("floating"))
-            || cfg.mode.as_deref() == Some("floating")
-        {
+        let mode = if std::env::args().any(|arg| arg == "--floating") {
             WindowMode::Floating
+        } else if let Some(env_mode) = std::env::var("ALPENGLOWED_MODE")
+            .ok()
+            .and_then(|m| WindowMode::from_label(&m))
+        {
+            env_mode
+        } else if let Some(cfg_mode) = cfg
+            .mode
+            .as_deref()
+            .and_then(WindowMode::from_label)
+        {
+            cfg_mode
         } else {
             WindowMode::Tiling
         };

@@ -18,6 +18,7 @@ pub enum PluginAction {
     Shell { command: String },
     FocusWindow { id: usize },
     SetWindowMode { mode: WindowMode },
+    CycleWindowMode,
     Layout { action: LayoutAction },
     ShowStatusBar,
     HideStatusBar,
@@ -30,6 +31,9 @@ pub enum PluginAction {
     ToggleTerminal,
     TerminalClear,
     TerminalWrite { line: String },
+    ClearQuery,
+    CycleSelection { forward: bool },
+    SelectResult { index: usize },
     None,
 }
 
@@ -80,6 +84,18 @@ impl PluginRegistry {
         registry.register(Box::new(DesktopActionsPlugin));
         registry.register(Box::new(AppLauncherPlugin));
         registry.register(Box::new(SpotifyPlugin));
+        registry.register(Box::new(ProcessKillPlugin));
+        registry.register(Box::new(VolumePlugin));
+        registry.register(Box::new(BrightnessPlugin));
+        registry.register(Box::new(TimerPlugin));
+        registry.register(Box::new(SystemInfoPlugin));
+        registry.register(Box::new(NetworkInfoPlugin));
+        registry.register(Box::new(WeatherPlugin));
+        registry.register(Box::new(HelpPlugin));
+        registry.register(Box::new(ColorPlugin));
+        registry.register(Box::new(UnitConverterPlugin));
+        registry.register(Box::new(TranslatePlugin));
+        registry.register(Box::new(RecentFilesPlugin));
         for plugin in CommandPlugin::load_default() {
             registry.register(Box::new(plugin));
         }
@@ -102,8 +118,13 @@ impl PluginRegistry {
             .flat_map(|plugin| plugin.query(query, matcher))
             .collect::<Vec<_>>();
         results.extend(window_results(query, matcher, windows));
+        for result in &mut results {
+            if result.plugin_id != "apps" {
+                result.score = result.score.saturating_add(50);
+            }
+        }
         results.sort_by_key(|result| Reverse(result.score));
-        results.truncate(6);
+        results.truncate(8);
         results
     }
 }
@@ -531,21 +552,36 @@ impl Plugin for WindowModePlugin {
     }
 
     fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
-        [
+        let mode_titles: &[(&str, &str, WindowMode)] = &[
             ("Tile windows", "window mode", WindowMode::Tiling),
             ("Float windows", "window mode", WindowMode::Floating),
-        ]
-        .into_iter()
-        .filter_map(|(title, subtitle, mode)| {
-            score(title, query, matcher).map(|score| PluginResult {
-                plugin_id: self.id().to_string(),
-                title: title.to_string(),
-                subtitle: subtitle.to_string(),
-                score,
-                action: PluginAction::SetWindowMode { mode },
+            ("Monocle windows", "window mode", WindowMode::Monocle),
+            ("Stack windows", "window mode", WindowMode::Stack),
+            ("Center windows", "window mode", WindowMode::Center),
+            ("Grid windows", "window mode", WindowMode::Grid),
+        ];
+        let mut results = mode_titles
+            .iter()
+            .filter_map(|(title, subtitle, mode)| {
+                score(title, query, matcher).map(|score| PluginResult {
+                    plugin_id: self.id().to_string(),
+                    title: title.to_string(),
+                    subtitle: subtitle.to_string(),
+                    score,
+                    action: PluginAction::SetWindowMode { mode: *mode },
+                })
             })
-        })
-        .collect()
+            .collect::<Vec<_>>();
+        if let Some(score) = score("Cycle window mode", query, matcher) {
+            results.push(PluginResult {
+                plugin_id: self.id().to_string(),
+                title: "Cycle window mode".to_string(),
+                subtitle: "window mode".to_string(),
+                score,
+                action: PluginAction::CycleWindowMode,
+            });
+        }
+        results
     }
 }
 
@@ -596,8 +632,17 @@ impl Plugin for LayoutPlugin {
             ("Grow focused pane", "layout", LayoutAction::GrowFocused),
             ("Shrink focused pane", "layout", LayoutAction::ShrinkFocused),
             ("Focus next window", "layout", LayoutAction::FocusNext),
+            ("Focus previous window", "layout", LayoutAction::FocusPrevious),
+            ("Focus first window", "layout", LayoutAction::FocusFirst),
+            ("Focus last window", "layout", LayoutAction::FocusLast),
             ("Close focused window", "layout", LayoutAction::CloseFocused),
             ("Toggle floating", "layout", LayoutAction::ToggleFloat),
+            ("Move window left", "layout", LayoutAction::MoveLeft),
+            ("Move window right", "layout", LayoutAction::MoveRight),
+            ("Move window up", "layout", LayoutAction::MoveUp),
+            ("Move window down", "layout", LayoutAction::MoveDown),
+            ("Balance panes", "layout", LayoutAction::BalancePanes),
+            ("Center focused window", "layout", LayoutAction::CenterFocused),
         ]
         .into_iter()
         .filter_map(|(title, subtitle, action)| {
@@ -871,6 +916,641 @@ impl Plugin for SpotifyPlugin {
             })
             .collect::<Vec<_>>();
         results
+    }
+}
+
+struct ProcessKillPlugin;
+
+impl Plugin for ProcessKillPlugin {
+    fn id(&self) -> &str {
+        "kill"
+    }
+
+    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        let search = query.trim();
+        let needle = if let Some(rest) = search.strip_prefix("kill ") {
+            rest.trim()
+        } else if search.starts_with("kill") {
+            ""
+        } else {
+            return Vec::new();
+        };
+        if needle.is_empty() {
+            return vec![PluginResult {
+                plugin_id: self.id().to_string(),
+                title: "Kill process".to_string(),
+                subtitle: "type kill <name> to find processes".to_string(),
+                score: i64::MAX,
+                action: PluginAction::None,
+            }];
+        }
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg(format!("ps -eo pid,comm --no-headers | grep -i '{needle}' | head -6"))
+            .output()
+            .ok();
+        let Some(output) = output.filter(|o| o.status.success() || !o.stdout.is_empty()) else {
+            return Vec::new();
+        };
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        stdout
+            .lines()
+            .filter_map(|line| {
+                let mut parts = line.split_whitespace();
+                let pid = parts.next()?;
+                let name = parts.collect::<Vec<_>>().join(" ");
+                if name.is_empty() {
+                    return None;
+                }
+                let score = matcher.fuzzy_match(&name, needle).unwrap_or(10);
+                Some(PluginResult {
+                    plugin_id: self.id().to_string(),
+                    title: format!("Kill {name} ({pid})"),
+                    subtitle: "process".to_string(),
+                    score,
+                    action: PluginAction::Shell {
+                        command: format!("kill {pid}"),
+                    },
+                })
+            })
+            .collect()
+    }
+}
+
+struct VolumePlugin;
+
+impl Plugin for VolumePlugin {
+    fn id(&self) -> &str {
+        "volume"
+    }
+
+    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        let search = query.trim().to_lowercase();
+        let candidates: &[(&str, &str, &str)] = &[
+            ("Volume up", "audio", "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+"),
+            ("Volume down", "audio", "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"),
+            ("Mute audio", "audio", "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"),
+            ("Volume status", "audio", "wpctl get-volume @DEFAULT_AUDIO_SINK@"),
+        ];
+        let mut results: Vec<PluginResult> = candidates
+            .iter()
+            .filter_map(|(title, subtitle, command)| {
+                score(title, &search, matcher).map(|score| PluginResult {
+                    plugin_id: self.id().to_string(),
+                    title: title.to_string(),
+                    subtitle: subtitle.to_string(),
+                    score,
+                    action: PluginAction::Shell {
+                        command: command.to_string(),
+                    },
+                })
+            })
+            .collect();
+        if let Some(rest) = search
+            .strip_prefix("vol ")
+            .or_else(|| search.strip_prefix("volume "))
+        {
+            if let Ok(pct) = rest.trim().trim_end_matches('%').parse::<u32>() {
+                results.push(PluginResult {
+                    plugin_id: self.id().to_string(),
+                    title: format!("Set volume to {pct}%"),
+                    subtitle: "audio".to_string(),
+                    score: i64::MAX,
+                    action: PluginAction::Shell {
+                        command: format!("wpctl set-volume @DEFAULT_AUDIO_SINK@ {pct}%"),
+                    },
+                });
+            }
+        }
+        results
+    }
+}
+
+struct BrightnessPlugin;
+
+impl Plugin for BrightnessPlugin {
+    fn id(&self) -> &str {
+        "brightness"
+    }
+
+    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        let search = query.trim().to_lowercase();
+        let candidates: &[(&str, &str, &str)] = &[
+            ("Brightness up", "display", "brightnessctl set +10%"),
+            ("Brightness down", "display", "brightnessctl set 10%-"),
+            ("Brightness max", "display", "brightnessctl set 100%"),
+            ("Brightness status", "display", "brightnessctl info"),
+        ];
+        let mut results: Vec<PluginResult> = candidates
+            .iter()
+            .filter_map(|(title, subtitle, command)| {
+                score(title, &search, matcher).map(|score| PluginResult {
+                    plugin_id: self.id().to_string(),
+                    title: title.to_string(),
+                    subtitle: subtitle.to_string(),
+                    score,
+                    action: PluginAction::Shell {
+                        command: command.to_string(),
+                    },
+                })
+            })
+            .collect();
+        if let Some(rest) = search
+            .strip_prefix("bright ")
+            .or_else(|| search.strip_prefix("brightness "))
+        {
+            if let Ok(pct) = rest.trim().trim_end_matches('%').parse::<u32>() {
+                results.push(PluginResult {
+                    plugin_id: self.id().to_string(),
+                    title: format!("Set brightness to {pct}%"),
+                    subtitle: "display".to_string(),
+                    score: i64::MAX,
+                    action: PluginAction::Shell {
+                        command: format!("brightnessctl set {pct}%"),
+                    },
+                });
+            }
+        }
+        results
+    }
+}
+
+struct TimerPlugin;
+
+impl Plugin for TimerPlugin {
+    fn id(&self) -> &str {
+        "timer"
+    }
+
+    fn query(&self, query: &str, _matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        let search = query.trim();
+        let Some(rest) = search.strip_prefix("timer ").or_else(|| search.strip_prefix("in ")) else {
+            return Vec::new();
+        };
+        let rest = rest.trim();
+        let Some(seconds) = parse_duration(rest) else {
+            return Vec::new();
+        };
+        let command = format!(
+            "(sleep {seconds} && notify-send -u critical alpenglowed 'timer: {rest} done') &"
+        );
+        vec![PluginResult {
+            plugin_id: self.id().to_string(),
+            title: format!("Timer: {rest}"),
+            subtitle: "notifies when elapsed".to_string(),
+            score: i64::MAX,
+            action: PluginAction::Shell { command },
+        }]
+    }
+}
+
+fn parse_duration(text: &str) -> Option<u64> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let mut total = 0u64;
+    let mut number = String::new();
+    for ch in text.chars() {
+        if ch.is_ascii_digit() {
+            number.push(ch);
+        } else {
+            let n: u64 = number.parse().ok()?;
+            number.clear();
+            total += match ch {
+                'h' => n * 3600,
+                'm' => n * 60,
+                's' => n,
+                _ => return None,
+            };
+        }
+    }
+    if !number.is_empty() {
+        total += number.parse::<u64>().ok()?;
+    }
+    (total > 0).then_some(total)
+}
+
+struct SystemInfoPlugin;
+
+impl Plugin for SystemInfoPlugin {
+    fn id(&self) -> &str {
+        "system-info"
+    }
+
+    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        let candidates: &[(&str, &str, &str)] = &[
+            ("System info", "system", "uname -a"),
+            ("Uptime", "system", "uptime"),
+            ("Hostname", "system", "hostname"),
+            ("Disk usage", "system", "df -h"),
+            ("Memory info", "system", "free -h"),
+            ("Kernel version", "system", "uname -r"),
+            ("CPU info", "system", "lscpu | head -20"),
+        ];
+        candidates
+            .iter()
+            .filter_map(|(title, subtitle, command)| {
+                score(title, query, matcher).map(|score| PluginResult {
+                    plugin_id: self.id().to_string(),
+                    title: title.to_string(),
+                    subtitle: subtitle.to_string(),
+                    score,
+                    action: PluginAction::Shell {
+                        command: command.to_string(),
+                    },
+                })
+            })
+            .collect()
+    }
+}
+
+struct NetworkInfoPlugin;
+
+impl Plugin for NetworkInfoPlugin {
+    fn id(&self) -> &str {
+        "network-info"
+    }
+
+    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        let candidates: &[(&str, &str, &str)] = &[
+            ("IP address", "network", "ip addr show"),
+            ("Routes", "network", "ip route"),
+            ("DNS servers", "network", "resolvectl status 2>/dev/null || cat /etc/resolv.conf"),
+            ("Listening ports", "network", "ss -tlnp"),
+            ("Active connections", "network", "ss -tnp"),
+            ("Ping gateway", "network", "ip route | grep default"),
+        ];
+        candidates
+            .iter()
+            .filter_map(|(title, subtitle, command)| {
+                score(title, query, matcher).map(|score| PluginResult {
+                    plugin_id: self.id().to_string(),
+                    title: title.to_string(),
+                    subtitle: subtitle.to_string(),
+                    score,
+                    action: PluginAction::Shell {
+                        command: command.to_string(),
+                    },
+                })
+            })
+            .collect()
+    }
+}
+
+struct WeatherPlugin;
+
+impl Plugin for WeatherPlugin {
+    fn id(&self) -> &str {
+        "weather"
+    }
+
+    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        let candidates: &[(&str, &str, &str)] = &[
+            ("Weather now", "weather", "curl -s 'wttr.in?format=%t+%C+%w'"),
+            ("Weather full", "weather", "curl -s 'wttr.in'"),
+            ("Weather short", "weather", "curl -s 'wttr.in?format=3'"),
+            ("Weather JSON", "weather", "curl -s 'wttr.in?format=j1'"),
+        ];
+        candidates
+            .iter()
+            .filter_map(|(title, subtitle, command)| {
+                score(title, query, matcher).map(|score| PluginResult {
+                    plugin_id: self.id().to_string(),
+                    title: title.to_string(),
+                    subtitle: subtitle.to_string(),
+                    score,
+                    action: PluginAction::Shell {
+                        command: command.to_string(),
+                    },
+                })
+            })
+            .collect()
+    }
+}
+
+struct HelpPlugin;
+
+impl Plugin for HelpPlugin {
+    fn id(&self) -> &str {
+        "help"
+    }
+
+    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        let entries: &[(&str, &str)] = &[
+            ("Help: launcher", "type to search apps, actions, and plugins"),
+            ("Help: shell", "prefix with > to run a shell command"),
+            ("Help: capture", "prefix with >' to capture command output"),
+            ("Help: files", "prefix with / to search files"),
+            ("Help: web", "prefix with ? to search the web"),
+            ("Help: emoji", "prefix with : to find emoji"),
+            ("Help: clipboard", "type clip, paste, or cb to browse clipboard"),
+            ("Help: calculator", "type a math expression like 2+2"),
+            ("Help: kill", "type kill <name> to find and kill processes"),
+            ("Help: volume", "type volume up/down/mute or volume 50"),
+            ("Help: brightness", "type brightness up/down or brightness 50"),
+            ("Help: timer", "type timer 5m or in 30s for a notification"),
+            ("Help: weather", "type weather for a forecast"),
+            ("Help: system", "type system for uptime, kernel, disk info"),
+            ("Help: network", "type network for ip, routes, ports"),
+            ("Help: color", "type #hex or color hex for color info"),
+            ("Help: convert", "type 10 km to mi for unit conversion"),
+            ("Help: translate", "type translate <text> to <lang>"),
+            ("Help: recent", "type recent for recently modified files"),
+            ("Help: window modes", "tile, float, monocle, stack, center, grid"),
+            ("Help: shortcuts", "Cmd-Space launcher, Cmd-, settings, Cmd-B status bar"),
+        ];
+        entries
+            .iter()
+            .filter_map(|(title, detail)| {
+                score(title, query, matcher).map(|score| PluginResult {
+                    plugin_id: self.id().to_string(),
+                    title: title.to_string(),
+                    subtitle: detail.to_string(),
+                    score,
+                    action: PluginAction::None,
+                })
+            })
+            .collect()
+    }
+}
+
+struct ColorPlugin;
+
+impl Plugin for ColorPlugin {
+    fn id(&self) -> &str {
+        "color"
+    }
+
+    fn query(&self, query: &str, _matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        let search = query.trim();
+        let hex = if let Some(rest) = search.strip_prefix('#') {
+            rest
+        } else if let Some(rest) = search.strip_prefix("color ") {
+            rest.trim().trim_start_matches('#')
+        } else {
+            return Vec::new();
+        };
+        if !hex.chars().all(|c| c.is_ascii_hexdigit()) || hex.is_empty() {
+            return Vec::new();
+        }
+        let parsed = match hex.len() {
+            3 => (
+                u8::from_str_radix(&hex[0..1].repeat(2), 16).ok(),
+                u8::from_str_radix(&hex[1..2].repeat(2), 16).ok(),
+                u8::from_str_radix(&hex[2..3].repeat(2), 16).ok(),
+            ),
+            6 => (
+                u8::from_str_radix(&hex[0..2], 16).ok(),
+                u8::from_str_radix(&hex[2..4], 16).ok(),
+                u8::from_str_radix(&hex[4..6], 16).ok(),
+            ),
+            _ => return Vec::new(),
+        };
+        let (Some(r), Some(g), Some(b)) = parsed else {
+            return Vec::new();
+        };
+        vec![PluginResult {
+            plugin_id: self.id().to_string(),
+            title: format!("#{hex} = rgb({r}, {g}, {b})"),
+            subtitle: "color".to_string(),
+            score: i64::MAX,
+            action: PluginAction::Shell {
+                command: format!(
+                    "printf '%s' 'rgb({r}, {g}, {b})' | wl-copy 2>/dev/null || printf '%s' 'rgb({r}, {g}, {b})' | xclip -selection clipboard",
+                ),
+            },
+        }]
+    }
+}
+
+struct UnitConverterPlugin;
+
+impl Plugin for UnitConverterPlugin {
+    fn id(&self) -> &str {
+        "convert"
+    }
+
+    fn query(&self, query: &str, _matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        let search = query.trim();
+        // pattern: <number> <unit> to <unit>
+        let parts: Vec<&str> = search.split_whitespace().collect();
+        if parts.len() != 4 || parts[2] != "to" {
+            return Vec::new();
+        }
+        let Ok(value) = parts[0].parse::<f64>() else {
+            return Vec::new();
+        };
+        let from = parts[1].to_lowercase();
+        let to = parts[3].to_lowercase();
+        let Some(result) = convert_units(value, &from, &to) else {
+            return Vec::new();
+        };
+        vec![PluginResult {
+            plugin_id: self.id().to_string(),
+            title: format!("{value} {from} = {result:.4} {to}"),
+            subtitle: "unit converter".to_string(),
+            score: i64::MAX,
+            action: PluginAction::Shell {
+                command: format!(
+                    "printf '%s' '{result:.4}' | wl-copy 2>/dev/null || printf '%s' '{result:.4}' | xclip -selection clipboard",
+                ),
+            },
+        }]
+    }
+}
+
+fn convert_units(value: f64, from: &str, to: &str) -> Option<f64> {
+    // Convert to a canonical base unit, then to target.
+    let to_meters = |unit: &str| -> Option<f64> {
+        Some(match unit {
+            "m" => 1.0,
+            "km" => 1000.0,
+            "cm" => 0.01,
+            "mm" => 0.001,
+            "mi" => 1609.344,
+            "ft" | "feet" => 0.3048,
+            "in" | "inch" => 0.0254,
+            "yd" | "yard" => 0.9144,
+            _ => return None,
+        })
+    };
+    let to_grams = |unit: &str| -> Option<f64> {
+        Some(match unit {
+            "g" => 1.0,
+            "kg" => 1000.0,
+            "mg" => 0.001,
+            "lb" | "lbs" => 453.592,
+            "oz" => 28.3495,
+            _ => return None,
+        })
+    };
+    let to_bytes = |unit: &str| -> Option<f64> {
+        Some(match unit {
+            "b" | "bytes" => 1.0,
+            "kb" | "kib" => 1024.0,
+            "mb" | "mib" => 1024.0 * 1024.0,
+            "gb" | "gib" => 1024.0 * 1024.0 * 1024.0,
+            "tb" | "tib" => 1024.0_f64.powi(4),
+            _ => return None,
+        })
+    };
+    let to_seconds = |unit: &str| -> Option<f64> {
+        Some(match unit {
+            "s" | "sec" => 1.0,
+            "min" | "minute" | "minutes" => 60.0,
+            "h" | "hr" | "hour" | "hours" => 3600.0,
+            "day" | "days" => 86400.0,
+            _ => return None,
+        })
+    };
+    let to_celsius = |unit: &str, v: f64| -> Option<f64> {
+        Some(match unit {
+            "c" | "celsius" => v,
+            "f" | "fahrenheit" => (v - 32.0) * 5.0 / 9.0,
+            "k" | "kelvin" => v - 273.15,
+            _ => return None,
+        })
+    };
+    let from_celsius = |unit: &str, v: f64| -> Option<f64> {
+        Some(match unit {
+            "c" | "celsius" => v,
+            "f" | "fahrenheit" => v * 9.0 / 5.0 + 32.0,
+            "k" | "kelvin" => v + 273.15,
+            _ => return None,
+        })
+    };
+    if let (Some(fm), Some(tm)) = (to_meters(from), to_meters(to)) {
+        return Some(value * fm / tm);
+    }
+    if let (Some(fg), Some(tg)) = (to_grams(from), to_grams(to)) {
+        return Some(value * fg / tg);
+    }
+    if let (Some(fb), Some(tb)) = (to_bytes(from), to_bytes(to)) {
+        return Some(value * fb / tb);
+    }
+    if let (Some(fs), Some(ts)) = (to_seconds(from), to_seconds(to)) {
+        return Some(value * fs / ts);
+    }
+    if let Some(celsius) = to_celsius(from, value) {
+        if let Some(out) = from_celsius(to, celsius) {
+            return Some(out);
+        }
+    }
+    None
+}
+
+struct TranslatePlugin;
+
+impl Plugin for TranslatePlugin {
+    fn id(&self) -> &str {
+        "translate"
+    }
+
+    fn query(&self, query: &str, _matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        let search = query.trim();
+        let Some(rest) = search.strip_prefix("translate ") else {
+            return Vec::new();
+        };
+        // pattern: translate <text> to <lang>
+        let Some((text, lang)) = rest.rsplit_once(" to ") else {
+            return vec![PluginResult {
+                plugin_id: self.id().to_string(),
+                title: "Translate".to_string(),
+                subtitle: "type translate <text> to <lang>".to_string(),
+                score: i64::MAX,
+                action: PluginAction::None,
+            }];
+        };
+        let text = text.trim();
+        let lang = lang.trim();
+        if text.is_empty() || lang.is_empty() {
+            return Vec::new();
+        }
+        let url = format!(
+            "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={lang}&dt=t&q={}",
+            urlencode(text)
+        );
+        vec![PluginResult {
+            plugin_id: self.id().to_string(),
+            title: format!("Translate \"{text}\" to {lang}"),
+            subtitle: "google translate".to_string(),
+            score: i64::MAX,
+            action: PluginAction::Shell {
+                command: format!("curl -s '{url}' | jq -r '.[0][0][0]' 2>/dev/null || curl -s '{url}'"),
+            },
+        }]
+    }
+}
+
+fn urlencode(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() * 3);
+    for &byte in text.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            b' ' => out.push_str("%20"),
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+struct RecentFilesPlugin;
+
+impl Plugin for RecentFilesPlugin {
+    fn id(&self) -> &str {
+        "recent"
+    }
+
+    fn query(&self, query: &str, _matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        if !query.trim().to_lowercase().starts_with("recent") {
+            return Vec::new();
+        }
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg("find ~ -type f -mmin -1440 -not -path '*/.cache/*' -not -path '*/.git/*' 2>/dev/null | head -8")
+            .output()
+            .ok();
+        let Some(output) = output.filter(|o| o.status.success() || !o.stdout.is_empty()) else {
+            return vec![PluginResult {
+                plugin_id: self.id().to_string(),
+                title: "Recent files unavailable".to_string(),
+                subtitle: "find command failed".to_string(),
+                score: 1,
+                action: PluginAction::None,
+            }];
+        };
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let paths: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+        if paths.is_empty() {
+            return vec![PluginResult {
+                plugin_id: self.id().to_string(),
+                title: "No recent files".to_string(),
+                subtitle: "nothing modified in last 24h".to_string(),
+                score: 1,
+                action: PluginAction::None,
+            }];
+        }
+        paths
+            .iter()
+            .map(|path| {
+                let filename = std::path::Path::new(path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy())
+                    .unwrap_or((*path).into());
+                PluginResult {
+                    plugin_id: self.id().to_string(),
+                    title: filename.to_string(),
+                    subtitle: path.to_string(),
+                    score: 100,
+                    action: PluginAction::Shell {
+                        command: format!("xdg-open '{}'", path),
+                    },
+                }
+            })
+            .collect()
     }
 }
 
@@ -1180,6 +1860,170 @@ mod tests {
         }
 
         assert_eq!(results[0].title, "Spotify unavailable");
+    }
+
+    #[test]
+    fn window_mode_plugin_exposes_all_modes() {
+        let results = WindowModePlugin.query("windows", &SkimMatcherV2::default());
+        let titles: Vec<&str> = results.iter().map(|r| r.title.as_str()).collect();
+        assert!(titles.contains(&"Tile windows"));
+        assert!(titles.contains(&"Float windows"));
+        assert!(titles.contains(&"Monocle windows"));
+        assert!(titles.contains(&"Stack windows"));
+        assert!(titles.contains(&"Center windows"));
+        assert!(titles.contains(&"Grid windows"));
+    }
+
+    #[test]
+    fn window_mode_plugin_offers_cycle() {
+        let results = WindowModePlugin.query("cycle", &SkimMatcherV2::default());
+        assert!(results
+            .iter()
+            .any(|r| r.action == PluginAction::CycleWindowMode));
+    }
+
+    #[test]
+    fn layout_plugin_exposes_move_and_balance() {
+        let results = LayoutPlugin.query("balance", &SkimMatcherV2::default());
+        assert!(results.iter().any(|r| r
+            .title
+            .contains("Balance panes")));
+        let results = LayoutPlugin.query("move window left", &SkimMatcherV2::default());
+        assert!(results.iter().any(|r| r.title.contains("Move window left")));
+    }
+
+    #[test]
+    fn volume_plugin_offers_set_level() {
+        let results = VolumePlugin.query("volume 50", &SkimMatcherV2::default());
+        assert!(results.iter().any(|r| r.title == "Set volume to 50%"));
+    }
+
+    #[test]
+    fn brightness_plugin_offers_set_level() {
+        let results = BrightnessPlugin.query("brightness 75", &SkimMatcherV2::default());
+        assert!(results.iter().any(|r| r.title == "Set brightness to 75%"));
+    }
+
+    #[test]
+    fn parse_duration_should_handle_compound_units() {
+        assert_eq!(parse_duration("5m"), Some(300));
+        assert_eq!(parse_duration("1h"), Some(3600));
+        assert_eq!(parse_duration("30s"), Some(30));
+        assert_eq!(parse_duration("1h30m"), Some(5400));
+        assert_eq!(parse_duration(""), None);
+        assert_eq!(parse_duration("abc"), None);
+    }
+
+    #[test]
+    fn timer_plugin_should_parse_duration() {
+        let results = TimerPlugin.query("timer 5m", &SkimMatcherV2::default());
+        assert_eq!(results.len(), 1);
+        assert!(results[0].title.contains("5m"));
+    }
+
+    #[test]
+    fn color_plugin_should_parse_hex() {
+        let results = ColorPlugin.query("#fff", &SkimMatcherV2::default());
+        assert_eq!(results.len(), 1);
+        assert!(results[0].title.contains("rgb(255, 255, 255)"));
+        let results = ColorPlugin.query("#ff0000", &SkimMatcherV2::default());
+        assert!(results[0].title.contains("rgb(255, 0, 0)"));
+    }
+
+    #[test]
+    fn color_plugin_should_ignore_non_hex() {
+        let results = ColorPlugin.query("#xyz", &SkimMatcherV2::default());
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn convert_units_should_convert_lengths() {
+        assert!((convert_units(1.0, "km", "m").unwrap() - 1000.0).abs() < 0.001);
+        assert!((convert_units(1.0, "mi", "km").unwrap() - 1.609344).abs() < 0.001);
+        assert!((convert_units(12.0, "in", "cm").unwrap() - 30.48).abs() < 0.01);
+    }
+
+    #[test]
+    fn convert_units_should_convert_weights() {
+        assert!((convert_units(1.0, "kg", "g").unwrap() - 1000.0).abs() < 0.001);
+        assert!((convert_units(1.0, "lb", "g").unwrap() - 453.592).abs() < 0.1);
+    }
+
+    #[test]
+    fn convert_units_should_convert_temperatures() {
+        assert!((convert_units(0.0, "c", "f").unwrap() - 32.0).abs() < 0.001);
+        assert!((convert_units(100.0, "c", "f").unwrap() - 212.0).abs() < 0.001);
+        assert!((convert_units(32.0, "f", "c").unwrap() - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn convert_units_should_reject_mismatched_categories() {
+        assert!(convert_units(1.0, "km", "kg").is_none());
+    }
+
+    #[test]
+    fn unit_converter_plugin_should_format_result() {
+        let results =
+            UnitConverterPlugin.query("10 km to mi", &SkimMatcherV2::default());
+        assert_eq!(results.len(), 1);
+        assert!(results[0].title.contains("10 km"));
+        assert!(results[0].title.contains("mi"));
+    }
+
+    #[test]
+    fn unit_converter_plugin_should_ignore_bad_pattern() {
+        let results =
+            UnitConverterPlugin.query("hello world foo bar", &SkimMatcherV2::default());
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn translate_plugin_should_build_url() {
+        let results = TranslatePlugin.query("translate hello to es", &SkimMatcherV2::default());
+        assert_eq!(results.len(), 1);
+        assert!(results[0].title.contains("hello"));
+        assert!(results[0].title.contains("es"));
+    }
+
+    #[test]
+    fn translate_plugin_should_hint_on_partial_input() {
+        let results = TranslatePlugin.query("translate hello", &SkimMatcherV2::default());
+        assert_eq!(results.len(), 1);
+        assert!(results[0].action == PluginAction::None);
+    }
+
+    #[test]
+    fn urlencode_should_encode_special_chars() {
+        assert_eq!(urlencode("hello world"), "hello%20world");
+        assert_eq!(urlencode("a&b=c"), "a%26b%3Dc");
+        assert_eq!(urlencode("safe-_.~"), "safe-_.~");
+    }
+
+    #[test]
+    fn help_plugin_should_list_entries() {
+        let results = HelpPlugin.query("help", &SkimMatcherV2::default());
+        assert!(results.iter().any(|r| r.title.contains("launcher")));
+        assert!(results.iter().any(|r| r.title.contains("shell")));
+        assert!(results.iter().any(|r| r.title.contains("window modes")));
+    }
+
+    #[test]
+    fn system_info_plugin_should_match_uptime() {
+        let results = SystemInfoPlugin.query("uptime", &SkimMatcherV2::default());
+        assert!(results.iter().any(|r| r.title == "Uptime"));
+    }
+
+    #[test]
+    fn network_info_plugin_should_match_ip() {
+        let results = NetworkInfoPlugin.query("ip", &SkimMatcherV2::default());
+        assert!(results.iter().any(|r| r.title == "IP address"));
+    }
+
+    #[test]
+    fn weather_plugin_should_match_query() {
+        let results = WeatherPlugin.query("weather", &SkimMatcherV2::default());
+        assert!(results.iter().any(|r| r.title == "Weather now"));
+        assert!(results.iter().any(|r| r.title == "Weather full"));
     }
 
     fn test_dir(name: &str) -> PathBuf {

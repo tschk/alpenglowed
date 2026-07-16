@@ -32,10 +32,19 @@ pub enum LayoutAction {
     ExpandWindow,
     ContractWindow,
     FocusNext,
+    FocusPrevious,
     CloseFocused,
     ToggleFloat,
     GrowFocused,
     ShrinkFocused,
+    MoveLeft,
+    MoveRight,
+    MoveUp,
+    MoveDown,
+    BalancePanes,
+    CenterFocused,
+    FocusFirst,
+    FocusLast,
 }
 
 impl LayoutAction {
@@ -52,10 +61,19 @@ impl LayoutAction {
             Self::ExpandWindow => "Expand window",
             Self::ContractWindow => "Contract window",
             Self::FocusNext => "Focus next",
+            Self::FocusPrevious => "Focus previous",
             Self::CloseFocused => "Close focused",
             Self::ToggleFloat => "Toggle float",
             Self::GrowFocused => "Grow focused",
             Self::ShrinkFocused => "Shrink focused",
+            Self::MoveLeft => "Move window left",
+            Self::MoveRight => "Move window right",
+            Self::MoveUp => "Move window up",
+            Self::MoveDown => "Move window down",
+            Self::BalancePanes => "Balance panes",
+            Self::CenterFocused => "Center focused window",
+            Self::FocusFirst => "Focus first window",
+            Self::FocusLast => "Focus last window",
         }
     }
 }
@@ -256,10 +274,19 @@ impl LayoutState {
             LayoutAction::ExpandWindow => self.resize_floating_focused(40., 28.),
             LayoutAction::ContractWindow => self.resize_floating_focused(-40., -28.),
             LayoutAction::FocusNext => self.focus_next(),
+            LayoutAction::FocusPrevious => self.focus_previous(),
             LayoutAction::CloseFocused => self.close_focused(),
             LayoutAction::ToggleFloat => self.toggle_float(),
             LayoutAction::GrowFocused => self.resize_focused(0.2),
             LayoutAction::ShrinkFocused => self.resize_focused(-0.2),
+            LayoutAction::MoveLeft => self.move_focused(-1, 0),
+            LayoutAction::MoveRight => self.move_focused(1, 0),
+            LayoutAction::MoveUp => self.move_focused(0, -1),
+            LayoutAction::MoveDown => self.move_focused(0, 1),
+            LayoutAction::BalancePanes => balance_panes(&mut self.root),
+            LayoutAction::CenterFocused => self.center_focused(),
+            LayoutAction::FocusFirst => self.focus_first(),
+            LayoutAction::FocusLast => self.focus_last(),
         }
     }
 
@@ -289,8 +316,20 @@ impl LayoutState {
     }
 
     pub fn set_window_mode(&mut self, mode: &WindowMode) {
-        let floating = matches!(mode, WindowMode::Floating);
+        let floating = matches!(
+            mode,
+            WindowMode::Floating | WindowMode::Stack | WindowMode::Center
+        );
         set_floating(&mut self.root, floating);
+        if matches!(mode, WindowMode::Stack) {
+            stack_offset(&mut self.root);
+        }
+        if matches!(mode, WindowMode::Center) {
+            center_all(&mut self.root);
+        }
+        if matches!(mode, WindowMode::Grid) {
+            balance_panes(&mut self.root);
+        }
     }
 
     #[cfg(feature = "compositor")]
@@ -332,6 +371,10 @@ impl LayoutState {
         windows
     }
 
+    pub fn focused_window(&self) -> Option<LayoutWindowView> {
+        self.windows().into_iter().find(|window| window.focused)
+    }
+
     fn split(&mut self, axis: Axis) {
         let new_id = self.next_id;
         self.next_id += 1;
@@ -352,6 +395,59 @@ impl LayoutState {
             .position(|window| window.id == self.focused)
             .unwrap_or(0);
         self.focused = windows[(index + 1) % windows.len()].id;
+    }
+
+    fn focus_previous(&mut self) {
+        let mut windows = Vec::new();
+        self.collect(&self.root, &mut windows);
+        if windows.len() < 2 {
+            return;
+        }
+        let index = windows
+            .iter()
+            .position(|window| window.id == self.focused)
+            .unwrap_or(0);
+        let prev = if index == 0 {
+            windows.len() - 1
+        } else {
+            index - 1
+        };
+        self.focused = windows[prev].id;
+    }
+
+    fn focus_first(&mut self) {
+        let mut windows = Vec::new();
+        self.collect(&self.root, &mut windows);
+        if let Some(first) = windows.first() {
+            self.focused = first.id;
+        }
+    }
+
+    fn focus_last(&mut self) {
+        let mut windows = Vec::new();
+        self.collect(&self.root, &mut windows);
+        if let Some(last) = windows.last() {
+            self.focused = last.id;
+        }
+    }
+
+    fn center_focused(&mut self) {
+        if let Some(window) = find_mut(&mut self.root, self.focused) {
+            window.floating = true;
+            window.x = 480.;
+            window.y = 240.;
+        }
+    }
+
+    fn move_focused(&mut self, dx: i32, dy: i32) {
+        if let Some(window) = find_mut(&mut self.root, self.focused) {
+            if window.floating {
+                window.x = (window.x + dx as f32 * 48.).max(16.);
+                window.y = (window.y + dy as f32 * 48.).max(16.);
+            } else {
+                swap_focused(&mut self.root, self.focused, dx, dy);
+            }
+        }
     }
 
     fn close_focused(&mut self) {
@@ -618,6 +714,90 @@ fn set_floating(node: &mut Node, floating: bool) {
             for child in &mut container.children {
                 set_floating(&mut child.node, floating);
             }
+        }
+    }
+}
+
+fn stack_offset(node: &mut Node) {
+    let mut index = 0u32;
+    stack_offset_recursive(node, &mut index);
+}
+
+fn stack_offset_recursive(node: &mut Node, index: &mut u32) {
+    match node {
+        Node::Window(window) => {
+            window.x = 120. + *index as f32 * 32.;
+            window.y = 80. + *index as f32 * 32.;
+            *index += 1;
+        }
+        Node::Container(container) => {
+            for child in &mut container.children {
+                stack_offset_recursive(&mut child.node, index);
+            }
+        }
+    }
+}
+
+fn center_all(node: &mut Node) {
+    match node {
+        Node::Window(window) => {
+            window.x = 480.;
+            window.y = 240.;
+        }
+        Node::Container(container) => {
+            for child in &mut container.children {
+                center_all(&mut child.node);
+            }
+        }
+    }
+}
+
+fn balance_panes(node: &mut Node) {
+    match node {
+        Node::Window(_) => {}
+        Node::Container(container) => {
+            for child in &mut container.children {
+                child.grow = 1.0;
+                balance_panes(&mut child.node);
+            }
+        }
+    }
+}
+
+fn swap_focused(node: &mut Node, focused: usize, dx: i32, dy: i32) {
+    swap_focused_recursive(node, focused, dx, dy);
+}
+
+fn swap_focused_recursive(node: &mut Node, focused: usize, dx: i32, dy: i32) -> bool {
+    match node {
+        Node::Window(_) => false,
+        Node::Container(container) => {
+            if let Some(index) = container
+                .children
+                .iter()
+                .position(|child| contains_window(&child.node, focused))
+            {
+                let horizontal = matches!(container.axis, Axis::Row);
+                let want = if horizontal { dx != 0 } else { dy != 0 };
+                if want {
+                    let step = if horizontal { dx } else { dy };
+                    let target = index as i32 + step;
+                    if target >= 0 && target < container.children.len() as i32 {
+                        container.children.swap(index, target as usize);
+                        return true;
+                    }
+                }
+                return swap_focused_recursive(
+                    &mut container.children[index].node,
+                    focused,
+                    dx,
+                    dy,
+                );
+            }
+            container
+                .children
+                .iter_mut()
+                .any(|child| swap_focused_recursive(&mut child.node, focused, dx, dy))
         }
     }
 }
@@ -912,5 +1092,120 @@ mod tests {
             },
             _ => panic!("expected container"),
         }
+    }
+
+    #[test]
+    fn focus_previous_should_cycle_backwards() {
+        let mut layout = LayoutState::new();
+        assert_eq!(layout.focused_title(), "Workspace");
+        layout.apply(&LayoutAction::FocusPrevious);
+        assert_eq!(layout.focused_title(), "Scratch");
+        layout.apply(&LayoutAction::FocusPrevious);
+        assert_eq!(layout.focused_title(), "Workspace");
+    }
+
+    #[test]
+    fn focus_first_and_last_should_jump_to_ends() {
+        let mut layout = LayoutState::demo();
+        layout.apply(&LayoutAction::FocusLast);
+        let last = layout.focused_title().to_string();
+        layout.apply(&LayoutAction::FocusFirst);
+        let first = layout.focused_title().to_string();
+        assert_eq!(first, "Workspace");
+        assert_eq!(last, "Inspector");
+    }
+
+    #[test]
+    fn balance_panes_should_equalize_grow_ratios() {
+        let mut layout = LayoutState::new();
+        layout.apply(&LayoutAction::GrowFocused);
+        layout.apply(&LayoutAction::BalancePanes);
+        match layout.view() {
+            LayoutView::Container(container) => {
+                assert_eq!(container.children[0].grow, 1.0);
+                assert_eq!(container.children[1].grow, 1.0);
+            }
+            _ => panic!("expected container"),
+        }
+    }
+
+    #[test]
+    fn center_focused_should_float_and_reposition() {
+        let mut layout = LayoutState::new();
+        layout.apply(&LayoutAction::CenterFocused);
+        let window = layout.focused_window().expect("focused window");
+        assert!(window.floating);
+        assert_eq!(window.x, 480.);
+        assert_eq!(window.y, 240.);
+    }
+
+    #[test]
+    fn move_right_should_swap_tiled_window_order() {
+        let mut layout = LayoutState::new();
+        assert_eq!(layout.focused_title(), "Workspace");
+        layout.apply(&LayoutAction::MoveRight);
+        match layout.view() {
+            LayoutView::Container(container) => {
+                match &container.children[0].node {
+                    LayoutView::Window(window) => {
+                        assert_eq!(window.title, "Scratch");
+                    }
+                    _ => panic!("expected window"),
+                }
+            }
+            _ => panic!("expected container"),
+        }
+    }
+
+    #[test]
+    fn set_window_mode_stack_should_float_and_offset() {
+        let mut layout = LayoutState::new();
+        layout.set_window_mode(&WindowMode::Stack);
+        assert_eq!(layout.summary(), "0 tiled 2 floating");
+        let windows = layout.windows();
+        assert!(windows[1].x > windows[0].x);
+        assert!(windows[1].y > windows[0].y);
+    }
+
+    #[test]
+    fn set_window_mode_center_should_float_and_center() {
+        let mut layout = LayoutState::new();
+        layout.set_window_mode(&WindowMode::Center);
+        assert_eq!(layout.summary(), "0 tiled 2 floating");
+        for window in layout.windows() {
+            assert_eq!(window.x, 480.);
+            assert_eq!(window.y, 240.);
+        }
+    }
+
+    #[test]
+    fn set_window_mode_grid_should_balance_panes() {
+        let mut layout = LayoutState::new();
+        layout.apply(&LayoutAction::GrowFocused);
+        layout.set_window_mode(&WindowMode::Grid);
+        match layout.view() {
+            LayoutView::Container(container) => {
+                assert_eq!(container.children[0].grow, 1.0);
+            }
+            _ => panic!("expected container"),
+        }
+    }
+
+    #[test]
+    fn window_mode_next_should_cycle_through_all_modes() {
+        let modes = WindowMode::all();
+        let mut mode = WindowMode::Tiling;
+        for _ in 0..modes.len() {
+            mode = mode.next();
+        }
+        assert_eq!(mode, WindowMode::Tiling);
+    }
+
+    #[test]
+    fn window_mode_from_label_should_roundtrip() {
+        for mode in WindowMode::all() {
+            assert_eq!(WindowMode::from_label(mode.label()), Some(*mode));
+        }
+        assert_eq!(WindowMode::from_label("unknown"), None);
     }
 }

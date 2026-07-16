@@ -1,12 +1,18 @@
 use crate::plugin::{PluginAction, PluginRegistry, PluginResult, WindowTarget};
 use fuzzy_matcher::skim::SkimMatcherV2;
 use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
+use std::collections::HashMap;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowMode {
     Tiling,
     Floating,
+    Monocle,
+    Stack,
+    Center,
+    Grid,
 }
 
 impl WindowMode {
@@ -14,9 +20,39 @@ impl WindowMode {
         match self {
             Self::Tiling => "tiling",
             Self::Floating => "floating",
+            Self::Monocle => "monocle",
+            Self::Stack => "stack",
+            Self::Center => "center",
+            Self::Grid => "grid",
         }
     }
+
+    pub fn all() -> &'static [Self] {
+        &[
+            Self::Tiling,
+            Self::Floating,
+            Self::Monocle,
+            Self::Stack,
+            Self::Center,
+            Self::Grid,
+        ]
+    }
+
+    pub fn next(self) -> Self {
+        let modes = Self::all();
+        let index = modes
+            .iter()
+            .position(|mode| *mode == self)
+            .unwrap_or(0);
+        modes[(index + 1) % modes.len()]
+    }
+
+    pub fn from_label(label: &str) -> Option<Self> {
+        Self::all().iter().copied().find(|mode| mode.label() == label)
+    }
 }
+
+const RECENT_ACTION_LIMIT: usize = 16;
 
 pub struct Runner {
     pub query: String,
@@ -24,6 +60,7 @@ pub struct Runner {
     pub selected: usize,
     matcher: SkimMatcherV2,
     plugins: PluginRegistry,
+    recent_titles: HashMap<String, u32>,
 }
 
 impl Runner {
@@ -34,6 +71,7 @@ impl Runner {
             selected: 0,
             matcher: SkimMatcherV2::default(),
             plugins: PluginRegistry::new(),
+            recent_titles: HashMap::new(),
         }
     }
 
@@ -47,10 +85,31 @@ impl Runner {
         self.results = self
             .plugins
             .query_with_windows(query, &self.matcher, windows);
+        for result in &mut self.results {
+            if let Some(boost) = self.recent_titles.get(&result.title) {
+                result.score = result.score.saturating_add(100 + *boost as i64);
+            }
+        }
+        self.results.sort_by_key(|result| Reverse(result.score));
+        self.results.truncate(8);
         if self.results.is_empty() {
             self.selected = 0;
         } else {
             self.selected = self.selected.min(self.results.len() - 1);
+        }
+    }
+
+    pub fn record_recent(&mut self, title: &str) {
+        let count = self.recent_titles.entry(title.to_string()).or_insert(0);
+        *count += 1;
+        if self.recent_titles.len() > RECENT_ACTION_LIMIT {
+            let threshold = self
+                .recent_titles
+                .values()
+                .copied()
+                .min()
+                .unwrap_or(0);
+            self.recent_titles.retain(|_, count| *count > threshold);
         }
     }
 
@@ -331,10 +390,40 @@ mod tests {
     }
 
     #[test]
-    fn update_should_limit_results_to_six() {
+    fn update_should_limit_results_to_eight() {
         let mut runner = Runner::new();
         runner.query = "o".to_string();
         runner.update_with_windows(&[]);
-        assert!(runner.results.len() <= 6);
+        assert!(runner.results.len() <= 8);
+    }
+
+    #[test]
+    fn record_recent_should_boost_previously_confirmed_titles() {
+        let mut runner = Runner::new();
+        runner.query = "tile".to_string();
+        runner.update_with_windows(&[]);
+        let tile_result = runner
+            .results
+            .iter()
+            .find(|r| matches!(r.action, PluginAction::SetWindowMode { .. }))
+            .map(|r| r.title.clone());
+        if let Some(title) = tile_result {
+            runner.record_recent(&title);
+            runner.update_with_windows(&[]);
+            assert!(runner
+                .results
+                .iter()
+                .any(|r| r.title == title && r.score > 100));
+        }
+    }
+
+    #[test]
+    fn record_recent_should_evict_least_frequent() {
+        let mut runner = Runner::new();
+        for i in 0..20 {
+            runner.record_recent(&format!("action-{i}"));
+        }
+        runner.record_recent("action-5");
+        assert!(runner.recent_titles.len() <= 16);
     }
 }
