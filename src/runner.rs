@@ -40,15 +40,15 @@ impl WindowMode {
 
     pub fn next(self) -> Self {
         let modes = Self::all();
-        let index = modes
-            .iter()
-            .position(|mode| *mode == self)
-            .unwrap_or(0);
+        let index = modes.iter().position(|mode| *mode == self).unwrap_or(0);
         modes[(index + 1) % modes.len()]
     }
 
     pub fn from_label(label: &str) -> Option<Self> {
-        Self::all().iter().copied().find(|mode| mode.label() == label)
+        Self::all()
+            .iter()
+            .copied()
+            .find(|mode| mode.label() == label)
     }
 }
 
@@ -103,12 +103,7 @@ impl Runner {
         let count = self.recent_titles.entry(title.to_string()).or_insert(0);
         *count += 1;
         if self.recent_titles.len() > RECENT_ACTION_LIMIT {
-            let threshold = self
-                .recent_titles
-                .values()
-                .copied()
-                .min()
-                .unwrap_or(0);
+            let threshold = self.recent_titles.values().copied().min().unwrap_or(0);
             self.recent_titles.retain(|_, count| *count > threshold);
         }
     }

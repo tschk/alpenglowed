@@ -235,17 +235,15 @@ impl DesktopModel {
                 self.mode = mode;
                 self.layout.set_window_mode(&self.mode);
                 self.set_last_action("Window mode", self.mode.label());
-                let _ = session::dispatch(&session::SessionRequest::SetWindowMode {
-                    mode: self.mode,
-                });
+                let _ =
+                    session::dispatch(&session::SessionRequest::SetWindowMode { mode: self.mode });
             }
             PluginAction::CycleWindowMode => {
                 self.mode = self.mode.next();
                 self.layout.set_window_mode(&self.mode);
                 self.set_last_action("Window mode", self.mode.label());
-                let _ = session::dispatch(&session::SessionRequest::SetWindowMode {
-                    mode: self.mode,
-                });
+                let _ =
+                    session::dispatch(&session::SessionRequest::SetWindowMode { mode: self.mode });
             }
             PluginAction::Layout { action } => {
                 self.layout.apply(&action);
@@ -358,17 +356,11 @@ impl DesktopModel {
                 } else {
                     self.runner.select_previous();
                 }
-                self.set_action_log(
-                    "Selection",
-                    self.runner.selection_label(),
-                );
+                self.set_action_log("Selection", self.runner.selection_label());
             }
             PluginAction::SelectResult { index } => {
                 self.runner.select(index);
-                self.set_action_log(
-                    "Selection",
-                    self.runner.selection_label(),
-                );
+                self.set_action_log("Selection", self.runner.selection_label());
             }
             PluginAction::None => {}
         }
@@ -780,7 +772,9 @@ impl DesktopWindow {
     ) -> Div {
         if matches!(mode, WindowMode::Monocle) {
             if let Some(window) = desktop.read(cx).layout.focused_window() {
-                return div().size_full().child(Self::render_window(desktop, &window, None));
+                return div()
+                    .size_full()
+                    .child(Self::render_window(desktop, &window, None));
             }
         }
         let tiled = layout.tiled();
@@ -2548,281 +2542,278 @@ impl Render for DesktopWindow {
             24.
         };
 
-        let mut root = div()
-            .size_full()
-            .bg(rgb(SURFACE))
-            .font(ui_font())
-            .key_context("alpenglowed")
-            .on_action(cx.listener(|this, _: &FocusBar, _, cx| {
-                focus_or_open_launcher(&this.desktop, cx);
-            }))
-            .on_action(cx.listener(|this, _: &ToggleSettingsWindow, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(PluginAction::ToggleSettings, cx);
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ToggleStatusBarAction, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.toggle_status_bar(cx);
-                });
-            }))
-            .on_action(cx.listener(|this, _: &SplitRow, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::SplitRow,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &SplitColumn, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::SplitColumn,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &FlipAxis, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::FlipAxis,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ResetLayout, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::Reset,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &NudgeLeft, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::NudgeLeft,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &NudgeRight, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::NudgeRight,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &NudgeUp, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::NudgeUp,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &NudgeDown, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::NudgeDown,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ExpandWindow, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::ExpandWindow,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ContractWindow, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::ContractWindow,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &GrowPane, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::GrowFocused,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ShrinkPane, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::ShrinkFocused,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &FocusNextPane, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::FocusNext,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &FocusPreviousPane, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::FocusPrevious,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &FocusFirstPane, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::FocusFirst,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &FocusLastPane, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::FocusLast,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &CycleWindowModeAction, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(PluginAction::CycleWindowMode, cx);
-                });
-            }))
-            .on_action(cx.listener(|this, _: &BalancePanesAction, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::BalancePanes,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &CenterFocusedAction, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::CenterFocused,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &MoveWindowLeft, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::MoveLeft,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &MoveWindowRight, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::MoveRight,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &MoveWindowUp, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::MoveUp,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &MoveWindowDown, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::MoveDown,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ClosePane, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::CloseFocused,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ToggleFloatPane, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::ToggleFloat,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ToggleTerminalPane, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(PluginAction::ToggleTerminal, cx);
-                });
-            }))
-            .child(
-                div()
-                    .size_full()
-                    .p(px(24.))
-                    .pt(px(top_inset))
-                    .child(Self::render_workspace(&self.desktop, &layout, &desktop.mode, cx)),
-            );
+        let mut root =
+            div()
+                .size_full()
+                .bg(rgb(SURFACE))
+                .font(ui_font())
+                .key_context("alpenglowed")
+                .on_action(cx.listener(|this, _: &FocusBar, _, cx| {
+                    focus_or_open_launcher(&this.desktop, cx);
+                }))
+                .on_action(cx.listener(|this, _: &ToggleSettingsWindow, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(PluginAction::ToggleSettings, cx);
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &ToggleStatusBarAction, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.toggle_status_bar(cx);
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &SplitRow, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::SplitRow,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &SplitColumn, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::SplitColumn,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &FlipAxis, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::FlipAxis,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &ResetLayout, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::Reset,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &NudgeLeft, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::NudgeLeft,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &NudgeRight, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::NudgeRight,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &NudgeUp, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::NudgeUp,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &NudgeDown, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::NudgeDown,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &ExpandWindow, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::ExpandWindow,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &ContractWindow, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::ContractWindow,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &GrowPane, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::GrowFocused,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &ShrinkPane, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::ShrinkFocused,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &FocusNextPane, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::FocusNext,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &FocusPreviousPane, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::FocusPrevious,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &FocusFirstPane, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::FocusFirst,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &FocusLastPane, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::FocusLast,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &CycleWindowModeAction, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(PluginAction::CycleWindowMode, cx);
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &BalancePanesAction, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::BalancePanes,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &CenterFocusedAction, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::CenterFocused,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &MoveWindowLeft, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::MoveLeft,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &MoveWindowRight, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::MoveRight,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &MoveWindowUp, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::MoveUp,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &MoveWindowDown, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::MoveDown,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &ClosePane, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::CloseFocused,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &ToggleFloatPane, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(
+                            PluginAction::Layout {
+                                action: layout::LayoutAction::ToggleFloat,
+                            },
+                            cx,
+                        );
+                    });
+                }))
+                .on_action(cx.listener(|this, _: &ToggleTerminalPane, _, cx| {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.apply(PluginAction::ToggleTerminal, cx);
+                    });
+                }))
+                .child(div().size_full().p(px(24.)).pt(px(top_inset)).child(
+                    Self::render_workspace(&self.desktop, &layout, &desktop.mode, cx),
+                ));
 
         if status {
             root = root.child(Self::render_status_bar(desktop));
@@ -3212,11 +3203,7 @@ impl UiOptions {
             .and_then(|m| WindowMode::from_label(&m))
         {
             env_mode
-        } else if let Some(cfg_mode) = cfg
-            .mode
-            .as_deref()
-            .and_then(WindowMode::from_label)
-        {
+        } else if let Some(cfg_mode) = cfg.mode.as_deref().and_then(WindowMode::from_label) {
             cfg_mode
         } else {
             WindowMode::Tiling

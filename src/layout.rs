@@ -1145,14 +1145,12 @@ mod tests {
         assert_eq!(layout.focused_title(), "Workspace");
         layout.apply(&LayoutAction::MoveRight);
         match layout.view() {
-            LayoutView::Container(container) => {
-                match &container.children[0].node {
-                    LayoutView::Window(window) => {
-                        assert_eq!(window.title, "Scratch");
-                    }
-                    _ => panic!("expected window"),
+            LayoutView::Container(container) => match &container.children[0].node {
+                LayoutView::Window(window) => {
+                    assert_eq!(window.title, "Scratch");
                 }
-            }
+                _ => panic!("expected window"),
+            },
             _ => panic!("expected container"),
         }
     }

@@ -632,7 +632,11 @@ impl Plugin for LayoutPlugin {
             ("Grow focused pane", "layout", LayoutAction::GrowFocused),
             ("Shrink focused pane", "layout", LayoutAction::ShrinkFocused),
             ("Focus next window", "layout", LayoutAction::FocusNext),
-            ("Focus previous window", "layout", LayoutAction::FocusPrevious),
+            (
+                "Focus previous window",
+                "layout",
+                LayoutAction::FocusPrevious,
+            ),
             ("Focus first window", "layout", LayoutAction::FocusFirst),
             ("Focus last window", "layout", LayoutAction::FocusLast),
             ("Close focused window", "layout", LayoutAction::CloseFocused),
@@ -642,7 +646,11 @@ impl Plugin for LayoutPlugin {
             ("Move window up", "layout", LayoutAction::MoveUp),
             ("Move window down", "layout", LayoutAction::MoveDown),
             ("Balance panes", "layout", LayoutAction::BalancePanes),
-            ("Center focused window", "layout", LayoutAction::CenterFocused),
+            (
+                "Center focused window",
+                "layout",
+                LayoutAction::CenterFocused,
+            ),
         ]
         .into_iter()
         .filter_map(|(title, subtitle, action)| {
@@ -946,7 +954,9 @@ impl Plugin for ProcessKillPlugin {
         }
         let output = Command::new("sh")
             .arg("-c")
-            .arg(format!("ps -eo pid,comm --no-headers | grep -i '{needle}' | head -6"))
+            .arg(format!(
+                "ps -eo pid,comm --no-headers | grep -i '{needle}' | head -6"
+            ))
             .output()
             .ok();
         let Some(output) = output.filter(|o| o.status.success() || !o.stdout.is_empty()) else {
@@ -987,10 +997,26 @@ impl Plugin for VolumePlugin {
     fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
         let search = query.trim().to_lowercase();
         let candidates: &[(&str, &str, &str)] = &[
-            ("Volume up", "audio", "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+"),
-            ("Volume down", "audio", "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"),
-            ("Mute audio", "audio", "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"),
-            ("Volume status", "audio", "wpctl get-volume @DEFAULT_AUDIO_SINK@"),
+            (
+                "Volume up",
+                "audio",
+                "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+",
+            ),
+            (
+                "Volume down",
+                "audio",
+                "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-",
+            ),
+            (
+                "Mute audio",
+                "audio",
+                "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
+            ),
+            (
+                "Volume status",
+                "audio",
+                "wpctl get-volume @DEFAULT_AUDIO_SINK@",
+            ),
         ];
         let mut results: Vec<PluginResult> = candidates
             .iter()
@@ -1084,7 +1110,10 @@ impl Plugin for TimerPlugin {
 
     fn query(&self, query: &str, _matcher: &SkimMatcherV2) -> Vec<PluginResult> {
         let search = query.trim();
-        let Some(rest) = search.strip_prefix("timer ").or_else(|| search.strip_prefix("in ")) else {
+        let Some(rest) = search
+            .strip_prefix("timer ")
+            .or_else(|| search.strip_prefix("in "))
+        else {
             return Vec::new();
         };
         let rest = rest.trim();
@@ -1176,7 +1205,11 @@ impl Plugin for NetworkInfoPlugin {
         let candidates: &[(&str, &str, &str)] = &[
             ("IP address", "network", "ip addr show"),
             ("Routes", "network", "ip route"),
-            ("DNS servers", "network", "resolvectl status 2>/dev/null || cat /etc/resolv.conf"),
+            (
+                "DNS servers",
+                "network",
+                "resolvectl status 2>/dev/null || cat /etc/resolv.conf",
+            ),
             ("Listening ports", "network", "ss -tlnp"),
             ("Active connections", "network", "ss -tnp"),
             ("Ping gateway", "network", "ip route | grep default"),
@@ -1207,7 +1240,11 @@ impl Plugin for WeatherPlugin {
 
     fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
         let candidates: &[(&str, &str, &str)] = &[
-            ("Weather now", "weather", "curl -s 'wttr.in?format=%t+%C+%w'"),
+            (
+                "Weather now",
+                "weather",
+                "curl -s 'wttr.in?format=%t+%C+%w'",
+            ),
             ("Weather full", "weather", "curl -s 'wttr.in'"),
             ("Weather short", "weather", "curl -s 'wttr.in?format=3'"),
             ("Weather JSON", "weather", "curl -s 'wttr.in?format=j1'"),
@@ -1238,17 +1275,26 @@ impl Plugin for HelpPlugin {
 
     fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
         let entries: &[(&str, &str)] = &[
-            ("Help: launcher", "type to search apps, actions, and plugins"),
+            (
+                "Help: launcher",
+                "type to search apps, actions, and plugins",
+            ),
             ("Help: shell", "prefix with > to run a shell command"),
             ("Help: capture", "prefix with >' to capture command output"),
             ("Help: files", "prefix with / to search files"),
             ("Help: web", "prefix with ? to search the web"),
             ("Help: emoji", "prefix with : to find emoji"),
-            ("Help: clipboard", "type clip, paste, or cb to browse clipboard"),
+            (
+                "Help: clipboard",
+                "type clip, paste, or cb to browse clipboard",
+            ),
             ("Help: calculator", "type a math expression like 2+2"),
             ("Help: kill", "type kill <name> to find and kill processes"),
             ("Help: volume", "type volume up/down/mute or volume 50"),
-            ("Help: brightness", "type brightness up/down or brightness 50"),
+            (
+                "Help: brightness",
+                "type brightness up/down or brightness 50",
+            ),
             ("Help: timer", "type timer 5m or in 30s for a notification"),
             ("Help: weather", "type weather for a forecast"),
             ("Help: system", "type system for uptime, kernel, disk info"),
@@ -1257,8 +1303,14 @@ impl Plugin for HelpPlugin {
             ("Help: convert", "type 10 km to mi for unit conversion"),
             ("Help: translate", "type translate <text> to <lang>"),
             ("Help: recent", "type recent for recently modified files"),
-            ("Help: window modes", "tile, float, monocle, stack, center, grid"),
-            ("Help: shortcuts", "Cmd-Space launcher, Cmd-, settings, Cmd-B status bar"),
+            (
+                "Help: window modes",
+                "tile, float, monocle, stack, center, grid",
+            ),
+            (
+                "Help: shortcuts",
+                "Cmd-Space launcher, Cmd-, settings, Cmd-B status bar",
+            ),
         ];
         entries
             .iter()
@@ -1477,7 +1529,9 @@ impl Plugin for TranslatePlugin {
             subtitle: "google translate".to_string(),
             score: i64::MAX,
             action: PluginAction::Shell {
-                command: format!("curl -s '{url}' | jq -r '.[0][0][0]' 2>/dev/null || curl -s '{url}'"),
+                command: format!(
+                    "curl -s '{url}' | jq -r '.[0][0][0]' 2>/dev/null || curl -s '{url}'"
+                ),
             },
         }]
     }
@@ -1885,9 +1939,7 @@ mod tests {
     #[test]
     fn layout_plugin_exposes_move_and_balance() {
         let results = LayoutPlugin.query("balance", &SkimMatcherV2::default());
-        assert!(results.iter().any(|r| r
-            .title
-            .contains("Balance panes")));
+        assert!(results.iter().any(|r| r.title.contains("Balance panes")));
         let results = LayoutPlugin.query("move window left", &SkimMatcherV2::default());
         assert!(results.iter().any(|r| r.title.contains("Move window left")));
     }
@@ -1963,8 +2015,7 @@ mod tests {
 
     #[test]
     fn unit_converter_plugin_should_format_result() {
-        let results =
-            UnitConverterPlugin.query("10 km to mi", &SkimMatcherV2::default());
+        let results = UnitConverterPlugin.query("10 km to mi", &SkimMatcherV2::default());
         assert_eq!(results.len(), 1);
         assert!(results[0].title.contains("10 km"));
         assert!(results[0].title.contains("mi"));
@@ -1972,8 +2023,7 @@ mod tests {
 
     #[test]
     fn unit_converter_plugin_should_ignore_bad_pattern() {
-        let results =
-            UnitConverterPlugin.query("hello world foo bar", &SkimMatcherV2::default());
+        let results = UnitConverterPlugin.query("hello world foo bar", &SkimMatcherV2::default());
         assert!(results.is_empty());
     }
 

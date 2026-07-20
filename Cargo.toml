@@ -14,11 +14,11 @@ publish = false
 compositor = ["smithay"]
 
 [dependencies]
-crepuscularity-core = { path = "../crepuscularity/crates/crepuscularity-core" }
-crepuscularity-gpui = { path = "../crepuscularity/crates/crepuscularity-gpui", features = ["wayland"] }
-crepuscularity-web = { path = "../crepuscularity/crates/crepuscularity-web" }
 # When using published crates instead of path:
 # crepuscularity-gpui = { version = "0.5", features = ["wayland"] }
+crepuscularity-core = { version = "=0.4.25" }
+crepuscularity-gpui = { version = "=0.5.8", features = ["wayland"] }
+crepuscularity-web = { version = "=0.4.20" }
 fuzzy-matcher = "0.3"
 smithay = { version = "0.7", default-features = false, features = ["wayland_frontend", "desktop"], optional = true }
 serde = { version = "1", features = ["derive"] }
@@ -27,7 +27,7 @@ toml = "0.8"
 wayland-client = "0.31.14"
 
 [build-dependencies]
-crepuscularity-gpui = { path = "../crepuscularity/crates/crepuscularity-gpui", features = ["wayland"] }
+crepuscularity-gpui = { version = "=0.5.8", features = ["wayland"] }
 
 [profile.release]
 lto = "thin"

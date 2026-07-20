@@ -11,7 +11,7 @@ name = "alpenglow-greeter"
 path = "src/main.rs"
 
 [dependencies]
-crepuscularity-gpui = { path = "../../crepuscularity/crates/crepuscularity-gpui", features = ["wayland"] }
+crepuscularity-gpui = { version = "=0.5.8", features = ["wayland"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 greetd_ipc = { version = "0.10", features = ["sync-codec"] }
