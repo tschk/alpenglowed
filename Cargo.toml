@@ -1,5 +1,5 @@
 [workspace]
-members = ["alpenglow-greeter"]
+members = ["alpenglow-greeter", "alpenglowed-comp"]
 exclude = ["plugins/spotify-rust"]
 resolver = "2"
 

@@ -1,0 +1,26 @@
+[package]
+name = "alpenglowed-comp"
+version = "0.1.0"
+edition = "2021"
+license = "MPL-2.0"
+publish = false
+
+[features]
+default = ["winit"]
+winit = ["smithay/backend_winit", "smithay/renderer_gl"]
+udev = [
+  "smithay/backend_drm",
+  "smithay/backend_egl",
+  "smithay/backend_libinput",
+  "smithay/backend_session_libseat",
+  "smithay/backend_udev",
+  "smithay/renderer_gl",
+]
+
+[dependencies]
+smithay = { version = "0.7", default-features = false, features = [
+  "wayland_frontend",
+  "desktop",
+] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
