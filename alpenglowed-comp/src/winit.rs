@@ -41,7 +41,12 @@ pub fn run(event_loop: &mut EventLoop<'static, Alpenglowed>, state: &mut Alpengl
         },
     );
     let _global = output.create_global::<Alpenglowed>(&state.display_handle);
-    output.change_current_state(Some(mode), Some(Transform::Flipped180), None, Some((0, 0).into()));
+    output.change_current_state(
+        Some(mode),
+        Some(Transform::Flipped180),
+        None,
+        Some((0, 0).into()),
+    );
     output.set_preferred(mode);
     state.space.map_output(&output, (0, 0));
 

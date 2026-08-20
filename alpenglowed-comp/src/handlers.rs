@@ -28,7 +28,9 @@ use smithay::{
             ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler,
         },
         selection::SelectionHandler,
-        shell::xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState},
+        shell::xdg::{
+            PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
+        },
         shm::{ShmHandler, ShmState},
     },
 };
@@ -55,7 +57,11 @@ impl CompositorHandler for Alpenglowed {
             if let Some(window) = self
                 .space
                 .elements()
-                .find(|w| w.toplevel().map(|t| t.wl_surface() == &root).unwrap_or(false))
+                .find(|w| {
+                    w.toplevel()
+                        .map(|t| t.wl_surface() == &root)
+                        .unwrap_or(false)
+                })
                 .cloned()
             {
                 window.on_commit();
@@ -66,16 +72,21 @@ impl CompositorHandler for Alpenglowed {
         if let Some(window) = self
             .space
             .elements()
-            .find(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false))
+            .find(|w| {
+                w.toplevel()
+                    .map(|t| t.wl_surface() == surface)
+                    .unwrap_or(false)
+            })
             .cloned()
         {
-            let initial_configure_sent = smithay::wayland::compositor::with_states(surface, |states| {
-                states
-                    .data_map
-                    .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
-                    .map(|d| d.lock().unwrap().initial_configure_sent)
-                    .unwrap_or(true)
-            });
+            let initial_configure_sent =
+                smithay::wayland::compositor::with_states(surface, |states| {
+                    states
+                        .data_map
+                        .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
+                        .map(|d| d.lock().unwrap().initial_configure_sent)
+                        .unwrap_or(true)
+                });
             if !initial_configure_sent {
                 if let Some(toplevel) = window.toplevel() {
                     toplevel.send_configure();
