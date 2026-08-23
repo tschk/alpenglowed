@@ -184,6 +184,7 @@ pub fn session_contract() -> serde_json::Value {
                 "status": "nested winit prototype; not the session compositor yet"
             }
         },
+        "supported_roles": SessionRole::all().iter().map(|role| role.label()).collect::<Vec<_>>(),
         "roles": {
             "potatoes": {
                 "bar": "skinny",
@@ -274,6 +275,7 @@ mod tests {
 
     #[test]
     fn parse_should_accept_role_aliases() {
+        assert_eq!(SessionRole::all().len(), 3);
         assert_eq!(SessionRole::parse("lite").unwrap(), SessionRole::Potatoes);
         assert_eq!(
             SessionRole::parse("fleet").unwrap(),

@@ -173,7 +173,10 @@ impl DesktopModel {
             status_bar: options.status_bar,
             external_polybar: options.external_polybar,
             last_action: "Ready: desktop active".to_string(),
-            runner: Runner::with_role(options.role),
+            runner: match options.role {
+                role::SessionRole::Desktop => Runner::new(),
+                role => Runner::with_role(role),
+            },
             session_control: std::env::var_os("ALPENGLOW_SESSION_CONTROL").is_some(),
             role: options.role,
             launcher: None,

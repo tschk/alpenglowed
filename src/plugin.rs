@@ -6,9 +6,11 @@ use fuzzy_matcher::FuzzyMatcher;
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::io::Write;
+#[cfg(feature = "full")]
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
+#[cfg(feature = "full")]
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1567,6 +1569,7 @@ impl Plugin for TranslatePlugin {
     }
 }
 
+#[cfg(feature = "full")]
 fn urlencode(text: &str) -> String {
     let mut out = String::with_capacity(text.len() * 3);
     for &byte in text.as_bytes() {
@@ -1685,6 +1688,7 @@ impl Plugin for RecentFilesPlugin {
     }
 }
 
+#[cfg(feature = "full")]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct CommandPluginManifest {
     pub id: String,
@@ -1697,6 +1701,7 @@ pub struct CommandPluginManifest {
     pub timeout_ms: u64,
 }
 
+#[cfg(feature = "full")]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginKind {
@@ -1706,6 +1711,7 @@ pub enum PluginKind {
     Webcode,
 }
 
+#[cfg(feature = "full")]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MatchMode {
@@ -1715,11 +1721,13 @@ pub enum MatchMode {
     Fuzzy,
 }
 
+#[cfg(feature = "full")]
 pub struct CommandPlugin {
     manifest: CommandPluginManifest,
     base_dir: PathBuf,
 }
 
+#[cfg(feature = "full")]
 impl CommandPlugin {
     pub fn from_manifest_file(path: &Path) -> Result<Self, String> {
         let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
@@ -1763,6 +1771,7 @@ impl CommandPlugin {
     }
 }
 
+#[cfg(feature = "full")]
 impl Plugin for CommandPlugin {
     fn id(&self) -> &str {
         &self.manifest.id
@@ -1784,17 +1793,20 @@ impl Plugin for CommandPlugin {
     }
 }
 
+#[cfg(feature = "full")]
 #[derive(Debug, Serialize)]
 struct PluginRequest<'a> {
     r#type: &'a str,
     query: &'a str,
 }
 
+#[cfg(feature = "full")]
 #[derive(Debug, Deserialize)]
 struct PluginResponse {
     results: Vec<PluginResponseResult>,
 }
 
+#[cfg(feature = "full")]
 #[derive(Debug, Deserialize)]
 struct PluginResponseResult {
     title: String,
@@ -1803,6 +1815,7 @@ struct PluginResponseResult {
     action: PluginAction,
 }
 
+#[cfg(feature = "full")]
 fn run_command_plugin(
     manifest: &CommandPluginManifest,
     base_dir: &Path,
@@ -1898,6 +1911,7 @@ fn apps() -> Vec<String> {
     .clone()
 }
 
+#[cfg(feature = "full")]
 fn program_available(program: &str) -> bool {
     std::env::var_os("PATH")
         .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
@@ -1924,6 +1938,7 @@ fn calc(expr: &str) -> Option<f64> {
     String::from_utf8_lossy(&output.stdout).trim().parse().ok()
 }
 
+#[cfg(feature = "full")]
 fn default_timeout_ms() -> u64 {
     1000
 }
@@ -1931,10 +1946,13 @@ fn default_timeout_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "full")]
     use std::fs;
+    #[cfg(feature = "full")]
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
+    #[cfg(feature = "full")]
     fn manifest_rejects_missing_command() {
         let dir = test_dir("bad_manifest");
         fs::create_dir_all(&dir).unwrap();
@@ -1949,6 +1967,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "full")]
     fn command_plugin_reads_json_response() {
         let dir = test_dir("command_plugin");
         fs::create_dir_all(&dir).unwrap();
@@ -2123,6 +2142,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "full")]
     fn urlencode_should_encode_special_chars() {
         assert_eq!(urlencode("hello world"), "hello%20world");
         assert_eq!(urlencode("a&b=c"), "a%26b%3Dc");
@@ -2179,6 +2199,7 @@ mod tests {
         assert!(results.iter().any(|result| result.plugin_id == "fleet"));
     }
 
+    #[cfg(feature = "full")]
     fn test_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("alpenglowed-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);

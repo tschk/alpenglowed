@@ -65,7 +65,14 @@ pub struct Runner {
 
 impl Runner {
     pub fn new() -> Self {
-        Self::with_role(crate::role::SessionRole::Desktop)
+        Self {
+            query: String::new(),
+            results: Vec::new(),
+            selected: 0,
+            matcher: SkimMatcherV2::default(),
+            plugins: PluginRegistry::new(),
+            recent_titles: HashMap::new(),
+        }
     }
 
     pub fn with_role(role: crate::role::SessionRole) -> Self {
