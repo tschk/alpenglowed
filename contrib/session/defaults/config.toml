@@ -1,0 +1,7 @@
+status_bar = false
+external_polybar = false
+open_settings = false
+initial_query = ""
+mode = "tiling"
+demo_layout = false
+role = "desktop"

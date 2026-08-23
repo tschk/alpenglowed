@@ -212,14 +212,20 @@ pub struct DesktopState {
     pub mode: &'static str,
     pub wayland: bool,
     pub display: Option<String>,
+    pub role: &'static str,
 }
 
 impl DesktopState {
     pub fn detect(mode: &'static str) -> Self {
+        Self::detect_with_role(mode, crate::role::SessionRole::Desktop.label())
+    }
+
+    pub fn detect_with_role(mode: &'static str, role: &'static str) -> Self {
         Self {
             mode,
             wayland: Connection::connect_to_env().is_ok(),
             display: std::env::var("WAYLAND_DISPLAY").ok(),
+            role,
         }
     }
 
@@ -230,7 +236,10 @@ impl DesktopState {
         } else {
             "no-wayland"
         };
-        format!("alpenglowed {} {} {}", self.mode, wayland, display)
+        format!(
+            "alpenglowed {} {} {} {}",
+            self.mode, wayland, display, self.role
+        )
     }
 }
 
@@ -405,9 +414,13 @@ mod tests {
             mode: "tiling",
             wayland: false,
             display: Some("wayland-1".to_string()),
+            role: "desktop",
         };
 
-        assert_eq!(state.polybar(), "alpenglowed tiling no-wayland wayland-1");
+        assert_eq!(
+            state.polybar(),
+            "alpenglowed tiling no-wayland wayland-1 desktop"
+        );
     }
 
     #[test]

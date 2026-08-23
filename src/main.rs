@@ -7,6 +7,7 @@ mod de;
 mod layout;
 mod notifications;
 mod plugin;
+mod role;
 mod runner;
 mod session;
 mod terminal;
@@ -102,6 +103,7 @@ struct UiOptions {
     initial_query: String,
     mode: WindowMode,
     demo_layout: bool,
+    role: role::SessionRole,
 }
 
 #[derive(Clone, Copy)]
@@ -124,6 +126,7 @@ struct DesktopModel {
     terminal: Option<terminal::TerminalConsole>,
     terminal_open: bool,
     terminal_input: String,
+    role: role::SessionRole,
     #[cfg(feature = "compositor")]
     compositor_events: Option<std::sync::mpsc::Receiver<compositor::CompositorEvent>>,
     #[cfg(feature = "compositor")]
@@ -170,8 +173,9 @@ impl DesktopModel {
             status_bar: options.status_bar,
             external_polybar: options.external_polybar,
             last_action: "Ready: desktop active".to_string(),
-            runner: Runner::new(),
+            runner: Runner::with_role(options.role),
             session_control: std::env::var_os("ALPENGLOW_SESSION_CONTROL").is_some(),
+            role: options.role,
             launcher: None,
             settings: None,
             notifications,
@@ -794,6 +798,27 @@ impl DesktopWindow {
         let focused = desktop.layout.focused_title().to_string();
         let detail = desktop.layout.summary();
         let header = shell_top_bar_title_component(&focused, &detail);
+        let caps = desktop.role.capabilities();
+        let mut pills = Vec::new();
+        if !caps.skinny_bar {
+            pills.push(("mode".to_string(), desktop.mode.label().to_string()));
+            pills.push(("layout".to_string(), desktop.layout.summary()));
+        }
+        pills.push(("time".to_string(), metrics.clock));
+        pills.push(("date".to_string(), metrics.date));
+        if caps.weather {
+            pills.push(("temp".to_string(), metrics.temp));
+        }
+        pills.push(("power".to_string(), metrics.battery));
+        if caps.wifi_pill {
+            pills.push(("wifi".to_string(), metrics.wifi));
+        }
+        pills.push(("cpu".to_string(), metrics.load));
+        pills.push(("mem".to_string(), metrics.memory));
+        if !caps.skinny_bar {
+            pills.push(("wl".to_string(), metrics.backend));
+        }
+        let bar_width = if caps.skinny_bar { px(720.) } else { px(1120.) };
 
         div()
             .absolute()
@@ -804,7 +829,7 @@ impl DesktopWindow {
             .justify_center()
             .child(
                 div()
-                    .w(px(1120.))
+                    .w(bar_width)
                     .rounded(px(12.))
                     .bg(rgb(SURFACE_2))
                     .border_1()
@@ -834,20 +859,9 @@ impl DesktopWindow {
                     )
                     .child(
                         div().flex().gap(px(8.)).children(
-                            [
-                                ("mode".to_string(), desktop.mode.label().to_string()),
-                                ("layout".to_string(), desktop.layout.summary()),
-                                ("time".to_string(), metrics.clock),
-                                ("date".to_string(), metrics.date),
-                                ("temp".to_string(), metrics.temp),
-                                ("power".to_string(), metrics.battery),
-                                ("wifi".to_string(), metrics.wifi),
-                                ("cpu".to_string(), metrics.load),
-                                ("mem".to_string(), metrics.memory),
-                                ("wl".to_string(), metrics.backend),
-                            ]
-                            .into_iter()
-                            .map(|(label, value)| Self::status_pill(label, value)),
+                            pills
+                                .into_iter()
+                                .map(|(label, value)| Self::status_pill(label, value)),
                         ),
                     ),
             )
@@ -1038,8 +1052,16 @@ impl TopBarMetrics {
             clock: date_value("+%H:%M").unwrap_or_else(|| "--:--".to_string()),
             date: date_value("+%a %b %e").unwrap_or_else(|| "date unavailable".to_string()),
             battery: battery_value().unwrap_or_else(|| "battery unavailable".to_string()),
-            temp: temp_value().unwrap_or_else(|| "--°".to_string()),
-            wifi: wifi_value().unwrap_or_else(|| "wifi unavailable".to_string()),
+            temp: if desktop.role.capabilities().weather {
+                temp_value().unwrap_or_else(|| "--°".to_string())
+            } else {
+                String::new()
+            },
+            wifi: if desktop.role.capabilities().wifi_pill {
+                wifi_value().unwrap_or_else(|| "wifi unavailable".to_string())
+            } else {
+                String::new()
+            },
             load: cpu_value().unwrap_or_else(|| "cpu unavailable".to_string()),
             memory: memory_value().unwrap_or_else(|| "memory unavailable".to_string()),
             backend: top_bar_backend(desktop),
@@ -3012,7 +3034,9 @@ fn main() {
     if std::env::args().any(|arg| arg == "--help") {
         eprintln!("alpenglowed — Alpenglow desktop shell");
         eprintln!("Flags:");
-        eprintln!("  --compositor      Enable embedded smithay compositor (Linux, needs `features compositor`)");
+        eprintln!("  --role=NAME       Session role: potatoes, desktop, workstation");
+        eprintln!("  --session-contract  Print the Alpenglow session contract as JSON");
+        eprintln!("  --compositor      Enable embedded smithay compositor (Linux, needs `features compositor`; not for potatoes)");
         eprintln!("  --polybar         Emit polybar status line");
         eprintln!("  --polybar-module=  Emit a single polybar module");
         eprintln!("  --probe-actions   List available desktop actions");
@@ -3023,12 +3047,26 @@ fn main() {
         eprintln!("  --demo-layout     Use demo layout with 4 panes");
         return;
     }
+    if std::env::args().any(|arg| arg == "--session-contract") {
+        println!("{}", role::session_contract());
+        return;
+    }
     if std::env::args().any(|arg| arg == "--polybar") {
         let mode = std::env::var("ALPENGLOWED_MODE")
             .ok()
             .and_then(|m| WindowMode::from_label(&m))
             .unwrap_or(WindowMode::Tiling);
-        println!("{}", de::DesktopState::detect(mode.label()).polybar());
+        let role = match role::SessionRole::resolve() {
+            Ok(role) => role,
+            Err(error) => {
+                eprintln!("{}", error.message());
+                std::process::exit(2);
+            }
+        };
+        println!(
+            "{}",
+            de::DesktopState::detect_with_role(mode.label(), role.label()).polybar()
+        );
         return;
     }
     if let Some(module) = std::env::args().find_map(|arg| {
@@ -3059,13 +3097,12 @@ fn main() {
             .join("alpenglowed")
             .join("notifications");
         if let Ok(mut stream) = std::os::unix::net::UnixStream::connect(&path) {
-            let _ = std::io::Write::write_all(
-                &mut stream,
-                format!(
-                    "{{\"title\":\"alpenglowed\",\"body\":\"{notif}\",\"urgency\":\"normal\"}}"
-                )
-                .as_bytes(),
-            );
+            let payload = serde_json::json!({
+                "title": "alpenglowed",
+                "body": notif,
+                "urgency": "normal"
+            });
+            let _ = serde_json::to_writer(&mut stream, &payload);
         } else {
             eprintln!("notification daemon not running");
             std::process::exit(1);
@@ -3084,7 +3121,9 @@ fn main() {
     }
 
     #[cfg(feature = "compositor")]
-    let (_compositor_tx, _compositor_rx) = if std::env::args().any(|arg| arg == "--compositor") {
+    let (_compositor_tx, _compositor_rx) = if std::env::args().any(|arg| arg == "--compositor")
+        && options.role.capabilities().compositor
+    {
         let (cmd, rx) = compositor::start();
         std::env::set_var("ALPENGLOW_COMPOSITOR", "1");
         (Some(cmd), Some(rx))
@@ -3159,9 +3198,7 @@ fn main() {
         let desktop = cx.new(|_| DesktopModel::new(desktop_options));
         open_desktop_window(&desktop, cx);
 
-        let installer = std::env::var_os("ALPENGLOWED_INSTALLER_SOURCE")
-            .zip(std::env::var_os("ALPENGLOWED_INSTALLER_TARGET"))
-            .map(|(source, target)| (PathBuf::from(source), PathBuf::from(target)));
+        let installer = installer_paths();
 
         if let Some((source, target)) = installer {
             open_installer_window(source, target, cx);
@@ -3177,12 +3214,21 @@ impl UiOptions {
     fn from_env() -> Self {
         let cfg = config::Config::load();
 
+        let role = match role::SessionRole::resolve() {
+            Ok(role) => role,
+            Err(error) => {
+                eprintln!("{}", error.message());
+                std::process::exit(2);
+            }
+        };
         let status_bar = std::env::args().any(|arg| arg == "--status-bar")
             || matches!(
                 std::env::var("ALPENGLOWED_STATUS_BAR").as_deref(),
                 Ok("1" | "true" | "yes")
             )
-            || cfg.status_bar.unwrap_or(false);
+            || cfg
+                .status_bar
+                .unwrap_or(role.capabilities().default_status_bar);
         let external_polybar = std::env::args().any(|arg| arg == "--external-polybar")
             || matches!(
                 std::env::var("ALPENGLOWED_EXTERNAL_BAR").as_deref(),
@@ -3222,6 +3268,7 @@ impl UiOptions {
             initial_query,
             mode,
             demo_layout,
+            role,
         }
     }
 }
@@ -3236,12 +3283,26 @@ fn polybar_module(name: &str) -> String {
             .map(|state| state.mode)
             .filter(|mode| !mode.trim().is_empty())
             .unwrap_or_else(|| "launcher".to_string()),
+        "role" => role::SessionRole::resolve()
+            .map(|role| role.label().to_string())
+            .unwrap_or_else(|_| "desktop".to_string()),
         "backend" => polybar_backend(&de::DesktopState::detect("tiling")),
         "battery" => battery_value().unwrap_or_else(|| "battery unavailable".to_string()),
         "load" => load_value().unwrap_or_else(|| "load unavailable".to_string()),
         "memory" => memory_value().unwrap_or_else(|| "memory unavailable".to_string()),
         _ => String::new(),
     }
+}
+
+fn installer_paths() -> Option<(PathBuf, PathBuf)> {
+    let source = std::env::var_os("ALPENGLOWED_INSTALLER_SOURCE")
+        .map(PathBuf::from)
+        .or_else(|| {
+            let path = PathBuf::from("/run/alpenglow/alpenglow.img.zst");
+            path.is_file().then_some(path)
+        })?;
+    let target = std::env::var_os("ALPENGLOWED_INSTALLER_TARGET").map(PathBuf::from)?;
+    Some((source, target))
 }
 
 fn ensure_wayland_display() {
@@ -3358,6 +3419,12 @@ mod tests {
     #[test]
     fn polybar_module_should_return_empty_for_unknown_name() {
         assert_eq!(polybar_module("unknown"), "");
+    }
+
+    #[test]
+    fn polybar_module_should_return_a_known_role() {
+        let role = polybar_module("role");
+        assert!(role == "potatoes" || role == "desktop" || role == "workstation");
     }
 
     #[test]

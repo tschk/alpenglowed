@@ -12,6 +12,7 @@ pub struct Config {
     pub initial_query: Option<String>,
     pub mode: Option<String>,
     pub demo_layout: Option<bool>,
+    pub role: Option<String>,
 }
 
 impl Config {

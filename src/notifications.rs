@@ -31,7 +31,7 @@ impl NotificationDaemon {
                         return;
                     }
                 };
-                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666));
+                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
                 for stream in listener.incoming() {
                     match stream {
                         Ok(mut stream) => {

@@ -65,10 +65,17 @@ pub struct WindowTarget {
 
 impl PluginRegistry {
     pub fn new() -> Self {
+        Self::with_capabilities(crate::role::RoleCapabilities::desktop())
+    }
+
+    pub fn with_role(role: crate::role::SessionRole) -> Self {
+        Self::with_capabilities(role.capabilities())
+    }
+
+    pub fn with_capabilities(caps: crate::role::RoleCapabilities) -> Self {
         let mut registry = Self {
             plugins: Vec::new(),
         };
-        registry.register(Box::new(WebSearchPlugin));
         registry.register(Box::new(EmojiPlugin));
         registry.register(Box::new(FileSearchPlugin));
         registry.register(Box::new(ClipboardPlugin));
@@ -83,21 +90,36 @@ impl PluginRegistry {
         registry.register(Box::new(FactoryResetPlugin));
         registry.register(Box::new(DesktopActionsPlugin));
         registry.register(Box::new(AppLauncherPlugin));
-        registry.register(Box::new(SpotifyPlugin));
         registry.register(Box::new(ProcessKillPlugin));
         registry.register(Box::new(VolumePlugin));
         registry.register(Box::new(BrightnessPlugin));
         registry.register(Box::new(TimerPlugin));
         registry.register(Box::new(SystemInfoPlugin));
         registry.register(Box::new(NetworkInfoPlugin));
-        registry.register(Box::new(WeatherPlugin));
         registry.register(Box::new(HelpPlugin));
         registry.register(Box::new(ColorPlugin));
         registry.register(Box::new(UnitConverterPlugin));
-        registry.register(Box::new(TranslatePlugin));
         registry.register(Box::new(RecentFilesPlugin));
-        for plugin in CommandPlugin::load_default() {
-            registry.register(Box::new(plugin));
+        #[cfg(feature = "full")]
+        {
+            if caps.network_plugins {
+                registry.register(Box::new(WebSearchPlugin));
+                registry.register(Box::new(TranslatePlugin));
+            }
+            if caps.weather {
+                registry.register(Box::new(WeatherPlugin));
+            }
+            if caps.spotify {
+                registry.register(Box::new(SpotifyPlugin));
+            }
+            if caps.command_plugins {
+                for plugin in CommandPlugin::load_default() {
+                    registry.register(Box::new(plugin));
+                }
+            }
+        }
+        if caps.fleet {
+            registry.register(Box::new(FleetStatusPlugin));
         }
         registry
     }
@@ -182,8 +204,10 @@ fn score_window(
     boosted
 }
 
+#[cfg(feature = "full")]
 struct WebSearchPlugin;
 
+#[cfg(feature = "full")]
 impl Plugin for WebSearchPlugin {
     fn id(&self) -> &str {
         "web"
@@ -874,8 +898,10 @@ impl Plugin for AppLauncherPlugin {
     }
 }
 
+#[cfg(feature = "full")]
 struct SpotifyPlugin;
 
+#[cfg(feature = "full")]
 impl Plugin for SpotifyPlugin {
     fn id(&self) -> &str {
         "spotify"
@@ -1231,8 +1257,10 @@ impl Plugin for NetworkInfoPlugin {
     }
 }
 
+#[cfg(feature = "full")]
 struct WeatherPlugin;
 
+#[cfg(feature = "full")]
 impl Plugin for WeatherPlugin {
     fn id(&self) -> &str {
         "weather"
@@ -1492,8 +1520,10 @@ fn convert_units(value: f64, from: &str, to: &str) -> Option<f64> {
     None
 }
 
+#[cfg(feature = "full")]
 struct TranslatePlugin;
 
+#[cfg(feature = "full")]
 impl Plugin for TranslatePlugin {
     fn id(&self) -> &str {
         "translate"
@@ -1549,6 +1579,53 @@ fn urlencode(text: &str) -> String {
         }
     }
     out
+}
+
+struct FleetStatusPlugin;
+
+impl Plugin for FleetStatusPlugin {
+    fn id(&self) -> &str {
+        "fleet"
+    }
+
+    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        let search = query.trim();
+        if score("Fleet status", search, matcher).is_none()
+            && score("Pressure", search, matcher).is_none()
+            && score("netd", search, matcher).is_none()
+            && !search.eq_ignore_ascii_case("fleet")
+        {
+            return Vec::new();
+        }
+        const PATHS: &[(&str, &str)] = &[
+            ("Memory pressure", "/run/alpenglow/pressurectl/state.json"),
+            ("Network interfaces", "/run/alpenglow/netd/interfaces.json"),
+            ("Network runtime", "/run/alpenglow/netd/runtime-state.env"),
+            ("Runtime state", "/run/alpenglow/runtime-state.env"),
+            ("Rootfs", "/run/alpenglow/rootfs.env"),
+        ];
+        let mut results = Vec::new();
+        for (title, path) in PATHS {
+            let subtitle = match std::fs::read_to_string(path) {
+                Ok(text) => text
+                    .lines()
+                    .next()
+                    .unwrap_or("ok")
+                    .chars()
+                    .take(80)
+                    .collect(),
+                Err(_) => format!("{path} unavailable"),
+            };
+            results.push(PluginResult {
+                plugin_id: self.id().to_string(),
+                title: title.to_string(),
+                subtitle,
+                score: 200,
+                action: PluginAction::None,
+            });
+        }
+        results
+    }
 }
 
 struct RecentFilesPlugin;
@@ -1905,6 +1982,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "full")]
     fn spotify_reports_unavailable_without_playerctl() {
         let old_path = std::env::var_os("PATH");
         std::env::set_var("PATH", test_dir("empty_path"));
@@ -2028,6 +2106,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "full")]
     fn translate_plugin_should_build_url() {
         let results = TranslatePlugin.query("translate hello to es", &SkimMatcherV2::default());
         assert_eq!(results.len(), 1);
@@ -2036,6 +2115,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "full")]
     fn translate_plugin_should_hint_on_partial_input() {
         let results = TranslatePlugin.query("translate hello", &SkimMatcherV2::default());
         assert_eq!(results.len(), 1);
@@ -2069,11 +2149,34 @@ mod tests {
         assert!(results.iter().any(|r| r.title == "IP address"));
     }
 
+    #[cfg(feature = "full")]
     #[test]
     fn weather_plugin_should_match_query() {
         let results = WeatherPlugin.query("weather", &SkimMatcherV2::default());
         assert!(results.iter().any(|r| r.title == "Weather now"));
         assert!(results.iter().any(|r| r.title == "Weather full"));
+    }
+
+    #[test]
+    fn potatoes_registry_should_omit_weather() {
+        let registry = PluginRegistry::with_role(crate::role::SessionRole::Potatoes);
+        let results = registry.query_with_windows("weather", &SkimMatcherV2::default(), &[]);
+        assert!(!results.iter().any(|result| result.plugin_id == "weather"));
+    }
+
+    #[cfg(feature = "full")]
+    #[test]
+    fn desktop_registry_should_include_weather() {
+        let registry = PluginRegistry::with_role(crate::role::SessionRole::Desktop);
+        let results = registry.query_with_windows("weather", &SkimMatcherV2::default(), &[]);
+        assert!(results.iter().any(|result| result.plugin_id == "weather"));
+    }
+
+    #[test]
+    fn workstation_registry_should_include_fleet() {
+        let registry = PluginRegistry::with_role(crate::role::SessionRole::Workstation);
+        let results = registry.query_with_windows("fleet", &SkimMatcherV2::default(), &[]);
+        assert!(results.iter().any(|result| result.plugin_id == "fleet"));
     }
 
     fn test_dir(name: &str) -> PathBuf {
