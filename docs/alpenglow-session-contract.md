@@ -20,10 +20,16 @@ Public roles on this DE are only two: `potato` and `desktop`.
 Build:
 
 ```sh
-cargo build --release                          # alpenglowed (desktop)
-cargo build --release --no-default-features    # alpenglowed-lite (potato)
+cargo build --release                          # alpenglowed (desktop). `full` does not enable compositor.
+cargo build --release --no-default-features    # alpenglowed-lite (potato). No smithay.
+cargo build --release --features compositor    # experimental only. Do not use for potato or the image path.
 cargo build --release -p alpenglow-greeter
 ```
+
+Alpenglow `system/backends/appliance/scripts/build-alpenglowed-glibc.sh`
+currently runs `cargo build --release --features compositor`. Stop passing
+`--features compositor`. Potato: `cargo build --release --no-default-features`.
+Desktop: `cargo build --release`.
 
 Ship lite as `/usr/bin/alpenglowed-lite` or as `/usr/bin/alpenglowed` on the
 `potato` SKU. A full binary still honors `--role=potato` at runtime.
@@ -63,7 +69,7 @@ Canonical wrapper: `contrib/session/alpenglow-session-start` (install to
 
 ```sh
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-export ALPENGLOWED_ROLE=desktop          # or potato
+export ALPENGLOWED_ROLE=desktop          # potato | desktop only
 # WAYLAND_DISPLAY must already be set by velox/cage, or the wrapper starts cage.
 exec /usr/bin/alpenglowed --role="${ALPENGLOWED_ROLE}"
 ```
@@ -72,18 +78,21 @@ Flags the wrapper may pass:
 
 | Flag | Meaning |
 | --- | --- |
-| `--role=potato\|desktop` | Session personality. Default name is `potato`. |
+| `--role=potato\|desktop` | Session personality. Canonical name is `potato`. |
 | `--status-bar` | Force the in-process bar on |
-| `--compositor` | Embedded smithay thread. Desktop only, experimental. Potato ignores it. |
 | `--session-contract` | Print this contract as JSON and exit |
 | `--polybar` | One-line status for an external bar |
 | `--smoke-wayland` | Probe `WAYLAND_DISPLAY` |
+
+`--compositor` is not a session flag. It exists only on binaries built with
+`--features compositor` (unfinished Smithay). Potato builds must not compile
+or advertise it. Default `full` does not enable it.
 
 Environment:
 
 | Variable | Meaning |
 | --- | --- |
-| `ALPENGLOWED_ROLE` | Role if `--role` is absent |
+| `ALPENGLOWED_ROLE` | `potato` or `desktop` if `--role` is absent. `potatoes` is a deprecated alias for `potato`. |
 | `ALPENGLOW_EDITION` | Fallback: `potato` → potato, `desktop` / `desktop-full` → desktop |
 | `ALPENGLOWED_MODE` | Window mode: tiling, floating, monocle, stack, center, grid |
 | `ALPENGLOWED_STATUS_BAR` | `1`/`true`/`yes` |
@@ -92,7 +101,7 @@ Environment:
 | `ALPENGLOWED_INSTALLER_SOURCE` | Live image path; defaults to `/run/alpenglow/alpenglow.img.zst` if present |
 | `ALPENGLOWED_INSTALLER_TARGET` | Required to open the installer window |
 | `XDG_RUNTIME_DIR` | Required |
-| `WAYLAND_DISPLAY` | Required unless `--compositor` actually starts |
+| `WAYLAND_DISPLAY` | Required. velox or cage owns the seat. |
 
 Autologin is greetd's job (`ALPENGLOW_AUTOLOGIN=1` or
 `/etc/greetd/config-autologin.toml`). Alpenglowed does not implement autologin
@@ -123,7 +132,7 @@ key. Factory reset deletes `/etc/alpenglowed` and writes
 | SKU | Must ship | Must not assume |
 | --- | --- | --- |
 | `potato` | `seatd`, compositor (`velox` or `cage`), `wayland`, Mesa or llvmpipe, `font-dejavu`, `alpenglowed` (lite) | PipeWire, greetd, iwd, weather tools, plugin host |
-| `desktop` | above + `greetd`, `elogind`, `pipewire`, `wireplumber`, `foot`, `iwd` | Embedded `--compositor` as the seat owner |
+| `desktop` | above + `greetd`, `elogind`, `pipewire`, `wireplumber`, `foot`, `iwd` | Embedded `--compositor` / `--features compositor` |
 
 Alpenglow's current `dinit/alpenglowed` unit depends on PipeWire. That is
 correct for `desktop` only. Potato should depend on `seatd` (and the
@@ -145,11 +154,11 @@ Geist fonts are embedded. Dejavu remains useful for clients (foot).
 | Path | Status |
 | --- | --- |
 | Alpenglowed as a Wayland **client** of velox/cage | Production path |
-| `alpenglowed --compositor` (`src/compositor.rs`) | Incomplete: no DRM, no buffer paint into GPUI, no input forwarding |
+| `alpenglowed --compositor` (`src/compositor.rs`) | Opt-in compile (`--features compositor`) plus `--compositor`. Incomplete: no DRM, no buffer paint into GPUI, no input forwarding. Gated out of potato / `--no-default-features`. |
 | `alpenglowed-comp` | Milestone 0 nested smithay; future seat owner, bar becomes a layer-shell client |
 
-Do not `exec alpenglowed --compositor` on potato. Do not use Alpenglowed as
-the kiosk compositor.
+Do not pass `--features compositor` on potato. Do not `exec alpenglowed
+--compositor` as the session. Do not use Alpenglowed as the kiosk compositor.
 
 ## dinit examples
 

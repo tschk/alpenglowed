@@ -1101,6 +1101,7 @@ fn battery_value() -> Option<String> {
     None
 }
 
+#[cfg(feature = "full")]
 fn temp_value() -> Option<String> {
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
@@ -1121,6 +1122,11 @@ fn temp_value() -> Option<String> {
     }
     *guard = (Instant::now(), temp.clone());
     Some(temp)
+}
+
+#[cfg(not(feature = "full"))]
+fn temp_value() -> Option<String> {
+    None
 }
 
 fn wifi_value() -> Option<String> {
@@ -3039,7 +3045,10 @@ fn main() {
         eprintln!("Flags:");
         eprintln!("  --role=NAME       Session role: potato, desktop (potatoes is a deprecated alias for potato)");
         eprintln!("  --session-contract  Print the Alpenglow session contract as JSON");
-        eprintln!("  --compositor      Enable embedded smithay compositor (Linux, needs `features compositor`; not for potato)");
+        #[cfg(feature = "compositor")]
+        eprintln!(
+            "  --compositor      Enable embedded smithay compositor (experimental; desktop only)"
+        );
         eprintln!("  --polybar         Emit polybar status line");
         eprintln!("  --polybar-module=  Emit a single polybar module");
         eprintln!("  --probe-actions   List available desktop actions");
@@ -3123,10 +3132,12 @@ fn main() {
         return;
     }
 
+    let compositor_requested = std::env::args().any(|arg| arg == "--compositor");
+    let start_compositor =
+        role::should_start_embedded_compositor(options.role, compositor_requested);
+
     #[cfg(feature = "compositor")]
-    let (_compositor_tx, _compositor_rx) = if std::env::args().any(|arg| arg == "--compositor")
-        && options.role.capabilities().compositor
-    {
+    let (_compositor_tx, _compositor_rx) = if start_compositor {
         let (cmd, rx) = compositor::start();
         std::env::set_var("ALPENGLOW_COMPOSITOR", "1");
         (Some(cmd), Some(rx))
@@ -3140,7 +3151,7 @@ fn main() {
         Option<std::sync::mpsc::Receiver<()>>,
     ) = (None, None);
 
-    if !std::env::args().any(|arg| arg == "--compositor") || cfg!(not(feature = "compositor")) {
+    if !start_compositor {
         ensure_wayland_display();
     }
 

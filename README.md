@@ -136,7 +136,8 @@ cargo build --release
 cargo build --release -p alpenglow-greeter
 SDKROOT=$(xcrun --show-sdk-path) cargo run    # macOS dev
 cargo run                                       # Linux dev
-cargo build --release --no-default-features     # alpenglowed-lite (potato)
+cargo build --release --no-default-features     # alpenglowed-lite (potato; no smithay)
+cargo build --release --features compositor     # experimental Smithay only; not the image path
 cargo run -- --polybar                          # status output
 cargo run -- --external-polybar                 # desktop without in-app status strip
 cargo run -- --smoke-wayland                    # Wayland connection smoke

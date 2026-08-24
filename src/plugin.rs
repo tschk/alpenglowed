@@ -98,7 +98,7 @@ impl PluginRegistry {
         registry.register(Box::new(TimerPlugin));
         registry.register(Box::new(SystemInfoPlugin));
         registry.register(Box::new(NetworkInfoPlugin));
-        registry.register(Box::new(HelpPlugin));
+        registry.register(Box::new(HelpPlugin::for_capabilities(caps)));
         registry.register(Box::new(ColorPlugin));
         registry.register(Box::new(UnitConverterPlugin));
         registry.register(Box::new(RecentFilesPlugin));
@@ -1296,7 +1296,21 @@ impl Plugin for WeatherPlugin {
     }
 }
 
-struct HelpPlugin;
+struct HelpPlugin {
+    weather: bool,
+    web: bool,
+    translate: bool,
+}
+
+impl HelpPlugin {
+    fn for_capabilities(caps: crate::role::RoleCapabilities) -> Self {
+        Self {
+            weather: caps.weather,
+            web: caps.network_plugins,
+            translate: caps.network_plugins,
+        }
+    }
+}
 
 impl Plugin for HelpPlugin {
     fn id(&self) -> &str {
@@ -1304,7 +1318,7 @@ impl Plugin for HelpPlugin {
     }
 
     fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
-        let entries: &[(&str, &str)] = &[
+        let mut entries: Vec<(&str, &str)> = vec![
             (
                 "Help: launcher",
                 "type to search apps, actions, and plugins",
@@ -1312,7 +1326,11 @@ impl Plugin for HelpPlugin {
             ("Help: shell", "prefix with > to run a shell command"),
             ("Help: capture", "prefix with >' to capture command output"),
             ("Help: files", "prefix with / to search files"),
-            ("Help: web", "prefix with ? to search the web"),
+        ];
+        if self.web {
+            entries.push(("Help: web", "prefix with ? to search the web"));
+        }
+        entries.extend_from_slice(&[
             ("Help: emoji", "prefix with : to find emoji"),
             (
                 "Help: clipboard",
@@ -1326,12 +1344,20 @@ impl Plugin for HelpPlugin {
                 "type brightness up/down or brightness 50",
             ),
             ("Help: timer", "type timer 5m or in 30s for a notification"),
-            ("Help: weather", "type weather for a forecast"),
+        ]);
+        if self.weather {
+            entries.push(("Help: weather", "type weather for a forecast"));
+        }
+        entries.extend_from_slice(&[
             ("Help: system", "type system for uptime, kernel, disk info"),
             ("Help: network", "type network for ip, routes, ports"),
             ("Help: color", "type #hex or color hex for color info"),
             ("Help: convert", "type 10 km to mi for unit conversion"),
-            ("Help: translate", "type translate <text> to <lang>"),
+        ]);
+        if self.translate {
+            entries.push(("Help: translate", "type translate <text> to <lang>"));
+        }
+        entries.extend_from_slice(&[
             ("Help: recent", "type recent for recently modified files"),
             (
                 "Help: window modes",
@@ -1341,7 +1367,7 @@ impl Plugin for HelpPlugin {
                 "Help: shortcuts",
                 "Cmd-Space launcher, Cmd-, settings, Cmd-B status bar",
             ),
-        ];
+        ]);
         entries
             .iter()
             .filter_map(|(title, detail)| {
@@ -2151,7 +2177,8 @@ mod tests {
 
     #[test]
     fn help_plugin_should_list_entries() {
-        let results = HelpPlugin.query("help", &SkimMatcherV2::default());
+        let results = HelpPlugin::for_capabilities(crate::role::RoleCapabilities::desktop())
+            .query("help", &SkimMatcherV2::default());
         assert!(results.iter().any(|r| r.title.contains("launcher")));
         assert!(results.iter().any(|r| r.title.contains("shell")));
         assert!(results.iter().any(|r| r.title.contains("window modes")));
@@ -2182,6 +2209,20 @@ mod tests {
         let registry = PluginRegistry::with_role(crate::role::SessionRole::Potato);
         let results = registry.query_with_windows("weather", &SkimMatcherV2::default(), &[]);
         assert!(!results.iter().any(|result| result.plugin_id == "weather"));
+        assert!(!results
+            .iter()
+            .any(|result| result.title.contains("weather")));
+    }
+
+    #[test]
+    fn potato_registry_should_omit_translate_and_web_help() {
+        let registry = PluginRegistry::with_role(crate::role::SessionRole::Potato);
+        let help = registry.query_with_windows("help", &SkimMatcherV2::default(), &[]);
+        assert!(!help.iter().any(|result| result.title.contains("translate")));
+        assert!(!help.iter().any(|result| result.title.contains("Help: web")));
+        assert!(!help
+            .iter()
+            .any(|result| result.title.contains("Help: weather")));
     }
 
     #[cfg(feature = "full")]

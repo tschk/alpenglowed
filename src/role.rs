@@ -124,6 +124,10 @@ impl SessionRole {
     }
 }
 
+pub fn should_start_embedded_compositor(role: SessionRole, requested: bool) -> bool {
+    cfg!(feature = "compositor") && requested && role.capabilities().compositor
+}
+
 impl RoleCapabilities {
     pub fn desktop() -> Self {
         Self {
@@ -133,7 +137,7 @@ impl RoleCapabilities {
             command_plugins: cfg!(feature = "full"),
             spotify: cfg!(feature = "full"),
             fleet: true,
-            compositor: true,
+            compositor: cfg!(feature = "compositor"),
             skinny_bar: false,
             default_status_bar: false,
         }
@@ -179,11 +183,33 @@ pub fn session_contract() -> serde_json::Value {
             }
         },
         "supported_roles": SessionRole::all().iter().map(|role| role.label()).collect::<Vec<_>>(),
+        "role": {
+            "flag": "--role=potato|desktop",
+            "env": "ALPENGLOWED_ROLE",
+            "values": ["potato", "desktop"],
+            "deprecated_aliases": {
+                "potatoes": "potato",
+                "lite": "potato"
+            }
+        },
         "aliases": {
             "potatoes": "potato",
             "lite": "potato",
             "workstation": "desktop",
             "fleet": "desktop"
+        },
+        "build": {
+            "potato": "cargo build --release --no-default-features",
+            "desktop": "cargo build --release",
+            "experimental_compositor": "cargo build --release --features compositor",
+            "alpenglow_glibc_script": "system/backends/appliance/scripts/build-alpenglowed-glibc.sh",
+            "alpenglow_stop_passing": "--features compositor",
+            "full_requires_compositor": false,
+            "features": {
+                "default": ["full"],
+                "full": [],
+                "compositor": "opt-in; unfinished; not required by full; do not enable for potato"
+            }
         },
         "roles": {
             "potato": {
@@ -200,7 +226,11 @@ pub fn session_contract() -> serde_json::Value {
                 "plugins": "full plus /run/alpenglow fleet status",
                 "weather": true,
                 "fleet": true,
-                "compositor_flag": "experimental",
+                "compositor_flag": if cfg!(feature = "compositor") {
+                    serde_json::Value::String("experimental".into())
+                } else {
+                    serde_json::Value::Bool(false)
+                },
                 "pipewire": true,
                 "suggested_sku": "desktop"
             }
@@ -350,6 +380,20 @@ mod tests {
         assert!(caps.fleet);
         assert!(!caps.skinny_bar);
         assert_eq!(caps.wifi_pill, RoleCapabilities::desktop().wifi_pill);
+        assert_eq!(caps.compositor, cfg!(feature = "compositor"));
+    }
+
+    #[test]
+    fn embedded_compositor_starts_only_when_built_and_requested_on_desktop() {
+        assert!(!should_start_embedded_compositor(SessionRole::Potato, true));
+        assert!(!should_start_embedded_compositor(
+            SessionRole::Desktop,
+            false
+        ));
+        assert_eq!(
+            should_start_embedded_compositor(SessionRole::Desktop, true),
+            cfg!(feature = "compositor")
+        );
     }
 
     #[test]
@@ -387,5 +431,38 @@ mod tests {
             .unwrap()
             .iter()
             .any(|value| value == "/run/alpenglow/role"));
+        assert_eq!(contract["role"]["env"], "ALPENGLOWED_ROLE");
+        assert_eq!(
+            contract["role"]["values"],
+            serde_json::json!(["potato", "desktop"])
+        );
+        assert_eq!(contract["role"]["deprecated_aliases"]["potatoes"], "potato");
+        assert_eq!(
+            contract["build"]["potato"],
+            "cargo build --release --no-default-features"
+        );
+        assert_eq!(contract["build"]["desktop"], "cargo build --release");
+        assert_eq!(
+            contract["build"]["experimental_compositor"],
+            "cargo build --release --features compositor"
+        );
+        assert_eq!(
+            contract["build"]["alpenglow_glibc_script"],
+            "system/backends/appliance/scripts/build-alpenglowed-glibc.sh"
+        );
+        assert_eq!(
+            contract["build"]["alpenglow_stop_passing"],
+            "--features compositor"
+        );
+        assert_eq!(contract["build"]["full_requires_compositor"], false);
+        assert_eq!(contract["roles"]["potato"]["compositor_flag"], false);
+        assert_eq!(
+            contract["roles"]["desktop"]["compositor_flag"],
+            if cfg!(feature = "compositor") {
+                serde_json::json!("experimental")
+            } else {
+                serde_json::json!(false)
+            }
+        );
     }
 }
