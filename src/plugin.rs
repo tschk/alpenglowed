@@ -66,10 +66,6 @@ pub struct WindowTarget {
 }
 
 impl PluginRegistry {
-    pub fn new() -> Self {
-        Self::with_role(crate::role::SessionRole::Desktop)
-    }
-
     pub fn with_role(role: crate::role::SessionRole) -> Self {
         let mut registry = Self {
             plugins: Vec::new(),
