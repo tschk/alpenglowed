@@ -173,10 +173,7 @@ impl DesktopModel {
             status_bar: options.status_bar,
             external_polybar: options.external_polybar,
             last_action: "Ready: desktop active".to_string(),
-            runner: match options.role {
-                role::SessionRole::Desktop => Runner::new(),
-                role => Runner::with_role(role),
-            },
+            runner: Runner::with_role(options.role),
             session_control: std::env::var_os("ALPENGLOW_SESSION_CONTROL").is_some(),
             role: options.role,
             launcher: None,
@@ -801,27 +798,27 @@ impl DesktopWindow {
         let focused = desktop.layout.focused_title().to_string();
         let detail = desktop.layout.summary();
         let header = shell_top_bar_title_component(&focused, &detail);
-        let caps = desktop.role.capabilities();
+        let skinny = desktop.role.skinny();
         let mut pills = Vec::new();
-        if !caps.skinny_bar {
+        if !skinny {
             pills.push(("mode".to_string(), desktop.mode.label().to_string()));
             pills.push(("layout".to_string(), desktop.layout.summary()));
         }
         pills.push(("time".to_string(), metrics.clock));
         pills.push(("date".to_string(), metrics.date));
-        if caps.weather {
+        if desktop.role.extras() {
             pills.push(("temp".to_string(), metrics.temp));
         }
         pills.push(("power".to_string(), metrics.battery));
-        if caps.wifi_pill {
+        if !skinny {
             pills.push(("wifi".to_string(), metrics.wifi));
         }
         pills.push(("cpu".to_string(), metrics.load));
         pills.push(("mem".to_string(), metrics.memory));
-        if !caps.skinny_bar {
+        if !skinny {
             pills.push(("wl".to_string(), metrics.backend));
         }
-        let bar_width = if caps.skinny_bar { px(720.) } else { px(1120.) };
+        let bar_width = if skinny { px(720.) } else { px(1120.) };
 
         div()
             .absolute()
@@ -1055,12 +1052,12 @@ impl TopBarMetrics {
             clock: date_value("+%H:%M").unwrap_or_else(|| "--:--".to_string()),
             date: date_value("+%a %b %e").unwrap_or_else(|| "date unavailable".to_string()),
             battery: battery_value().unwrap_or_else(|| "battery unavailable".to_string()),
-            temp: if desktop.role.capabilities().weather {
+            temp: if desktop.role.extras() {
                 temp_value().unwrap_or_else(|| "--°".to_string())
             } else {
                 String::new()
             },
-            wifi: if desktop.role.capabilities().wifi_pill {
+            wifi: if !desktop.role.skinny() {
                 wifi_value().unwrap_or_else(|| "wifi unavailable".to_string())
             } else {
                 String::new()
@@ -3043,7 +3040,7 @@ fn main() {
     if std::env::args().any(|arg| arg == "--help") {
         eprintln!("alpenglowed — Alpenglow desktop shell");
         eprintln!("Flags:");
-        eprintln!("  --role=NAME       Session role: potato, desktop (potatoes is a deprecated alias for potato)");
+        eprintln!("  ALPENGLOWED_ROLE  potato|desktop (potatoes is a deprecated alias for potato)");
         eprintln!("  --session-contract  Print the Alpenglow session contract as JSON");
         #[cfg(feature = "compositor")]
         eprintln!(
@@ -3068,17 +3065,11 @@ fn main() {
             .ok()
             .and_then(|m| WindowMode::from_label(&m))
             .unwrap_or(WindowMode::Tiling);
-        let role = match role::SessionRole::resolve() {
-            Ok(role) => role,
-            Err(error) => {
-                eprintln!("{}", error.message());
-                std::process::exit(2);
-            }
-        };
-        println!(
-            "{}",
-            de::DesktopState::detect_with_role(mode.label(), role.label()).polybar()
-        );
+        if let Err(error) = role::SessionRole::resolve() {
+            eprintln!("{}", error.message());
+            std::process::exit(2);
+        }
+        println!("{}", de::DesktopState::detect(mode.label()).polybar());
         return;
     }
     if let Some(module) = std::env::args().find_map(|arg| {
@@ -3133,8 +3124,9 @@ fn main() {
     }
 
     let compositor_requested = std::env::args().any(|arg| arg == "--compositor");
-    let start_compositor =
-        role::should_start_embedded_compositor(options.role, compositor_requested);
+    let start_compositor = compositor_requested
+        && matches!(options.role, role::SessionRole::Desktop)
+        && cfg!(feature = "compositor");
 
     #[cfg(feature = "compositor")]
     let (_compositor_tx, _compositor_rx) = if start_compositor {
@@ -3240,9 +3232,7 @@ impl UiOptions {
                 std::env::var("ALPENGLOWED_STATUS_BAR").as_deref(),
                 Ok("1" | "true" | "yes")
             )
-            || cfg
-                .status_bar
-                .unwrap_or(role.capabilities().default_status_bar);
+            || cfg.status_bar.unwrap_or(role.skinny());
         let external_polybar = std::env::args().any(|arg| arg == "--external-polybar")
             || matches!(
                 std::env::var("ALPENGLOWED_EXTERNAL_BAR").as_deref(),

@@ -67,14 +67,10 @@ pub struct WindowTarget {
 
 impl PluginRegistry {
     pub fn new() -> Self {
-        Self::with_capabilities(crate::role::RoleCapabilities::desktop())
+        Self::with_role(crate::role::SessionRole::Desktop)
     }
 
     pub fn with_role(role: crate::role::SessionRole) -> Self {
-        Self::with_capabilities(role.capabilities())
-    }
-
-    pub fn with_capabilities(caps: crate::role::RoleCapabilities) -> Self {
         let mut registry = Self {
             plugins: Vec::new(),
         };
@@ -98,30 +94,19 @@ impl PluginRegistry {
         registry.register(Box::new(TimerPlugin));
         registry.register(Box::new(SystemInfoPlugin));
         registry.register(Box::new(NetworkInfoPlugin));
-        registry.register(Box::new(HelpPlugin::for_capabilities(caps)));
+        registry.register(Box::new(HelpPlugin::for_role(role)));
         registry.register(Box::new(ColorPlugin));
         registry.register(Box::new(UnitConverterPlugin));
         registry.register(Box::new(RecentFilesPlugin));
         #[cfg(feature = "full")]
-        {
-            if caps.network_plugins {
-                registry.register(Box::new(WebSearchPlugin));
-                registry.register(Box::new(TranslatePlugin));
+        if role.extras() {
+            registry.register(Box::new(WebSearchPlugin));
+            registry.register(Box::new(TranslatePlugin));
+            registry.register(Box::new(WeatherPlugin));
+            registry.register(Box::new(SpotifyPlugin));
+            for plugin in CommandPlugin::load_default() {
+                registry.register(Box::new(plugin));
             }
-            if caps.weather {
-                registry.register(Box::new(WeatherPlugin));
-            }
-            if caps.spotify {
-                registry.register(Box::new(SpotifyPlugin));
-            }
-            if caps.command_plugins {
-                for plugin in CommandPlugin::load_default() {
-                    registry.register(Box::new(plugin));
-                }
-            }
-        }
-        if caps.fleet {
-            registry.register(Box::new(FleetStatusPlugin));
         }
         registry
     }
@@ -1297,17 +1282,13 @@ impl Plugin for WeatherPlugin {
 }
 
 struct HelpPlugin {
-    weather: bool,
-    web: bool,
-    translate: bool,
+    extras: bool,
 }
 
 impl HelpPlugin {
-    fn for_capabilities(caps: crate::role::RoleCapabilities) -> Self {
+    fn for_role(role: crate::role::SessionRole) -> Self {
         Self {
-            weather: caps.weather,
-            web: caps.network_plugins,
-            translate: caps.network_plugins,
+            extras: role.extras(),
         }
     }
 }
@@ -1318,7 +1299,8 @@ impl Plugin for HelpPlugin {
     }
 
     fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
-        let mut entries: Vec<(&str, &str)> = vec![
+        let extras = self.extras;
+        [
             (
                 "Help: launcher",
                 "type to search apps, actions, and plugins",
@@ -1326,11 +1308,7 @@ impl Plugin for HelpPlugin {
             ("Help: shell", "prefix with > to run a shell command"),
             ("Help: capture", "prefix with >' to capture command output"),
             ("Help: files", "prefix with / to search files"),
-        ];
-        if self.web {
-            entries.push(("Help: web", "prefix with ? to search the web"));
-        }
-        entries.extend_from_slice(&[
+            ("Help: web", "prefix with ? to search the web"),
             ("Help: emoji", "prefix with : to find emoji"),
             (
                 "Help: clipboard",
@@ -1344,20 +1322,12 @@ impl Plugin for HelpPlugin {
                 "type brightness up/down or brightness 50",
             ),
             ("Help: timer", "type timer 5m or in 30s for a notification"),
-        ]);
-        if self.weather {
-            entries.push(("Help: weather", "type weather for a forecast"));
-        }
-        entries.extend_from_slice(&[
+            ("Help: weather", "type weather for a forecast"),
             ("Help: system", "type system for uptime, kernel, disk info"),
             ("Help: network", "type network for ip, routes, ports"),
             ("Help: color", "type #hex or color hex for color info"),
             ("Help: convert", "type 10 km to mi for unit conversion"),
-        ]);
-        if self.translate {
-            entries.push(("Help: translate", "type translate <text> to <lang>"));
-        }
-        entries.extend_from_slice(&[
+            ("Help: translate", "type translate <text> to <lang>"),
             ("Help: recent", "type recent for recently modified files"),
             (
                 "Help: window modes",
@@ -1367,19 +1337,21 @@ impl Plugin for HelpPlugin {
                 "Help: shortcuts",
                 "Cmd-Space launcher, Cmd-, settings, Cmd-B status bar",
             ),
-        ]);
-        entries
-            .iter()
-            .filter_map(|(title, detail)| {
-                score(title, query, matcher).map(|score| PluginResult {
-                    plugin_id: self.id().to_string(),
-                    title: title.to_string(),
-                    subtitle: detail.to_string(),
-                    score,
-                    action: PluginAction::None,
-                })
+        ]
+        .into_iter()
+        .filter(|(title, _)| {
+            extras || !matches!(*title, "Help: web" | "Help: weather" | "Help: translate")
+        })
+        .filter_map(|(title, detail)| {
+            score(title, query, matcher).map(|score| PluginResult {
+                plugin_id: self.id().to_string(),
+                title: title.to_string(),
+                subtitle: detail.to_string(),
+                score,
+                action: PluginAction::None,
             })
-            .collect()
+        })
+        .collect()
     }
 }
 
@@ -1608,53 +1580,6 @@ fn urlencode(text: &str) -> String {
         }
     }
     out
-}
-
-struct FleetStatusPlugin;
-
-impl Plugin for FleetStatusPlugin {
-    fn id(&self) -> &str {
-        "fleet"
-    }
-
-    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
-        let search = query.trim();
-        if score("Fleet status", search, matcher).is_none()
-            && score("Pressure", search, matcher).is_none()
-            && score("netd", search, matcher).is_none()
-            && !search.eq_ignore_ascii_case("fleet")
-        {
-            return Vec::new();
-        }
-        const PATHS: &[(&str, &str)] = &[
-            ("Memory pressure", "/run/alpenglow/pressurectl/state.json"),
-            ("Network interfaces", "/run/alpenglow/netd/interfaces.json"),
-            ("Network runtime", "/run/alpenglow/netd/runtime-state.env"),
-            ("Runtime state", "/run/alpenglow/runtime-state.env"),
-            ("Rootfs", "/run/alpenglow/rootfs.env"),
-        ];
-        let mut results = Vec::new();
-        for (title, path) in PATHS {
-            let subtitle = match std::fs::read_to_string(path) {
-                Ok(text) => text
-                    .lines()
-                    .next()
-                    .unwrap_or("ok")
-                    .chars()
-                    .take(80)
-                    .collect(),
-                Err(_) => format!("{path} unavailable"),
-            };
-            results.push(PluginResult {
-                plugin_id: self.id().to_string(),
-                title: title.to_string(),
-                subtitle,
-                score: 200,
-                action: PluginAction::None,
-            });
-        }
-        results
-    }
 }
 
 struct RecentFilesPlugin;
@@ -2177,7 +2102,7 @@ mod tests {
 
     #[test]
     fn help_plugin_should_list_entries() {
-        let results = HelpPlugin::for_capabilities(crate::role::RoleCapabilities::desktop())
+        let results = HelpPlugin::for_role(crate::role::SessionRole::Desktop)
             .query("help", &SkimMatcherV2::default());
         assert!(results.iter().any(|r| r.title.contains("launcher")));
         assert!(results.iter().any(|r| r.title.contains("shell")));
@@ -2231,13 +2156,6 @@ mod tests {
         let registry = PluginRegistry::with_role(crate::role::SessionRole::Desktop);
         let results = registry.query_with_windows("weather", &SkimMatcherV2::default(), &[]);
         assert!(results.iter().any(|result| result.plugin_id == "weather"));
-    }
-
-    #[test]
-    fn desktop_registry_should_include_fleet() {
-        let registry = PluginRegistry::with_role(crate::role::SessionRole::Desktop);
-        let results = registry.query_with_windows("fleet", &SkimMatcherV2::default(), &[]);
-        assert!(results.iter().any(|result| result.plugin_id == "fleet"));
     }
 
     #[cfg(feature = "full")]

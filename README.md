@@ -88,24 +88,8 @@ E2E in QEMU: `../alpenglow/scripts/boot-native.sh --graphical` (greetd → greet
 
 ## Alpenglow SKUs
 
-Product SKUs are `potato | desktop | internet`. Alpenglowed implements
-`potato` and `desktop`. It is not Soliloquy and does not embed a browser.
-
-| Package | Build | Role | Product SKU |
-| --- | --- | --- | --- |
-| `alpenglowed` | `cargo build --release` | `desktop` | `desktop` |
-| `alpenglowed-lite` | `cargo build --release --no-default-features` | `potato` | `potato` |
-| — | — | — | `internet` (`sold`) |
-
-```sh
-alpenglowed --role=potato
-alpenglowed --session-contract
-ALPENGLOWED_ROLE=desktop alpenglowed
-```
-
-Kiosk uses Cage. Internet uses `sold`. See
-[docs/alpenglow-session-contract.md](docs/alpenglow-session-contract.md)
-and `contrib/session/`.
+`potato | desktop | internet`. This binary is potato and desktop; internet is `sold`.
+`ALPENGLOWED_ROLE=potato|desktop`. See [docs/alpenglow-session-contract.md](docs/alpenglow-session-contract.md).
 
 ## Configuration
 
@@ -126,7 +110,6 @@ open_settings = false
 initial_query = ""
 mode = "tiling"          # "tiling" or "floating"
 demo_layout = false
-role = "desktop"         # "potato" or "desktop"
 ```
 
 ## Build
@@ -137,7 +120,6 @@ cargo build --release -p alpenglow-greeter
 SDKROOT=$(xcrun --show-sdk-path) cargo run    # macOS dev
 cargo run                                       # Linux dev
 cargo build --release --no-default-features     # alpenglowed-lite (potato; no smithay)
-cargo build --release --features compositor     # experimental Smithay only; not the image path
 cargo run -- --polybar                          # status output
 cargo run -- --external-polybar                 # desktop without in-app status strip
 cargo run -- --smoke-wayland                    # Wayland connection smoke

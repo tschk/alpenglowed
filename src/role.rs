@@ -1,37 +1,17 @@
-use serde::Serialize;
 use std::path::Path;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionRole {
     Potato,
     Desktop,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RoleCapabilities {
-    pub weather: bool,
-    pub wifi_pill: bool,
-    pub network_plugins: bool,
-    pub command_plugins: bool,
-    pub spotify: bool,
-    pub fleet: bool,
-    pub compositor: bool,
-    pub skinny_bar: bool,
-    pub default_status_bar: bool,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RoleError {
-    Unsupported { name: String },
-    Unknown { name: String },
+    Rejected { name: String },
 }
 
 impl SessionRole {
-    pub fn all() -> &'static [Self] {
-        &[Self::Potato, Self::Desktop]
-    }
-
     pub fn label(self) -> &'static str {
         match self {
             Self::Potato => "potato",
@@ -39,118 +19,42 @@ impl SessionRole {
         }
     }
 
+    pub fn skinny(self) -> bool {
+        matches!(self, Self::Potato)
+    }
+
+    pub fn extras(self) -> bool {
+        matches!(self, Self::Desktop) && cfg!(feature = "full")
+    }
+
     pub fn parse(name: &str) -> Result<Self, RoleError> {
         match name.trim().to_ascii_lowercase().as_str() {
-            "potato" | "potatoes" | "lite" => Ok(Self::Potato),
-            "desktop" | "workstation" | "fleet" => Ok(Self::Desktop),
-            name @ ("kiosk" | "internet" | "sold" | "embedded" | "containers" | "container") => {
-                Err(RoleError::Unsupported {
-                    name: name.to_string(),
-                })
-            }
-            other if other.is_empty() => Err(RoleError::Unknown {
+            "potato" | "potatoes" => Ok(Self::Potato),
+            "desktop" => Ok(Self::Desktop),
+            other => Err(RoleError::Rejected {
                 name: other.to_string(),
             }),
-            other => Err(RoleError::Unknown {
-                name: other.to_string(),
-            }),
-        }
-    }
-
-    pub fn from_edition(edition: &str) -> Option<Self> {
-        match edition.trim().to_ascii_lowercase().as_str() {
-            "potato" | "potatoes" => Some(Self::Potato),
-            "desktop" | "desktop-full" => Some(Self::Desktop),
-            _ => None,
-        }
-    }
-
-    pub fn capabilities(self) -> RoleCapabilities {
-        match self {
-            Self::Potato => RoleCapabilities {
-                weather: false,
-                wifi_pill: false,
-                network_plugins: false,
-                command_plugins: false,
-                spotify: false,
-                fleet: false,
-                compositor: false,
-                skinny_bar: true,
-                default_status_bar: true,
-            },
-            Self::Desktop => RoleCapabilities::desktop(),
         }
     }
 
     pub fn resolve() -> Result<Self, RoleError> {
-        if let Some(value) = cli_flag("role") {
+        if let Ok(value) = std::env::var("ALPENGLOWED_ROLE") {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Self::parse(value);
+            }
+        }
+        if let Some(value) = read_trimmed("/run/alpenglow/role") {
             return Self::parse(&value);
-        }
-        if let Some(value) = std::env::var("ALPENGLOWED_ROLE")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-        {
-            return Self::parse(&value);
-        }
-        if let Some(role) =
-            read_trimmed("/run/alpenglow/role").and_then(|value| Self::parse(&value).ok())
-        {
-            return Ok(role);
-        }
-        if let Some(role) =
-            read_trimmed("/etc/alpenglow/role").and_then(|value| Self::parse(&value).ok())
-        {
-            return Ok(role);
-        }
-        if let Some(role) = crate::config::Config::load()
-            .role
-            .as_deref()
-            .and_then(|value| Self::parse(value).ok())
-        {
-            return Ok(role);
-        }
-        if let Some(role) = std::env::var("ALPENGLOW_EDITION")
-            .ok()
-            .and_then(|value| Self::from_edition(&value))
-        {
-            return Ok(role);
-        }
-        if let Some(role) =
-            read_trimmed("/run/alpenglow/edition").and_then(|value| Self::from_edition(&value))
-        {
-            return Ok(role);
         }
         Ok(Self::Desktop)
-    }
-}
-
-pub fn should_start_embedded_compositor(role: SessionRole, requested: bool) -> bool {
-    cfg!(feature = "compositor") && requested && role.capabilities().compositor
-}
-
-impl RoleCapabilities {
-    pub fn desktop() -> Self {
-        Self {
-            weather: cfg!(feature = "full"),
-            wifi_pill: true,
-            network_plugins: cfg!(feature = "full"),
-            command_plugins: cfg!(feature = "full"),
-            spotify: cfg!(feature = "full"),
-            fleet: true,
-            compositor: cfg!(feature = "compositor"),
-            skinny_bar: false,
-            default_status_bar: false,
-        }
     }
 }
 
 impl RoleError {
     pub fn message(&self) -> String {
         match self {
-            Self::Unsupported { name } => format!(
-                "role '{name}' is out of scope for alpenglowed; use Cage (kiosk) or sold (internet). See docs/alpenglow-session-contract.md"
-            ),
-            Self::Unknown { name } => {
+            Self::Rejected { name } => {
                 format!("unknown role '{name}'; expected potato or desktop")
             }
         }
@@ -160,135 +64,15 @@ impl RoleError {
 pub fn session_contract() -> serde_json::Value {
     serde_json::json!({
         "name": "alpenglowed",
-        "product_skus": ["potato", "desktop", "internet"],
-        "binaries": {
-            "alpenglowed": {
-                "path": "/usr/bin/alpenglowed",
-                "build": "cargo build --release",
-                "roles": ["desktop"]
-            },
-            "alpenglowed-lite": {
-                "path": "/usr/bin/alpenglowed-lite",
-                "build": "cargo build --release --no-default-features",
-                "roles": ["potato"]
-            },
-            "alpenglow-greeter": {
-                "path": "/usr/bin/alpenglow-greeter",
-                "build": "cargo build --release -p alpenglow-greeter"
-            },
-            "alpenglowed-comp": {
-                "path": "/usr/bin/alpenglowed-comp",
-                "build": "cargo build --release -p alpenglowed-comp",
-                "status": "nested winit prototype; not the session compositor yet"
-            }
-        },
-        "supported_roles": SessionRole::all().iter().map(|role| role.label()).collect::<Vec<_>>(),
-        "role": {
-            "flag": "--role=potato|desktop",
-            "env": "ALPENGLOWED_ROLE",
-            "values": ["potato", "desktop"],
-            "deprecated_aliases": {
-                "potatoes": "potato",
-                "lite": "potato"
-            }
-        },
-        "aliases": {
-            "potatoes": "potato",
-            "lite": "potato",
-            "workstation": "desktop",
-            "fleet": "desktop"
-        },
+        "roles": ["potato", "desktop"],
+        "ALPENGLOWED_ROLE": "potato|desktop",
+        "alias": { "potatoes": "potato" },
         "build": {
             "potato": "cargo build --release --no-default-features",
-            "desktop": "cargo build --release",
-            "experimental_compositor": "cargo build --release --features compositor",
-            "alpenglow_glibc_script": "system/backends/appliance/scripts/build-alpenglowed-glibc.sh",
-            "alpenglow_stop_passing": "--features compositor",
-            "full_requires_compositor": false,
-            "features": {
-                "default": ["full"],
-                "full": [],
-                "compositor": "opt-in; unfinished; not required by full; do not enable for potato"
-            }
+            "desktop": "cargo build --release"
         },
-        "roles": {
-            "potato": {
-                "bar": "skinny",
-                "plugins": "core only",
-                "weather": false,
-                "fleet": false,
-                "compositor_flag": false,
-                "pipewire": false,
-                "suggested_sku": "potato"
-            },
-            "desktop": {
-                "bar": "full",
-                "plugins": "full plus /run/alpenglow fleet status",
-                "weather": true,
-                "fleet": true,
-                "compositor_flag": if cfg!(feature = "compositor") {
-                    serde_json::Value::String("experimental".into())
-                } else {
-                    serde_json::Value::Bool(false)
-                },
-                "pipewire": true,
-                "suggested_sku": "desktop"
-            }
-        },
-        "out_of_scope": {
-            "internet": "sold from tschk/soliloquy; do not start alpenglowed",
-            "kiosk": "Cage + a single app; do not start alpenglowed",
-            "sold": "same as internet; do not start alpenglowed",
-            "embedded": "headless; no graphical session",
-            "containers": "headless; no graphical session"
-        },
-        "start": {
-            "session_wrapper": "/usr/local/bin/alpenglow-session-start",
-            "flags": ["--role=potato|desktop", "--session-contract", "--status-bar"],
-            "env": [
-                "ALPENGLOWED_ROLE",
-                "ALPENGLOW_EDITION",
-                "ALPENGLOWED_MODE",
-                "ALPENGLOWED_STATUS_BAR",
-                "ALPENGLOWED_PLUGIN_DIR",
-                "ALPENGLOW_SESSION_CONTROL",
-                "ALPENGLOWED_INSTALLER_SOURCE",
-                "ALPENGLOWED_INSTALLER_TARGET",
-                "XDG_RUNTIME_DIR",
-                "WAYLAND_DISPLAY"
-            ],
-            "dinit": {
-                "depends_on": ["seatd"],
-                "depends_on_desktop": ["pipewire", "wireplumber"],
-                "compositor": "velox or cage must own the seat; alpenglowed is a client"
-            }
-        },
-        "run_alpenglow": {
-            "reads": [
-                "/run/alpenglow/role",
-                "/run/alpenglow/edition",
-                "/run/alpenglow/alpenglow.img.zst",
-                "/run/alpenglow/pressurectl/state.json",
-                "/run/alpenglow/netd/interfaces.json",
-                "/run/alpenglow/netd/runtime-state.env",
-                "/run/alpenglow/runtime-state.env",
-                "/run/alpenglow/rootfs.env"
-            ],
-            "writes": []
-        },
-        "image": {
-            "required": ["seatd", "wayland", "mesa or llvmpipe", "font-dejavu"],
-            "compositor": ["velox", "cage"],
-            "session": ["greetd (desktop / login)", "elogind"],
-            "optional": ["pipewire", "wireplumber", "foot", "iwd"],
-            "libc": "glibc dynamic for GPUI (dlopen Wayland/Vulkan); musl static scripts exist but are not the image path"
-        }
+        "client": "cage"
     })
-}
-
-fn cli_flag(name: &str) -> Option<String> {
-    let prefix = format!("--{name}=");
-    std::env::args().find_map(|arg| arg.strip_prefix(&prefix).map(ToString::to_string))
 }
 
 fn read_trimmed(path: impl AsRef<Path>) -> Option<String> {
@@ -302,167 +86,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_should_accept_role_aliases() {
-        assert_eq!(SessionRole::all().len(), 2);
+    fn parse_should_map_potatoes_to_potato() {
         assert_eq!(SessionRole::parse("potato").unwrap(), SessionRole::Potato);
         assert_eq!(SessionRole::parse("potatoes").unwrap(), SessionRole::Potato);
-        assert_eq!(SessionRole::parse("lite").unwrap(), SessionRole::Potato);
         assert_eq!(SessionRole::parse("desktop").unwrap(), SessionRole::Desktop);
-        assert_eq!(
-            SessionRole::parse("workstation").unwrap(),
-            SessionRole::Desktop
-        );
-        assert_eq!(SessionRole::parse("fleet").unwrap(), SessionRole::Desktop);
         assert_eq!(SessionRole::Potato.label(), "potato");
-        assert_eq!(SessionRole::Desktop.label(), "desktop");
     }
 
     #[test]
-    fn parse_should_reject_kiosk_and_internet() {
-        assert!(matches!(
-            SessionRole::parse("kiosk"),
-            Err(RoleError::Unsupported { .. })
-        ));
-        assert!(matches!(
-            SessionRole::parse("internet"),
-            Err(RoleError::Unsupported { .. })
-        ));
-        assert!(matches!(
-            SessionRole::parse("sold"),
-            Err(RoleError::Unsupported { .. })
-        ));
-        assert!(matches!(
-            SessionRole::parse("embedded"),
-            Err(RoleError::Unsupported { .. })
-        ));
-        assert!(matches!(
-            SessionRole::parse("containers"),
-            Err(RoleError::Unsupported { .. })
-        ));
+    fn parse_should_reject_foreign_roles() {
+        assert!(SessionRole::parse("kiosk").is_err());
+        assert!(SessionRole::parse("internet").is_err());
+        assert!(SessionRole::parse("sold").is_err());
+        assert!(SessionRole::parse("workstation").is_err());
     }
 
     #[test]
-    fn edition_maps_to_potato_or_desktop() {
-        assert_eq!(
-            SessionRole::from_edition("potato"),
-            Some(SessionRole::Potato)
-        );
-        assert_eq!(
-            SessionRole::from_edition("potatoes"),
-            Some(SessionRole::Potato)
-        );
-        assert_eq!(
-            SessionRole::from_edition("desktop"),
-            Some(SessionRole::Desktop)
-        );
-        assert_eq!(
-            SessionRole::from_edition("desktop-full"),
-            Some(SessionRole::Desktop)
-        );
-        assert_eq!(SessionRole::from_edition("internet"), None);
-        assert_eq!(SessionRole::from_edition("minimal"), None);
+    fn potato_is_skinny_without_extras() {
+        assert!(SessionRole::Potato.skinny());
+        assert!(!SessionRole::Potato.extras());
+        assert!(!SessionRole::Desktop.skinny());
+        assert_eq!(SessionRole::Desktop.extras(), cfg!(feature = "full"));
     }
 
     #[test]
-    fn potato_should_disable_weather_and_compositor() {
-        let caps = SessionRole::Potato.capabilities();
-        assert!(!caps.weather);
-        assert!(!caps.compositor);
-        assert!(caps.skinny_bar);
-        assert!(caps.default_status_bar);
-        assert!(!caps.command_plugins);
-        assert!(!caps.fleet);
-    }
-
-    #[test]
-    fn desktop_should_enable_fleet() {
-        let caps = SessionRole::Desktop.capabilities();
-        assert!(caps.fleet);
-        assert!(!caps.skinny_bar);
-        assert_eq!(caps.wifi_pill, RoleCapabilities::desktop().wifi_pill);
-        assert_eq!(caps.compositor, cfg!(feature = "compositor"));
-    }
-
-    #[test]
-    fn embedded_compositor_starts_only_when_built_and_requested_on_desktop() {
-        assert!(!should_start_embedded_compositor(SessionRole::Potato, true));
-        assert!(!should_start_embedded_compositor(
-            SessionRole::Desktop,
-            false
-        ));
-        assert_eq!(
-            should_start_embedded_compositor(SessionRole::Desktop, true),
-            cfg!(feature = "compositor")
-        );
-    }
-
-    #[test]
-    fn session_contract_should_name_binaries_and_out_of_scope() {
+    fn session_contract_should_be_short() {
         let contract = session_contract();
-        assert_eq!(contract["name"], "alpenglowed");
-        assert_eq!(
-            contract["product_skus"],
-            serde_json::json!(["potato", "desktop", "internet"])
-        );
-        assert_eq!(
-            contract["supported_roles"],
-            serde_json::json!(["potato", "desktop"])
-        );
-        assert_eq!(contract["aliases"]["potatoes"], "potato");
-        assert!(contract["roles"].get("workstation").is_none());
-        assert_eq!(
-            contract["binaries"]["alpenglowed-lite"]["path"],
-            "/usr/bin/alpenglowed-lite"
-        );
-        assert_eq!(
-            contract["binaries"]["alpenglowed-lite"]["roles"],
-            serde_json::json!(["potato"])
-        );
-        assert!(contract["out_of_scope"]["kiosk"]
-            .as_str()
-            .unwrap()
-            .contains("Cage"));
-        assert!(contract["out_of_scope"]["internet"]
-            .as_str()
-            .unwrap()
-            .contains("sold"));
-        assert!(contract["run_alpenglow"]["reads"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|value| value == "/run/alpenglow/role"));
-        assert_eq!(contract["role"]["env"], "ALPENGLOWED_ROLE");
-        assert_eq!(
-            contract["role"]["values"],
-            serde_json::json!(["potato", "desktop"])
-        );
-        assert_eq!(contract["role"]["deprecated_aliases"]["potatoes"], "potato");
+        assert_eq!(contract["roles"], serde_json::json!(["potato", "desktop"]));
+        assert_eq!(contract["ALPENGLOWED_ROLE"], "potato|desktop");
+        assert_eq!(contract["alias"]["potatoes"], "potato");
         assert_eq!(
             contract["build"]["potato"],
             "cargo build --release --no-default-features"
         );
         assert_eq!(contract["build"]["desktop"], "cargo build --release");
-        assert_eq!(
-            contract["build"]["experimental_compositor"],
-            "cargo build --release --features compositor"
-        );
-        assert_eq!(
-            contract["build"]["alpenglow_glibc_script"],
-            "system/backends/appliance/scripts/build-alpenglowed-glibc.sh"
-        );
-        assert_eq!(
-            contract["build"]["alpenglow_stop_passing"],
-            "--features compositor"
-        );
-        assert_eq!(contract["build"]["full_requires_compositor"], false);
-        assert_eq!(contract["roles"]["potato"]["compositor_flag"], false);
-        assert_eq!(
-            contract["roles"]["desktop"]["compositor_flag"],
-            if cfg!(feature = "compositor") {
-                serde_json::json!("experimental")
-            } else {
-                serde_json::json!(false)
-            }
-        );
+        assert_eq!(contract["client"], "cage");
     }
 }

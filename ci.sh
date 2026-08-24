@@ -11,5 +11,4 @@ cargo fmt --check --manifest-path plugins/spotify-rust/Cargo.toml
 cargo check --manifest-path plugins/spotify-rust/Cargo.toml
 cargo test --manifest-path plugins/spotify-rust/Cargo.toml
 cargo clippy --manifest-path plugins/spotify-rust/Cargo.toml --all-targets -- -D warnings
-test -x contrib/session/alpenglow-session-start
 echo "ok"
