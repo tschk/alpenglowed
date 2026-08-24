@@ -2178,8 +2178,8 @@ mod tests {
     }
 
     #[test]
-    fn potatoes_registry_should_omit_weather() {
-        let registry = PluginRegistry::with_role(crate::role::SessionRole::Potatoes);
+    fn potato_registry_should_omit_weather() {
+        let registry = PluginRegistry::with_role(crate::role::SessionRole::Potato);
         let results = registry.query_with_windows("weather", &SkimMatcherV2::default(), &[]);
         assert!(!results.iter().any(|result| result.plugin_id == "weather"));
     }
@@ -2193,8 +2193,8 @@ mod tests {
     }
 
     #[test]
-    fn workstation_registry_should_include_fleet() {
-        let registry = PluginRegistry::with_role(crate::role::SessionRole::Workstation);
+    fn desktop_registry_should_include_fleet() {
+        let registry = PluginRegistry::with_role(crate::role::SessionRole::Desktop);
         let results = registry.query_with_windows("fleet", &SkimMatcherV2::default(), &[]);
         assert!(results.iter().any(|result| result.plugin_id == "fleet"));
     }

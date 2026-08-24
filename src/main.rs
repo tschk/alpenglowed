@@ -3037,9 +3037,9 @@ fn main() {
     if std::env::args().any(|arg| arg == "--help") {
         eprintln!("alpenglowed — Alpenglow desktop shell");
         eprintln!("Flags:");
-        eprintln!("  --role=NAME       Session role: potatoes, desktop, workstation");
+        eprintln!("  --role=NAME       Session role: potato, desktop (potatoes is a deprecated alias for potato)");
         eprintln!("  --session-contract  Print the Alpenglow session contract as JSON");
-        eprintln!("  --compositor      Enable embedded smithay compositor (Linux, needs `features compositor`; not for potatoes)");
+        eprintln!("  --compositor      Enable embedded smithay compositor (Linux, needs `features compositor`; not for potato)");
         eprintln!("  --polybar         Emit polybar status line");
         eprintln!("  --polybar-module=  Emit a single polybar module");
         eprintln!("  --probe-actions   List available desktop actions");
@@ -3427,7 +3427,7 @@ mod tests {
     #[test]
     fn polybar_module_should_return_a_known_role() {
         let role = polybar_module("role");
-        assert!(role == "potatoes" || role == "desktop" || role == "workstation");
+        assert!(role == "potato" || role == "desktop");
     }
 
     #[test]

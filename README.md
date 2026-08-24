@@ -88,18 +88,19 @@ E2E in QEMU: `../alpenglow/scripts/boot-native.sh --graphical` (greetd → greet
 
 ## Alpenglow SKUs
 
-Alpenglowed is the desktop / workstation / potatoes-GUI session. It is not
-Soliloquy and does not embed a browser.
+Product SKUs are `potato | desktop | internet`. Alpenglowed implements
+`potato` and `desktop`. It is not Soliloquy and does not embed a browser.
 
-| Package | Build | Role | Alpenglow edition |
+| Package | Build | Role | Product SKU |
 | --- | --- | --- | --- |
-| `alpenglowed` | `cargo build --release` | `desktop`, `workstation` | `desktop-full` |
-| `alpenglowed-lite` | `cargo build --release --no-default-features` | `potatoes` | `desktop` |
+| `alpenglowed` | `cargo build --release` | `desktop` | `desktop` |
+| `alpenglowed-lite` | `cargo build --release --no-default-features` | `potato` | `potato` |
+| — | — | — | `internet` (`sold`) |
 
 ```sh
-alpenglowed --role=potatoes
+alpenglowed --role=potato
 alpenglowed --session-contract
-ALPENGLOWED_ROLE=workstation alpenglowed
+ALPENGLOWED_ROLE=desktop alpenglowed
 ```
 
 Kiosk uses Cage. Internet uses `sold`. See
@@ -125,7 +126,7 @@ open_settings = false
 initial_query = ""
 mode = "tiling"          # "tiling" or "floating"
 demo_layout = false
-role = "desktop"         # "potatoes", "desktop", or "workstation"
+role = "desktop"         # "potato" or "desktop"
 ```
 
 ## Build
@@ -135,7 +136,7 @@ cargo build --release
 cargo build --release -p alpenglow-greeter
 SDKROOT=$(xcrun --show-sdk-path) cargo run    # macOS dev
 cargo run                                       # Linux dev
-cargo build --release --no-default-features     # alpenglowed-lite (potatoes)
+cargo build --release --no-default-features     # alpenglowed-lite (potato)
 cargo run -- --polybar                          # status output
 cargo run -- --external-polybar                 # desktop without in-app status strip
 cargo run -- --smoke-wayland                    # Wayland connection smoke
