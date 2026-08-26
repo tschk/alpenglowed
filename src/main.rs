@@ -3035,8 +3035,6 @@ fn open_or_focus_settings(desktop: &Entity<DesktopModel>, cx: &mut App) {
 }
 
 fn main() {
-    let options = UiOptions::from_env();
-
     if std::env::args().any(|arg| arg == "--help") {
         eprintln!("alpenglowed — Alpenglow desktop shell");
         eprintln!("Flags:");
@@ -3122,6 +3120,8 @@ fn main() {
         }
         return;
     }
+
+    let options = UiOptions::from_env();
 
     let compositor_requested = std::env::args().any(|arg| arg == "--compositor");
     let start_compositor = compositor_requested
