@@ -6,9 +6,11 @@ use fuzzy_matcher::FuzzyMatcher;
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::io::Write;
+#[cfg(feature = "full")]
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
+#[cfg(feature = "full")]
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,11 +66,10 @@ pub struct WindowTarget {
 }
 
 impl PluginRegistry {
-    pub fn new() -> Self {
+    pub fn with_role(role: crate::role::SessionRole) -> Self {
         let mut registry = Self {
             plugins: Vec::new(),
         };
-        registry.register(Box::new(WebSearchPlugin));
         registry.register(Box::new(EmojiPlugin));
         registry.register(Box::new(FileSearchPlugin));
         registry.register(Box::new(ClipboardPlugin));
@@ -83,21 +84,25 @@ impl PluginRegistry {
         registry.register(Box::new(FactoryResetPlugin));
         registry.register(Box::new(DesktopActionsPlugin));
         registry.register(Box::new(AppLauncherPlugin));
-        registry.register(Box::new(SpotifyPlugin));
         registry.register(Box::new(ProcessKillPlugin));
         registry.register(Box::new(VolumePlugin));
         registry.register(Box::new(BrightnessPlugin));
         registry.register(Box::new(TimerPlugin));
         registry.register(Box::new(SystemInfoPlugin));
         registry.register(Box::new(NetworkInfoPlugin));
-        registry.register(Box::new(WeatherPlugin));
-        registry.register(Box::new(HelpPlugin));
+        registry.register(Box::new(HelpPlugin::for_role(role)));
         registry.register(Box::new(ColorPlugin));
         registry.register(Box::new(UnitConverterPlugin));
-        registry.register(Box::new(TranslatePlugin));
         registry.register(Box::new(RecentFilesPlugin));
-        for plugin in CommandPlugin::load_default() {
-            registry.register(Box::new(plugin));
+        #[cfg(feature = "full")]
+        if role.extras() {
+            registry.register(Box::new(WebSearchPlugin));
+            registry.register(Box::new(TranslatePlugin));
+            registry.register(Box::new(WeatherPlugin));
+            registry.register(Box::new(SpotifyPlugin));
+            for plugin in CommandPlugin::load_default() {
+                registry.register(Box::new(plugin));
+            }
         }
         registry
     }
@@ -182,8 +187,10 @@ fn score_window(
     boosted
 }
 
+#[cfg(feature = "full")]
 struct WebSearchPlugin;
 
+#[cfg(feature = "full")]
 impl Plugin for WebSearchPlugin {
     fn id(&self) -> &str {
         "web"
@@ -874,8 +881,10 @@ impl Plugin for AppLauncherPlugin {
     }
 }
 
+#[cfg(feature = "full")]
 struct SpotifyPlugin;
 
+#[cfg(feature = "full")]
 impl Plugin for SpotifyPlugin {
     fn id(&self) -> &str {
         "spotify"
@@ -1231,8 +1240,10 @@ impl Plugin for NetworkInfoPlugin {
     }
 }
 
+#[cfg(feature = "full")]
 struct WeatherPlugin;
 
+#[cfg(feature = "full")]
 impl Plugin for WeatherPlugin {
     fn id(&self) -> &str {
         "weather"
@@ -1266,7 +1277,17 @@ impl Plugin for WeatherPlugin {
     }
 }
 
-struct HelpPlugin;
+struct HelpPlugin {
+    extras: bool,
+}
+
+impl HelpPlugin {
+    fn for_role(role: crate::role::SessionRole) -> Self {
+        Self {
+            extras: role.extras(),
+        }
+    }
+}
 
 impl Plugin for HelpPlugin {
     fn id(&self) -> &str {
@@ -1274,7 +1295,8 @@ impl Plugin for HelpPlugin {
     }
 
     fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
-        let entries: &[(&str, &str)] = &[
+        let extras = self.extras;
+        [
             (
                 "Help: launcher",
                 "type to search apps, actions, and plugins",
@@ -1311,19 +1333,21 @@ impl Plugin for HelpPlugin {
                 "Help: shortcuts",
                 "Cmd-Space launcher, Cmd-, settings, Cmd-B status bar",
             ),
-        ];
-        entries
-            .iter()
-            .filter_map(|(title, detail)| {
-                score(title, query, matcher).map(|score| PluginResult {
-                    plugin_id: self.id().to_string(),
-                    title: title.to_string(),
-                    subtitle: detail.to_string(),
-                    score,
-                    action: PluginAction::None,
-                })
+        ]
+        .into_iter()
+        .filter(|(title, _)| {
+            extras || !matches!(*title, "Help: web" | "Help: weather" | "Help: translate")
+        })
+        .filter_map(|(title, detail)| {
+            score(title, query, matcher).map(|score| PluginResult {
+                plugin_id: self.id().to_string(),
+                title: title.to_string(),
+                subtitle: detail.to_string(),
+                score,
+                action: PluginAction::None,
             })
-            .collect()
+        })
+        .collect()
     }
 }
 
@@ -1492,8 +1516,10 @@ fn convert_units(value: f64, from: &str, to: &str) -> Option<f64> {
     None
 }
 
+#[cfg(feature = "full")]
 struct TranslatePlugin;
 
+#[cfg(feature = "full")]
 impl Plugin for TranslatePlugin {
     fn id(&self) -> &str {
         "translate"
@@ -1537,6 +1563,7 @@ impl Plugin for TranslatePlugin {
     }
 }
 
+#[cfg(feature = "full")]
 fn urlencode(text: &str) -> String {
     let mut out = String::with_capacity(text.len() * 3);
     for &byte in text.as_bytes() {
@@ -1608,6 +1635,7 @@ impl Plugin for RecentFilesPlugin {
     }
 }
 
+#[cfg(feature = "full")]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct CommandPluginManifest {
     pub id: String,
@@ -1620,6 +1648,7 @@ pub struct CommandPluginManifest {
     pub timeout_ms: u64,
 }
 
+#[cfg(feature = "full")]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginKind {
@@ -1629,6 +1658,7 @@ pub enum PluginKind {
     Webcode,
 }
 
+#[cfg(feature = "full")]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MatchMode {
@@ -1638,11 +1668,13 @@ pub enum MatchMode {
     Fuzzy,
 }
 
+#[cfg(feature = "full")]
 pub struct CommandPlugin {
     manifest: CommandPluginManifest,
     base_dir: PathBuf,
 }
 
+#[cfg(feature = "full")]
 impl CommandPlugin {
     pub fn from_manifest_file(path: &Path) -> Result<Self, String> {
         let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
@@ -1686,6 +1718,7 @@ impl CommandPlugin {
     }
 }
 
+#[cfg(feature = "full")]
 impl Plugin for CommandPlugin {
     fn id(&self) -> &str {
         &self.manifest.id
@@ -1707,17 +1740,20 @@ impl Plugin for CommandPlugin {
     }
 }
 
+#[cfg(feature = "full")]
 #[derive(Debug, Serialize)]
 struct PluginRequest<'a> {
     r#type: &'a str,
     query: &'a str,
 }
 
+#[cfg(feature = "full")]
 #[derive(Debug, Deserialize)]
 struct PluginResponse {
     results: Vec<PluginResponseResult>,
 }
 
+#[cfg(feature = "full")]
 #[derive(Debug, Deserialize)]
 struct PluginResponseResult {
     title: String,
@@ -1726,6 +1762,7 @@ struct PluginResponseResult {
     action: PluginAction,
 }
 
+#[cfg(feature = "full")]
 fn run_command_plugin(
     manifest: &CommandPluginManifest,
     base_dir: &Path,
@@ -1821,6 +1858,7 @@ fn apps() -> Vec<String> {
     .clone()
 }
 
+#[cfg(feature = "full")]
 fn program_available(program: &str) -> bool {
     std::env::var_os("PATH")
         .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
@@ -1847,6 +1885,7 @@ fn calc(expr: &str) -> Option<f64> {
     String::from_utf8_lossy(&output.stdout).trim().parse().ok()
 }
 
+#[cfg(feature = "full")]
 fn default_timeout_ms() -> u64 {
     1000
 }
@@ -1854,10 +1893,13 @@ fn default_timeout_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "full")]
     use std::fs;
+    #[cfg(feature = "full")]
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
+    #[cfg(feature = "full")]
     fn manifest_rejects_missing_command() {
         let dir = test_dir("bad_manifest");
         fs::create_dir_all(&dir).unwrap();
@@ -1872,6 +1914,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "full")]
     fn command_plugin_reads_json_response() {
         let dir = test_dir("command_plugin");
         fs::create_dir_all(&dir).unwrap();
@@ -1905,6 +1948,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "full")]
     fn spotify_reports_unavailable_without_playerctl() {
         let old_path = std::env::var_os("PATH");
         std::env::set_var("PATH", test_dir("empty_path"));
@@ -2028,6 +2072,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "full")]
     fn translate_plugin_should_build_url() {
         let results = TranslatePlugin.query("translate hello to es", &SkimMatcherV2::default());
         assert_eq!(results.len(), 1);
@@ -2036,6 +2081,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "full")]
     fn translate_plugin_should_hint_on_partial_input() {
         let results = TranslatePlugin.query("translate hello", &SkimMatcherV2::default());
         assert_eq!(results.len(), 1);
@@ -2043,6 +2089,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "full")]
     fn urlencode_should_encode_special_chars() {
         assert_eq!(urlencode("hello world"), "hello%20world");
         assert_eq!(urlencode("a&b=c"), "a%26b%3Dc");
@@ -2051,7 +2098,8 @@ mod tests {
 
     #[test]
     fn help_plugin_should_list_entries() {
-        let results = HelpPlugin.query("help", &SkimMatcherV2::default());
+        let results = HelpPlugin::for_role(crate::role::SessionRole::Desktop)
+            .query("help", &SkimMatcherV2::default());
         assert!(results.iter().any(|r| r.title.contains("launcher")));
         assert!(results.iter().any(|r| r.title.contains("shell")));
         assert!(results.iter().any(|r| r.title.contains("window modes")));
@@ -2069,6 +2117,7 @@ mod tests {
         assert!(results.iter().any(|r| r.title == "IP address"));
     }
 
+    #[cfg(feature = "full")]
     #[test]
     fn weather_plugin_should_match_query() {
         let results = WeatherPlugin.query("weather", &SkimMatcherV2::default());
@@ -2076,6 +2125,36 @@ mod tests {
         assert!(results.iter().any(|r| r.title == "Weather full"));
     }
 
+    #[test]
+    fn potato_registry_should_omit_weather() {
+        let registry = PluginRegistry::with_role(crate::role::SessionRole::Potato);
+        let results = registry.query_with_windows("weather", &SkimMatcherV2::default(), &[]);
+        assert!(!results.iter().any(|result| result.plugin_id == "weather"));
+        assert!(!results
+            .iter()
+            .any(|result| result.title.contains("weather")));
+    }
+
+    #[test]
+    fn potato_registry_should_omit_translate_and_web_help() {
+        let registry = PluginRegistry::with_role(crate::role::SessionRole::Potato);
+        let help = registry.query_with_windows("help", &SkimMatcherV2::default(), &[]);
+        assert!(!help.iter().any(|result| result.title.contains("translate")));
+        assert!(!help.iter().any(|result| result.title.contains("Help: web")));
+        assert!(!help
+            .iter()
+            .any(|result| result.title.contains("Help: weather")));
+    }
+
+    #[cfg(feature = "full")]
+    #[test]
+    fn desktop_registry_should_include_weather() {
+        let registry = PluginRegistry::with_role(crate::role::SessionRole::Desktop);
+        let results = registry.query_with_windows("weather", &SkimMatcherV2::default(), &[]);
+        assert!(results.iter().any(|result| result.plugin_id == "weather"));
+    }
+
+    #[cfg(feature = "full")]
     fn test_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("alpenglowed-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);

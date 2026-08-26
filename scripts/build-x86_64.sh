@@ -15,7 +15,7 @@ fi
 
 rustup target add "${TARGET}" 2>/dev/null || true
 
-cargo zigbuild --release --target "${TARGET}" --features compositor "$@"
+cargo zigbuild --release --target "${TARGET}" "$@"
 
 echo ""
 echo "Binary: target/${TARGET}/release/alpenglowed"

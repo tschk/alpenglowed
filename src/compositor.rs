@@ -336,7 +336,7 @@ pub fn start() -> (
         let _ = std::fs::remove_file(&sock_path);
 
         let listener = ListeningSocket::bind(sock_name).unwrap();
-        let _ = std::fs::set_permissions(&sock_path, std::fs::Permissions::from_mode(0o666));
+        let _ = std::fs::set_permissions(&sock_path, std::fs::Permissions::from_mode(0o600));
 
         let mut state = AlpenglowCompositor::new(&dh, event_tx, cmd_rx);
 

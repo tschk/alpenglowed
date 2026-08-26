@@ -86,6 +86,11 @@ Separate crate — black & white GPUI login for greetd. See [alpenglow-greeter/R
 
 E2E in QEMU: `../alpenglow/scripts/boot-native.sh --graphical` (greetd → greeter → session). Autologin: `ALPENGLOW_AUTOLOGIN=1` at build time or `config-autologin.toml`.
 
+## Alpenglow SKUs
+
+`potato | desktop | internet`. This binary is potato and desktop; internet is `sold`.
+`ALPENGLOWED_ROLE=potato|desktop`. See [docs/alpenglow-session-contract.md](docs/alpenglow-session-contract.md).
+
 ## Configuration
 
 Alpenglowed reads `/etc/alpenglowed/config.toml` at startup. If that file
@@ -114,9 +119,11 @@ cargo build --release
 cargo build --release -p alpenglow-greeter
 SDKROOT=$(xcrun --show-sdk-path) cargo run    # macOS dev
 cargo run                                       # Linux dev
+cargo build --release --no-default-features     # alpenglowed-lite (potato; no smithay)
 cargo run -- --polybar                          # status output
 cargo run -- --external-polybar                 # desktop without in-app status strip
 cargo run -- --smoke-wayland                    # Wayland connection smoke
+cargo run -- --session-contract                 # Alpenglow session JSON
 ./polybar/launch.sh                             # external polybar bar
 ```
 
