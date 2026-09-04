@@ -8,8 +8,13 @@
 use smithay::{
     delegate_compositor, delegate_data_device, delegate_output, delegate_seat, delegate_shm,
     delegate_xdg_shell,
-    desktop::{PopupKind, Window},
-    input::{Seat, SeatHandler, SeatState},
+    desktop::{
+        find_popup_root_surface, PopupKeyboardGrab, PopupKind, PopupPointerGrab, Window,
+    },
+    input::{
+        pointer::Focus,
+        Seat, SeatHandler, SeatState,
+    },
     reexports::{
         wayland_protocols::xdg::shell::server::xdg_toplevel,
         wayland_server::{
@@ -95,6 +100,7 @@ impl CompositorHandler for Alpenglowed {
         }
 
         self.popups.commit(surface);
+        self.queue_redraw();
     }
 }
 
@@ -116,16 +122,32 @@ impl XdgShellHandler for Alpenglowed {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
+        // Offer a real initial size from the output so clients are not stuck
+        // waiting on a 0x0 configure forever.
+        if let Some(output) = self.space.outputs().next() {
+            if let Some(geo) = self.space.output_geometry(output) {
+                let w = (geo.size.w * 3 / 4).max(320);
+                let h = (geo.size.h * 3 / 4).max(240);
+                surface.with_pending_state(|state| {
+                    state.size = Some((w, h).into());
+                });
+            }
+        }
+        surface.send_configure();
+
         let window = Window::new_wayland_window(surface);
-        // Milestone 0 stacks everything at the origin; milestone 2 replaces
-        // this with the scrollable strip.
-        self.space.map_element(window, (0, 0), true);
+        // Cascade instead of stacking every window at the origin.
+        let n = self.space.elements().count() as i32;
+        let loc = (40 + n * 32, 40 + n * 32);
+        self.space.map_element(window, loc, true);
+        self.queue_redraw();
     }
 
     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
         if let Err(err) = self.popups.track_popup(PopupKind::Xdg(surface)) {
             tracing::warn!("untracked popup: {err}");
         }
+        self.queue_redraw();
     }
 
     fn reposition_request(
@@ -141,7 +163,27 @@ impl XdgShellHandler for Alpenglowed {
         surface.send_repositioned(token);
     }
 
-    fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {}
+    fn grab(&mut self, surface: PopupSurface, seat: wl_seat::WlSeat, serial: Serial) {
+        let Some(seat) = Seat::<Self>::from_resource(&seat) else {
+            return;
+        };
+        let popup = PopupKind::Xdg(surface);
+        let Ok(root) = find_popup_root_surface(&popup) else {
+            return;
+        };
+        match self.popups.grab_popup(root, popup, &seat, serial) {
+            Ok(grab) => {
+                if let Some(keyboard) = self.seat.get_keyboard() {
+                    keyboard.set_grab(self, PopupKeyboardGrab::new(&grab), serial);
+                }
+                if let Some(pointer) = self.seat.get_pointer() {
+                    pointer.set_grab(self, PopupPointerGrab::new(&grab), serial, Focus::Keep);
+                }
+            }
+            Err(err) => tracing::debug!("popup grab refused: {err:?}"),
+        }
+        self.queue_redraw();
+    }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         let window = self
@@ -151,6 +193,7 @@ impl XdgShellHandler for Alpenglowed {
             .cloned();
         if let Some(window) = window {
             self.space.unmap_elem(&window);
+            self.queue_redraw();
         }
     }
 
@@ -163,6 +206,7 @@ impl XdgShellHandler for Alpenglowed {
             state.states.set(xdg_toplevel::State::Fullscreen);
         });
         surface.send_configure();
+        self.queue_redraw();
     }
 }
 

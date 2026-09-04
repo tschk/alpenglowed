@@ -11,7 +11,7 @@ use smithay::{
     desktop::{PopupManager, Space, Window, WindowSurfaceType},
     input::{Seat, SeatState},
     reexports::{
-        calloop::{generic::Generic, EventLoop, Interest, LoopSignal, Mode, PostAction},
+        calloop::{generic::Generic, ping::Ping, EventLoop, Interest, LoopSignal, Mode, PostAction},
         wayland_server::{
             backend::{ClientData, ClientId, DisconnectReason},
             protocol::wl_surface::WlSurface,
@@ -46,6 +46,9 @@ pub struct Alpenglowed {
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
     pub seat: Seat<Self>,
+
+    /// Wakes the nested winit window to redraw without busy-spinning.
+    pub redraw_ping: Option<Ping>,
 }
 
 impl Alpenglowed {
@@ -82,6 +85,13 @@ impl Alpenglowed {
             seat_state,
             data_device_state,
             seat,
+            redraw_ping: None,
+        }
+    }
+
+    pub fn queue_redraw(&self) {
+        if let Some(ping) = &self.redraw_ping {
+            ping.ping();
         }
     }
 
