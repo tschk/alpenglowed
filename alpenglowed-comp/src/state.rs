@@ -11,7 +11,9 @@ use smithay::{
     desktop::{PopupManager, Space, Window, WindowSurfaceType},
     input::{Seat, SeatState},
     reexports::{
-        calloop::{generic::Generic, ping::Ping, EventLoop, Interest, LoopSignal, Mode, PostAction},
+        calloop::{
+            generic::Generic, ping::Ping, EventLoop, Interest, LoopSignal, Mode, PostAction,
+        },
         wayland_server::{
             backend::{ClientData, ClientId, DisconnectReason},
             protocol::wl_surface::WlSurface,

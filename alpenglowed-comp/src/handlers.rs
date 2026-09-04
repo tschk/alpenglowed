@@ -8,13 +8,8 @@
 use smithay::{
     delegate_compositor, delegate_data_device, delegate_output, delegate_seat, delegate_shm,
     delegate_xdg_shell,
-    desktop::{
-        find_popup_root_surface, PopupKeyboardGrab, PopupKind, PopupPointerGrab, Window,
-    },
-    input::{
-        pointer::Focus,
-        Seat, SeatHandler, SeatState,
-    },
+    desktop::{find_popup_root_surface, PopupKeyboardGrab, PopupKind, PopupPointerGrab, Window},
+    input::{pointer::Focus, Seat, SeatHandler, SeatState},
     reexports::{
         wayland_protocols::xdg::shell::server::xdg_toplevel,
         wayland_server::{

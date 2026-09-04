@@ -23,7 +23,9 @@ use smithay::{
 
 use crate::state::Alpenglowed;
 
-fn physical_mm_from_px(size: Size<i32, smithay::utils::Physical>) -> Size<i32, smithay::utils::Raw> {
+fn physical_mm_from_px(
+    size: Size<i32, smithay::utils::Physical>,
+) -> Size<i32, smithay::utils::Raw> {
     // ~96 DPI: mm = px * 25.4 / 96
     let w = ((size.w as f64) * 25.4 / 96.0).round().max(1.0) as i32;
     let h = ((size.h as f64) * 25.4 / 96.0).round().max(1.0) as i32;
@@ -85,10 +87,7 @@ pub fn run(event_loop: &mut EventLoop<'static, Alpenglowed>, state: &mut Alpengl
         .insert_source(winit, move |event, _, state| {
             let mut backend = backend.borrow_mut();
             match event {
-                WinitEvent::Resized {
-                    size,
-                    scale_factor,
-                } => {
+                WinitEvent::Resized { size, scale_factor } => {
                     let scale_i = integer_scale(scale_factor);
                     let mode = Mode {
                         size,
