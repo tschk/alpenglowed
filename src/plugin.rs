@@ -319,7 +319,8 @@ impl Plugin for FileSearchPlugin {
         }
 
         let output = Command::new("sh")
-            .args(["-c", &format!("locate -i -l 8 '{}' 2>/dev/null || fd -t f -l 8 '{}' 2>/dev/null || find ~ -maxdepth 4 -iname '*{}*' -type f 2>/dev/null | head -8", search, search, search)])
+            .arg("-c")
+            .arg(crate::shell::file_search_command(search))
             .output()
             .ok();
         let output = match output {
@@ -348,7 +349,7 @@ impl Plugin for FileSearchPlugin {
                         subtitle: path.to_string(),
                         score: score.min(100),
                         action: PluginAction::Shell {
-                            command: format!("xdg-open '{}'", path),
+                            command: crate::shell::open_file_command(path),
                         },
                     })
             })
@@ -1627,7 +1628,7 @@ impl Plugin for RecentFilesPlugin {
                     subtitle: path.to_string(),
                     score: 100,
                     action: PluginAction::Shell {
-                        command: format!("xdg-open '{}'", path),
+                        command: crate::shell::open_file_command(path),
                     },
                 }
             })

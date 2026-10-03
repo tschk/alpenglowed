@@ -10,6 +10,7 @@ mod plugin;
 mod role;
 mod runner;
 mod session;
+mod shell;
 mod terminal;
 
 use crepuscularity_core::context::{TemplateContext, TemplateValue};
