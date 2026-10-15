@@ -1,0 +1,4 @@
+
+# Exclude Shell from GitHub language statistics.
+*.sh linguist-detectable=false
+/contrib/session/alpenglow-session-start linguist-detectable=false
