@@ -1,14 +1,16 @@
 use crate::de::DesktopAction;
 use crate::layout::LayoutAction;
 use crate::runner::WindowMode;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::os::unix::net::UnixStream;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SessionRequest {
     SetWindowMode { mode: WindowMode },
+    CycleWindowMode,
+    FocusWindow { id: usize },
     Layout { action: LayoutAction },
     DesktopAction { action: DesktopAction },
 }
@@ -34,6 +36,13 @@ mod tests {
         .unwrap();
 
         assert_eq!(payload, r#"{"type":"set_window_mode","mode":"tiling"}"#);
+        let parsed: SessionRequest = serde_json::from_str(&payload).unwrap();
+        assert_eq!(
+            parsed,
+            SessionRequest::SetWindowMode {
+                mode: WindowMode::Tiling
+            }
+        );
     }
 
     #[test]
@@ -44,6 +53,13 @@ mod tests {
         .unwrap();
 
         assert_eq!(payload, r#"{"type":"desktop_action","action":"lock"}"#);
+        let parsed: SessionRequest = serde_json::from_str(&payload).unwrap();
+        assert_eq!(
+            parsed,
+            SessionRequest::DesktopAction {
+                action: DesktopAction::Lock
+            }
+        );
     }
 
     #[test]
@@ -54,5 +70,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(payload, r#"{"type":"layout","action":"split_row"}"#);
+        let parsed: SessionRequest = serde_json::from_str(&payload).unwrap();
+        assert_eq!(
+            parsed,
+            SessionRequest::Layout {
+                action: LayoutAction::SplitRow
+            }
+        );
     }
 }

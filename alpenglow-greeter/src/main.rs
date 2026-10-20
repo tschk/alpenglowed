@@ -5,8 +5,7 @@ extern crate crepuscularity_gpui as gpui;
 use gpui::prelude::*;
 use gpui::{
     div, px, rgb, App, Application, Context, Entity, EventEmitter, FocusHandle, KeyDownEvent,
-    Modifiers, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind,
-    WindowOptions,
+    Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowOptions,
 };
 use std::borrow::Cow;
 
@@ -76,15 +75,17 @@ impl GreeterModel {
         self.auth_busy = true;
         self.notify_ui(cx);
 
-        let password = self.password.clone();
         #[cfg(target_os = "linux")]
-        match greetd::login(&user, &password) {
-            Ok(()) => {
-                self.ipc_done = true;
-                self.auth_busy = false;
-                self.notify_ui(cx);
+        {
+            let password = self.password.clone();
+            match greetd::login(&user, &password) {
+                Ok(()) => {
+                    self.ipc_done = true;
+                    self.auth_busy = false;
+                    self.notify_ui(cx);
+                }
+                Err(e) => self.set_error(e, cx),
             }
-            Err(e) => self.set_error(e, cx),
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -189,7 +190,8 @@ impl Render for GreeterView {
                     cx.stop_propagation();
                     return;
                 }
-                if event.keystroke.modifiers == Modifiers::default() {
+                let mods = event.keystroke.modifiers;
+                if !mods.platform && !mods.control && !mods.alt {
                     if let Some(ch) = event.keystroke.key_char.as_deref() {
                         if ch.chars().count() == 1 && !ch.chars().all(|c| c.is_control()) {
                             this.desktop.update(cx, |m, cx| {
@@ -276,13 +278,28 @@ fn open_greeter_window(model: Entity<GreeterModel>, cx: &mut App) {
     .unwrap();
 }
 
+pub(crate) fn session_command_from(raw: Option<&str>) -> Vec<String> {
+    let parsed: Vec<String> = raw
+        .unwrap_or("")
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    if parsed.is_empty() {
+        vec!["alpenglow-session-start".to_string()]
+    } else {
+        parsed
+    }
+}
+
 fn main() {
     if std::env::args().any(|a| a == "--help" || a == "-h") {
         eprintln!("alpenglow-greeter — GPUI greeter for greetd");
-        eprintln!("Env: ALPENGLOW_GREETER_USER, GREETD_SOCK");
+        eprintln!("Env: ALPENGLOW_GREETER_USER, ALPENGLOW_SESSION_CMD, GREETD_SOCK");
         eprintln!("Autologin: use greetd initial_session (see /etc/alpenglow/autologin)");
         return;
     }
+
+    let _ = session_command_from(std::env::var("ALPENGLOW_SESSION_CMD").ok().as_deref());
 
     Application::new().run(|cx: &mut App| {
         let _ = cx
@@ -310,28 +327,43 @@ mod greetd {
         .write_to(&mut stream)
         .map_err(|e| format!("create_session: {e}"))?;
 
+        let cmd =
+            crate::session_command_from(std::env::var("ALPENGLOW_SESSION_CMD").ok().as_deref());
+
         loop {
-            let msg = Response::read_from(&mut stream).map_err(|e| format!("recv: {e}"))?;
+            let msg = Response::read_from(&mut stream).map_err(|e| {
+                let _ = Request::CancelSession.write_to(&mut stream);
+                format!("recv: {e}")
+            })?;
             match msg {
                 Response::Success => {
-                    Request::StartSession {
-                        cmd: vec![],
-                        env: vec![],
-                    }
-                    .write_to(&mut stream)
-                    .map_err(|e| format!("start_session: {e}"))?;
-                    let started =
-                        Response::read_from(&mut stream).map_err(|e| format!("recv: {e}"))?;
+                    Request::StartSession { cmd, env: vec![] }
+                        .write_to(&mut stream)
+                        .map_err(|e| {
+                            let _ = Request::CancelSession.write_to(&mut stream);
+                            format!("start_session: {e}")
+                        })?;
+                    let started = Response::read_from(&mut stream).map_err(|e| {
+                        let _ = Request::CancelSession.write_to(&mut stream);
+                        format!("recv: {e}")
+                    })?;
                     return match started {
                         Response::Success => Ok(()),
-                        Response::Error { description, .. } => Err(description),
-                        other => Err(format!("unexpected after start: {other:?}")),
+                        Response::Error { description, .. } => {
+                            let _ = Request::CancelSession.write_to(&mut stream);
+                            Err(description)
+                        }
+                        other => {
+                            let _ = Request::CancelSession.write_to(&mut stream);
+                            Err(format!("unexpected after start: {other:?}"))
+                        }
                     };
                 }
                 Response::Error {
                     error_type,
                     description,
                 } => {
+                    let _ = Request::CancelSession.write_to(&mut stream);
                     return Err(match error_type {
                         ErrorType::AuthError => "Authentication failed".into(),
                         ErrorType::Error => description,
@@ -349,7 +381,10 @@ mod greetd {
                     };
                     Request::PostAuthMessageResponse { response: answer }
                         .write_to(&mut stream)
-                        .map_err(|e| format!("post_auth: {e}"))?;
+                        .map_err(|e| {
+                            let _ = Request::CancelSession.write_to(&mut stream);
+                            format!("post_auth: {e}")
+                        })?;
                 }
             }
         }
@@ -358,9 +393,27 @@ mod greetd {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn greeter_default_user_is_non_empty() {
         let u = std::env::var("USER").unwrap_or_else(|_| "root".into());
         assert!(!u.is_empty());
+    }
+
+    #[test]
+    fn session_command_defaults_to_alpenglow_session_start() {
+        assert_eq!(
+            session_command_from(None),
+            vec!["alpenglow-session-start".to_string()]
+        );
+        assert_eq!(
+            session_command_from(Some("   ")),
+            vec!["alpenglow-session-start".to_string()]
+        );
+        assert_eq!(
+            session_command_from(Some("alpenglowed-comp --winit")),
+            vec!["alpenglowed-comp".to_string(), "--winit".to_string()]
+        );
     }
 }
