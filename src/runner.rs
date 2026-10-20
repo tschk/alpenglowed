@@ -7,6 +7,8 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowMode {
+    #[serde(rename = "niri", alias = "niri_strip")]
+    NiriStrip,
     Tiling,
     Floating,
     Monocle,
@@ -18,6 +20,7 @@ pub enum WindowMode {
 impl WindowMode {
     pub fn label(&self) -> &'static str {
         match self {
+            Self::NiriStrip => "niri",
             Self::Tiling => "tiling",
             Self::Floating => "floating",
             Self::Monocle => "monocle",
@@ -27,8 +30,21 @@ impl WindowMode {
         }
     }
 
+    pub fn title(&self) -> &'static str {
+        match self {
+            Self::NiriStrip => "Niri Strip (Scrollable Columns)",
+            Self::Tiling => "Tiling (BSP Tree)",
+            Self::Floating => "Windowing (Floating)",
+            Self::Monocle => "Monocle (Maximized)",
+            Self::Stack => "Stack (Cascaded)",
+            Self::Center => "Center (Focused Deck)",
+            Self::Grid => "Grid (Equal Cells)",
+        }
+    }
+
     pub fn all() -> &'static [Self] {
         &[
+            Self::NiriStrip,
             Self::Tiling,
             Self::Floating,
             Self::Monocle,
@@ -45,10 +61,16 @@ impl WindowMode {
     }
 
     pub fn from_label(label: &str) -> Option<Self> {
-        Self::all()
-            .iter()
-            .copied()
-            .find(|mode| mode.label() == label)
+        match label.trim().to_lowercase().replace('-', "_").as_str() {
+            "niri" | "niri_strip" | "strip" | "scrollable" | "columns" => Some(Self::NiriStrip),
+            "tiling" | "tile" | "bsp" => Some(Self::Tiling),
+            "floating" | "float" | "windowing" => Some(Self::Floating),
+            "monocle" | "max" => Some(Self::Monocle),
+            "stack" => Some(Self::Stack),
+            "center" | "centered" => Some(Self::Center),
+            "grid" => Some(Self::Grid),
+            _ => None,
+        }
     }
 }
 

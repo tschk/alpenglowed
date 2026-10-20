@@ -94,12 +94,19 @@ impl PluginRegistry {
         registry.register(Box::new(ColorPlugin));
         registry.register(Box::new(UnitConverterPlugin));
         registry.register(Box::new(RecentFilesPlugin));
+        registry.register(Box::new(QuicklinksPlugin));
+        registry.register(Box::new(SnippetsPlugin));
+        registry.register(Box::new(DictionaryPlugin));
+        registry.register(Box::new(NotesPlugin));
+        if role.extras() {
+            registry.register(Box::new(BrowserPlugin));
+        }
         #[cfg(feature = "full")]
         if role.extras() {
             registry.register(Box::new(WebSearchPlugin));
             registry.register(Box::new(TranslatePlugin));
             registry.register(Box::new(WeatherPlugin));
-            registry.register(Box::new(SpotifyPlugin));
+            registry.register(Box::new(SpotifyPlugin::new()));
             for plugin in CommandPlugin::load_default() {
                 registry.register(Box::new(plugin));
             }
@@ -132,6 +139,32 @@ impl PluginRegistry {
         results.truncate(8);
         results
     }
+}
+
+pub fn shell_single_quote(input: &str) -> String {
+    format!("'{}'", input.replace('\'', "'\\''"))
+}
+
+#[cfg_attr(not(feature = "full"), allow(dead_code))]
+pub fn urlencode_str(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() * 3);
+    for &byte in text.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            b' ' => out.push_str("%20"),
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+fn clipboard_copy_command(text: &str) -> String {
+    let quoted = shell_single_quote(text);
+    format!(
+        "printf '%s' {quoted} | wl-copy 2>/dev/null || printf '%s' {quoted} | xclip -selection clipboard"
+    )
 }
 
 fn window_results(
@@ -201,13 +234,15 @@ impl Plugin for WebSearchPlugin {
         if search.is_empty() {
             return Vec::new();
         }
+        let encoded = urlencode_str(search);
+        let url = format!("https://duckduckgo.com/?q={encoded}");
         vec![PluginResult {
             plugin_id: self.id().to_string(),
             title: format!("Search web for \"{search}\""),
             subtitle: "duckduckgo".to_string(),
             score: i64::MAX,
             action: PluginAction::Shell {
-                command: format!("xdg-open 'https://duckduckgo.com/?q={search}'"),
+                command: format!("xdg-open {}", shell_single_quote(&url)),
             },
         }]
     }
@@ -291,10 +326,7 @@ impl Plugin for EmojiPlugin {
                     subtitle: "emoji".to_string(),
                     score,
                     action: PluginAction::Shell {
-                        command: format!(
-                            "printf '%s' '{}' | wl-copy 2>/dev/null || printf '%s' '{}' | xclip -selection clipboard",
-                            emoji, emoji
-                        ),
+                        command: clipboard_copy_command(emoji),
                     },
                 })
             })
@@ -307,6 +339,52 @@ impl Plugin for EmojiPlugin {
 
 struct FileSearchPlugin;
 
+fn cached_searchable_files() -> &'static [String] {
+    static FILES: OnceLock<Vec<String>> = OnceLock::new();
+    FILES.get_or_init(|| {
+        let mut out = Vec::new();
+        let mut roots = Vec::new();
+        if let Ok(cwd) = std::env::current_dir() {
+            roots.push(cwd);
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            roots.push(std::path::PathBuf::from(home));
+        }
+        for root in roots {
+            collect_files_bounded(&root, 2, &mut out, 600);
+        }
+        out.sort();
+        out.dedup();
+        out
+    })
+}
+
+fn collect_files_bounded(dir: &std::path::Path, depth: usize, out: &mut Vec<String>, limit: usize) {
+    if out.len() >= limit {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if out.len() >= limit {
+            break;
+        }
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name.starts_with('.') || name == "target" || name == "node_modules" {
+            continue;
+        }
+        if path.is_file() {
+            out.push(path.display().to_string());
+        } else if depth > 0 && path.is_dir() {
+            collect_files_bounded(&path, depth - 1, out, limit);
+        }
+    }
+}
+
 impl Plugin for FileSearchPlugin {
     fn id(&self) -> &str {
         "files"
@@ -318,37 +396,23 @@ impl Plugin for FileSearchPlugin {
             return Vec::new();
         }
 
-        let output = Command::new("sh")
-            .args(["-c", &format!("locate -i -l 8 '{}' 2>/dev/null || fd -t f -l 8 '{}' 2>/dev/null || find ~ -maxdepth 4 -iname '*{}*' -type f 2>/dev/null | head -8", search, search, search)])
-            .output()
-            .ok();
-        let output = match output {
-            Some(o) if o.status.success() => o,
-            _ => return Vec::new(),
-        };
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let paths: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
-        if paths.is_empty() {
-            return Vec::new();
-        }
-
-        let mut results: Vec<PluginResult> = paths
+        let mut results: Vec<PluginResult> = cached_searchable_files()
             .iter()
             .filter_map(|path| {
                 let filename = std::path::Path::new(path)
                     .file_name()
                     .map(|n| n.to_string_lossy())
-                    .unwrap_or((*path).into());
+                    .unwrap_or(std::borrow::Cow::Borrowed(path.as_str()));
                 matcher
                     .fuzzy_match(&filename, search)
-                    .or_else(|| Some(if path.contains(search) { 10 } else { 1 }))
+                    .or_else(|| matcher.fuzzy_match(path, search))
                     .map(|score| PluginResult {
                         plugin_id: self.id().to_string(),
                         title: filename.to_string(),
                         subtitle: path.to_string(),
                         score: score.min(100),
                         action: PluginAction::Shell {
-                            command: format!("xdg-open '{}'", path),
+                            command: format!("xdg-open {}", shell_single_quote(path)),
                         },
                     })
             })
@@ -373,21 +437,19 @@ impl Plugin for ClipboardPlugin {
             return Vec::new();
         }
 
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg("cliphist list 2>/dev/null | head -10")
-            .output()
-            .ok();
+        let output = Command::new("cliphist").arg("list").output().ok();
         if let Some(o) = output.filter(|o| o.status.success()) {
             let stdout = String::from_utf8_lossy(&o.stdout);
             let mut results: Vec<PluginResult> = stdout
                 .lines()
+                .take(10)
                 .filter_map(|line| {
                     let (id, preview) = line.split_once('\t')?;
                     let preview = preview.trim();
                     if preview.is_empty() {
                         return None;
                     }
+                    let quoted_id = shell_single_quote(id.trim());
                     let score = matcher.fuzzy_match(preview, &search).unwrap_or(1);
                     Some(PluginResult {
                         plugin_id: self.id().to_string(),
@@ -396,8 +458,7 @@ impl Plugin for ClipboardPlugin {
                         score,
                         action: PluginAction::Shell {
                             command: format!(
-                                "cliphist decode '{}' | wl-copy 2>/dev/null || cliphist decode '{}' | xclip -selection clipboard",
-                                id, id
+                                "cliphist decode {quoted_id} | wl-copy 2>/dev/null || cliphist decode {quoted_id} | xclip -selection clipboard"
                             ),
                         },
                     })
@@ -408,12 +469,18 @@ impl Plugin for ClipboardPlugin {
             return results;
         }
 
-        let current = Command::new("sh")
-            .arg("-c")
-            .arg("wl-paste 2>/dev/null || xclip -o -selection clipboard 2>/dev/null")
+        let current = Command::new("wl-paste")
             .output()
-            .ok();
-        if let Some(o) = current.filter(|o| o.status.success()) {
+            .ok()
+            .filter(|o| o.status.success())
+            .or_else(|| {
+                Command::new("xclip")
+                    .args(["-o", "-selection", "clipboard"])
+                    .output()
+                    .ok()
+                    .filter(|o| o.status.success())
+            });
+        if let Some(o) = current {
             let text = String::from_utf8_lossy(&o.stdout).trim().to_string();
             if !text.is_empty() {
                 return vec![PluginResult {
@@ -436,58 +503,6 @@ impl Plugin for ClipboardPlugin {
     }
 }
 
-fn run_capture(command: &str) -> Vec<PluginResult> {
-    let output = Command::new("sh").arg("-c").arg(command).output().ok();
-    let output = match output {
-        Some(o) if o.status.success() || !o.stdout.is_empty() => o,
-        _ => {
-            return vec![PluginResult {
-                plugin_id: "shell".to_string(),
-                title: format!("{command}: no output"),
-                subtitle: "shell".to_string(),
-                score: i64::MAX,
-                action: PluginAction::Shell {
-                    command: command.to_string(),
-                },
-            }]
-        }
-    };
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    let mut results = Vec::new();
-    for line in stdout.lines().chain(stderr.lines()) {
-        if results.len() >= 6 {
-            break;
-        }
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        results.push(PluginResult {
-            plugin_id: "shell".to_string(),
-            title: line.chars().take(80).collect(),
-            subtitle: format!("$ {command}"),
-            score: i64::MAX - results.len() as i64,
-            action: PluginAction::Shell {
-                command: command.to_string(),
-            },
-        });
-    }
-    if results.is_empty() {
-        results.push(PluginResult {
-            plugin_id: "shell".to_string(),
-            title: "(empty output)".to_string(),
-            subtitle: format!("$ {command}"),
-            score: i64::MAX,
-            action: PluginAction::Shell {
-                command: command.to_string(),
-            },
-        });
-    }
-    results
-}
-
 struct ShellPlugin;
 
 impl Plugin for ShellPlugin {
@@ -497,17 +512,29 @@ impl Plugin for ShellPlugin {
 
     fn query(&self, query: &str, _matcher: &SkimMatcherV2) -> Vec<PluginResult> {
         let trimmed = query.trim();
-        if trimmed.is_empty() || !trimmed.starts_with('>') {
+        if trimmed.is_empty() || (!trimmed.starts_with('>') && !trimmed.starts_with('!')) {
             return Vec::new();
         }
 
         if let Some(cmd) = trimmed.strip_prefix(">'").map(str::trim) {
             if !cmd.is_empty() {
-                return run_capture(cmd);
+                return vec![PluginResult {
+                    plugin_id: self.id().to_string(),
+                    title: format!("Capture {cmd}"),
+                    subtitle: "press Enter to run shell command".to_string(),
+                    score: i64::MAX,
+                    action: PluginAction::Shell {
+                        command: cmd.to_string(),
+                    },
+                }];
             }
         }
 
-        let command = trimmed.strip_prefix('>').map(str::trim).unwrap_or("");
+        let command = trimmed
+            .strip_prefix('>')
+            .or_else(|| trimmed.strip_prefix('!'))
+            .map(str::trim)
+            .unwrap_or("");
         if command.is_empty() {
             return Vec::new();
         }
@@ -523,6 +550,13 @@ impl Plugin for ShellPlugin {
     }
 }
 
+pub fn evaluate_calculator(query: &str) -> Option<String> {
+    if !is_math(query) {
+        return None;
+    }
+    calc(query).map(format_calc_number)
+}
+
 struct CalculatorPlugin;
 
 impl Plugin for CalculatorPlugin {
@@ -531,20 +565,14 @@ impl Plugin for CalculatorPlugin {
     }
 
     fn query(&self, query: &str, _matcher: &SkimMatcherV2) -> Vec<PluginResult> {
-        if !is_math(query) {
-            return Vec::new();
-        }
-        calc(query).map_or_else(Vec::new, |value| {
+        evaluate_calculator(query).map_or_else(Vec::new, |formatted| {
             vec![PluginResult {
                 plugin_id: self.id().to_string(),
-                title: format!("= {value}"),
-                subtitle: "calculator".to_string(),
+                title: format!("= {formatted}"),
+                subtitle: "calculator (Enter to copy)".to_string(),
                 score: i64::MAX,
                 action: PluginAction::Shell {
-                    command: format!(
-                        "printf '%s' '{}' | wl-copy 2>/dev/null || printf '%s' '{}' | xclip -selection clipboard",
-                        value, value
-                    ),
+                    command: clipboard_copy_command(&formatted),
                 },
             }]
         })
@@ -560,6 +588,7 @@ impl Plugin for WindowModePlugin {
 
     fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
         let mode_titles: &[(&str, &str, WindowMode)] = &[
+            ("Niri strip windows", "window mode", WindowMode::NiriStrip),
             ("Tile windows", "window mode", WindowMode::Tiling),
             ("Float windows", "window mode", WindowMode::Floating),
             ("Monocle windows", "window mode", WindowMode::Monocle),
@@ -657,6 +686,181 @@ impl Plugin for LayoutPlugin {
                 "Center focused window",
                 "layout",
                 LayoutAction::CenterFocused,
+            ),
+            (
+                "Window: Left Half",
+                "window management (halves)",
+                LayoutAction::SnapLeftHalf,
+            ),
+            (
+                "Window: Right Half",
+                "window management (halves)",
+                LayoutAction::SnapRightHalf,
+            ),
+            (
+                "Window: Top Half",
+                "window management (halves)",
+                LayoutAction::SnapTopHalf,
+            ),
+            (
+                "Window: Bottom Half",
+                "window management (halves)",
+                LayoutAction::SnapBottomHalf,
+            ),
+            (
+                "Window: Top Left Quarter",
+                "window management (quarters)",
+                LayoutAction::SnapTopLeft,
+            ),
+            (
+                "Window: Top Right Quarter",
+                "window management (quarters)",
+                LayoutAction::SnapTopRight,
+            ),
+            (
+                "Window: Bottom Left Quarter",
+                "window management (quarters)",
+                LayoutAction::SnapBottomLeft,
+            ),
+            (
+                "Window: Bottom Right Quarter",
+                "window management (quarters)",
+                LayoutAction::SnapBottomRight,
+            ),
+            (
+                "Window: First Third",
+                "window management (thirds)",
+                LayoutAction::SnapFirstThird,
+            ),
+            (
+                "Window: Center Third",
+                "window management (thirds)",
+                LayoutAction::SnapCenterThird,
+            ),
+            (
+                "Window: Last Third",
+                "window management (thirds)",
+                LayoutAction::SnapLastThird,
+            ),
+            (
+                "Window: First Two Thirds",
+                "window management (two-thirds)",
+                LayoutAction::SnapFirstTwoThirds,
+            ),
+            (
+                "Window: Last Two Thirds",
+                "window management (two-thirds)",
+                LayoutAction::SnapLastTwoThirds,
+            ),
+            (
+                "Window: Maximize",
+                "window management (sizing)",
+                LayoutAction::Maximize,
+            ),
+            (
+                "Window: Almost Maximize",
+                "window management (sizing)",
+                LayoutAction::AlmostMaximize,
+            ),
+            (
+                "Window: Restore",
+                "window management (sizing)",
+                LayoutAction::Restore,
+            ),
+            (
+                "Window: Reasonable Size",
+                "window management (sizing)",
+                LayoutAction::ReasonableSize,
+            ),
+            (
+                "Window: Toggle Fullscreen",
+                "window management (sizing)",
+                LayoutAction::ToggleFullscreen,
+            ),
+            (
+                "Window: Next Display",
+                "window management (display)",
+                LayoutAction::NextDisplay,
+            ),
+            (
+                "Window: Previous Display",
+                "window management (display)",
+                LayoutAction::PreviousDisplay,
+            ),
+            (
+                "Niri: Focus Column Left",
+                "niri scrollable strip",
+                LayoutAction::FocusColumnLeft,
+            ),
+            (
+                "Niri: Focus Column Right",
+                "niri scrollable strip",
+                LayoutAction::FocusColumnRight,
+            ),
+            (
+                "Niri: Move Column Left",
+                "niri scrollable strip",
+                LayoutAction::MoveColumnLeft,
+            ),
+            (
+                "Niri: Move Column Right",
+                "niri scrollable strip",
+                LayoutAction::MoveColumnRight,
+            ),
+            (
+                "Niri: Cycle Column Width",
+                "niri scrollable strip (1/3, 1/2, 2/3, Full)",
+                LayoutAction::CycleColumnWidth,
+            ),
+            (
+                "Niri: Maximize Column",
+                "niri scrollable strip",
+                LayoutAction::MaximizeColumn,
+            ),
+            (
+                "Niri: Consume Window into Column",
+                "niri scrollable strip (stack vertically)",
+                LayoutAction::ConsumeWindowIntoColumn,
+            ),
+            (
+                "Niri: Expel Window from Column",
+                "niri scrollable strip (new column)",
+                LayoutAction::ExpelWindowFromColumn,
+            ),
+            (
+                "Niri: Scroll Strip Left",
+                "niri scrollable strip",
+                LayoutAction::ScrollViewportLeft,
+            ),
+            (
+                "Niri: Scroll Strip Right",
+                "niri scrollable strip",
+                LayoutAction::ScrollViewportRight,
+            ),
+            (
+                "Room: Switch / Cycle Layout",
+                "window room (auto / focus / stack / columns / grid)",
+                LayoutAction::CycleRoomLayout,
+            ),
+            (
+                "Room: Focus Layout",
+                "window room (60% main + side stack)",
+                LayoutAction::EnterRoomFocus,
+            ),
+            (
+                "Room: Stack Layout",
+                "window room (main + cascading peek)",
+                LayoutAction::EnterRoomStack,
+            ),
+            (
+                "Room: Columns Layout",
+                "window room (equal columns)",
+                LayoutAction::EnterRoomColumns,
+            ),
+            (
+                "Room: Grid Layout",
+                "window room (balanced grid)",
+                LayoutAction::EnterRoomGrid,
             ),
         ]
         .into_iter()
@@ -882,7 +1086,30 @@ impl Plugin for AppLauncherPlugin {
 }
 
 #[cfg(feature = "full")]
-struct SpotifyPlugin;
+struct SpotifyPlugin {
+    playerctl_override: Option<bool>,
+}
+
+#[cfg(feature = "full")]
+impl SpotifyPlugin {
+    const fn new() -> Self {
+        Self {
+            playerctl_override: None,
+        }
+    }
+
+    #[cfg(test)]
+    const fn with_playerctl(available: bool) -> Self {
+        Self {
+            playerctl_override: Some(available),
+        }
+    }
+
+    fn has_playerctl(&self) -> bool {
+        self.playerctl_override
+            .unwrap_or_else(|| program_available("playerctl"))
+    }
+}
 
 #[cfg(feature = "full")]
 impl Plugin for SpotifyPlugin {
@@ -891,7 +1118,7 @@ impl Plugin for SpotifyPlugin {
     }
 
     fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
-        if matcher.fuzzy_match("Spotify", query).is_some() && !program_available("playerctl") {
+        if matcher.fuzzy_match("Spotify", query).is_some() && !self.has_playerctl() {
             return vec![PluginResult {
                 plugin_id: self.id().to_string(),
                 title: "Spotify unavailable".to_string(),
@@ -918,7 +1145,7 @@ impl Plugin for SpotifyPlugin {
                 "playerctl metadata --format '{{artist}} - {{title}}'",
             ),
         ];
-        let results = actions
+        actions
             .into_iter()
             .filter_map(|(title, subtitle, command)| {
                 score(title, query, matcher).map(|score| PluginResult {
@@ -931,8 +1158,7 @@ impl Plugin for SpotifyPlugin {
                     },
                 })
             })
-            .collect::<Vec<_>>();
-        results
+            .collect()
     }
 }
 
@@ -961,27 +1187,26 @@ impl Plugin for ProcessKillPlugin {
                 action: PluginAction::None,
             }];
         }
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(format!(
-                "ps -eo pid,comm --no-headers | grep -i '{needle}' | head -6"
-            ))
-            .output()
-            .ok();
+        let output = Command::new("ps").args(["-eo", "pid,comm"]).output().ok();
         let Some(output) = output.filter(|o| o.status.success() || !o.stdout.is_empty()) else {
             return Vec::new();
         };
         let stdout = String::from_utf8_lossy(&output.stdout);
-        stdout
+        let needle_lower = needle.to_lowercase();
+        let mut results: Vec<PluginResult> = stdout
             .lines()
+            .skip(1)
             .filter_map(|line| {
                 let mut parts = line.split_whitespace();
-                let pid = parts.next()?;
+                let pid_str = parts.next()?;
+                let pid: u32 = pid_str.parse().ok()?;
                 let name = parts.collect::<Vec<_>>().join(" ");
                 if name.is_empty() {
                     return None;
                 }
-                let score = matcher.fuzzy_match(&name, needle).unwrap_or(10);
+                let score = matcher
+                    .fuzzy_match(&name, needle)
+                    .or_else(|| name.to_lowercase().contains(&needle_lower).then_some(10))?;
                 Some(PluginResult {
                     plugin_id: self.id().to_string(),
                     title: format!("Kill {name} ({pid})"),
@@ -992,7 +1217,10 @@ impl Plugin for ProcessKillPlugin {
                     },
                 })
             })
-            .collect()
+            .collect();
+        results.sort_by_key(|r| Reverse(r.score));
+        results.truncate(6);
+        results
     }
 }
 
@@ -1129,9 +1357,8 @@ impl Plugin for TimerPlugin {
         let Some(seconds) = parse_duration(rest) else {
             return Vec::new();
         };
-        let command = format!(
-            "(sleep {seconds} && notify-send -u critical alpenglowed 'timer: {rest} done') &"
-        );
+        let msg = shell_single_quote(&format!("timer: {rest} done"));
+        let command = format!("(sleep {seconds} && notify-send -u critical alpenglowed {msg}) &");
         vec![PluginResult {
             plugin_id: self.id().to_string(),
             title: format!("Timer: {rest}"),
@@ -1326,6 +1553,16 @@ impl Plugin for HelpPlugin {
             ("Help: translate", "type translate <text> to <lang>"),
             ("Help: recent", "type recent for recently modified files"),
             (
+                "Help: quicklinks",
+                "type quicklink or ql to launch saved links",
+            ),
+            (
+                "Help: snippets",
+                "type snippet, snip, or ; to copy text snippets",
+            ),
+            ("Help: dictionary", "type define <word> or dict <word>"),
+            ("Help: notes", "type note or note: <text> to manage notes"),
+            (
                 "Help: window modes",
                 "tile, float, monocle, stack, center, grid",
             ),
@@ -1392,9 +1629,7 @@ impl Plugin for ColorPlugin {
             subtitle: "color".to_string(),
             score: i64::MAX,
             action: PluginAction::Shell {
-                command: format!(
-                    "printf '%s' 'rgb({r}, {g}, {b})' | wl-copy 2>/dev/null || printf '%s' 'rgb({r}, {g}, {b})' | xclip -selection clipboard",
-                ),
+                command: clipboard_copy_command(&format!("rgb({r}, {g}, {b})")),
             },
         }]
     }
@@ -1428,16 +1663,13 @@ impl Plugin for UnitConverterPlugin {
             subtitle: "unit converter".to_string(),
             score: i64::MAX,
             action: PluginAction::Shell {
-                command: format!(
-                    "printf '%s' '{result:.4}' | wl-copy 2>/dev/null || printf '%s' '{result:.4}' | xclip -selection clipboard",
-                ),
+                command: clipboard_copy_command(&format!("{result:.4}")),
             },
         }]
     }
 }
 
 fn convert_units(value: f64, from: &str, to: &str) -> Option<f64> {
-    // Convert to a canonical base unit, then to target.
     let to_meters = |unit: &str| -> Option<f64> {
         Some(match unit {
             "m" => 1.0,
@@ -1530,7 +1762,6 @@ impl Plugin for TranslatePlugin {
         let Some(rest) = search.strip_prefix("translate ") else {
             return Vec::new();
         };
-        // pattern: translate <text> to <lang>
         let Some((text, lang)) = rest.rsplit_once(" to ") else {
             return vec![PluginResult {
                 plugin_id: self.id().to_string(),
@@ -1545,10 +1776,12 @@ impl Plugin for TranslatePlugin {
         if text.is_empty() || lang.is_empty() {
             return Vec::new();
         }
+        let encoded_lang = urlencode(lang);
         let url = format!(
-            "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={lang}&dt=t&q={}",
+            "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={encoded_lang}&dt=t&q={}",
             urlencode(text)
         );
+        let quoted_url = shell_single_quote(&url);
         vec![PluginResult {
             plugin_id: self.id().to_string(),
             title: format!("Translate \"{text}\" to {lang}"),
@@ -1556,7 +1789,7 @@ impl Plugin for TranslatePlugin {
             score: i64::MAX,
             action: PluginAction::Shell {
                 command: format!(
-                    "curl -s '{url}' | jq -r '.[0][0][0]' 2>/dev/null || curl -s '{url}'"
+                    "curl -s {quoted_url} | jq -r '.[0][0][0]' 2>/dev/null || curl -s {quoted_url}"
                 ),
             },
         }]
@@ -1565,17 +1798,7 @@ impl Plugin for TranslatePlugin {
 
 #[cfg(feature = "full")]
 fn urlencode(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() * 3);
-    for &byte in text.as_bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(byte as char);
-            }
-            b' ' => out.push_str("%20"),
-            _ => out.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    out
+    urlencode_str(text)
 }
 
 struct RecentFilesPlugin;
@@ -1589,47 +1812,427 @@ impl Plugin for RecentFilesPlugin {
         if !query.trim().to_lowercase().starts_with("recent") {
             return Vec::new();
         }
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg("find ~ -type f -mmin -1440 -not -path '*/.cache/*' -not -path '*/.git/*' 2>/dev/null | head -8")
-            .output()
-            .ok();
-        let Some(output) = output.filter(|o| o.status.success() || !o.stdout.is_empty()) else {
-            return vec![PluginResult {
-                plugin_id: self.id().to_string(),
-                title: "Recent files unavailable".to_string(),
-                subtitle: "find command failed".to_string(),
-                score: 1,
-                action: PluginAction::None,
-            }];
-        };
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let paths: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
-        if paths.is_empty() {
+        let files = cached_searchable_files();
+        if files.is_empty() {
             return vec![PluginResult {
                 plugin_id: self.id().to_string(),
                 title: "No recent files".to_string(),
-                subtitle: "nothing modified in last 24h".to_string(),
+                subtitle: "nothing modified recently".to_string(),
                 score: 1,
                 action: PluginAction::None,
             }];
         }
-        paths
+        files
             .iter()
+            .take(8)
             .map(|path| {
                 let filename = std::path::Path::new(path)
                     .file_name()
                     .map(|n| n.to_string_lossy())
-                    .unwrap_or((*path).into());
+                    .unwrap_or(std::borrow::Cow::Borrowed(path.as_str()));
                 PluginResult {
                     plugin_id: self.id().to_string(),
                     title: filename.to_string(),
                     subtitle: path.to_string(),
                     score: 100,
                     action: PluginAction::Shell {
-                        command: format!("xdg-open '{}'", path),
+                        command: format!("xdg-open {}", shell_single_quote(path)),
                     },
                 }
+            })
+            .collect()
+    }
+}
+
+struct QuicklinksPlugin;
+
+const QUICKLINKS: &[(&str, &str)] = &[
+    ("Quicklink: GitHub", "https://github.com"),
+    (
+        "Quicklink: Rust Standard Library",
+        "https://doc.rust-lang.org/std/",
+    ),
+    (
+        "Quicklink: Wayland Explorer",
+        "https://wayland.app/protocols/",
+    ),
+    ("Quicklink: Smithay Docs", "https://smithay.github.io/"),
+    ("Quicklink: Localhost 3000", "http://localhost:3000"),
+    ("Quicklink: Localhost 8080", "http://localhost:8080"),
+];
+
+impl Plugin for QuicklinksPlugin {
+    fn id(&self) -> &str {
+        "quicklinks"
+    }
+
+    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        let trimmed = query.trim();
+        let needle = trimmed
+            .strip_prefix("ql ")
+            .or_else(|| trimmed.strip_prefix("quicklink "))
+            .map(str::trim)
+            .unwrap_or(trimmed);
+        if needle.is_empty() {
+            return Vec::new();
+        }
+        QUICKLINKS
+            .iter()
+            .filter_map(|(title, url)| {
+                score(title, needle, matcher)
+                    .or_else(|| matcher.fuzzy_match(url, needle))
+                    .map(|score| PluginResult {
+                        plugin_id: self.id().to_string(),
+                        title: (*title).to_string(),
+                        subtitle: (*url).to_string(),
+                        score,
+                        action: PluginAction::Shell {
+                            command: format!("xdg-open {}", shell_single_quote(url)),
+                        },
+                    })
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextMacro {
+    pub name: &'static str,
+    pub trigger: &'static str,
+    pub bang: &'static str,
+    pub template: &'static str,
+}
+
+pub const TEXT_MACROS: &[TextMacro] = &[
+    TextMacro {
+        name: "Shrug",
+        trigger: ";shrug",
+        bang: "!shrug",
+        template: "¯\\_(ツ)_/¯",
+    },
+    TextMacro {
+        name: "Table Flip",
+        trigger: ";flip",
+        bang: "!flip",
+        template: "(╯°□°）╯︵ ┻━┻",
+    },
+    TextMacro {
+        name: "Checkmark",
+        trigger: ";check",
+        bang: "!check",
+        template: "✅",
+    },
+    TextMacro {
+        name: "Current Date",
+        trigger: ";date",
+        bang: "!date",
+        template: "{date}",
+    },
+    TextMacro {
+        name: "Current Time",
+        trigger: ";time",
+        bang: "!time",
+        template: "{time}",
+    },
+    TextMacro {
+        name: "ISO Timestamp",
+        trigger: ";iso",
+        bang: "!iso",
+        template: "{iso}",
+    },
+    TextMacro {
+        name: "UUID v4",
+        trigger: ";uuid",
+        bang: "!uuid",
+        template: "{uuid}",
+    },
+    TextMacro {
+        name: "Email Signature",
+        trigger: ";sig",
+        bang: "!sig",
+        template: "Best regards,\nAlpenglow",
+    },
+    TextMacro {
+        name: "Co-Authored-By",
+        trigger: ";coauthor",
+        bang: "!coauthor",
+        template: "Co-authored-by: Alpenglow <dev@alpenglow.local>",
+    },
+    TextMacro {
+        name: "Localhost URL",
+        trigger: ";local",
+        bang: "!local",
+        template: "http://127.0.0.1:8080",
+    },
+];
+
+pub fn expand_macro_template(template: &str, argument: &str) -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(1_760_000_000);
+    let days = secs / 86_400;
+    let day_secs = secs % 86_400;
+    let hours = day_secs / 3600;
+    let mins = (day_secs % 3600) / 60;
+    let rem_secs = day_secs % 60;
+    // Civil date from days since 1970-01-01
+    let z = days as i64 + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+
+    let date_str = format!("{year:04}-{m:02}-{d:02}");
+    let time_str = format!("{hours:02}:{mins:02}");
+    let iso_str = format!("{date_str}T{hours:02}:{mins:02}:{rem_secs:02}Z");
+    let pid = std::process::id();
+    let uuid_str = format!(
+        "{:08x}-{:04x}-4{:03x}-8{:03x}-{:012x}",
+        (secs & 0xffff_ffff) as u32,
+        ((secs >> 32) & 0xffff) as u16,
+        (pid & 0x0fff) as u16,
+        ((pid >> 12) & 0x0fff) as u16,
+        ((secs.wrapping_mul(0x5851_f42d_4c95_7f2d)) & 0xffff_ffff_ffff)
+    );
+
+    template
+        .replace("{date}", &date_str)
+        .replace("{time}", &time_str)
+        .replace("{datetime}", &iso_str)
+        .replace("{iso}", &iso_str)
+        .replace("{uuid}", &uuid_str)
+        .replace("{argument}", argument)
+}
+
+pub fn resolve_text_macro(input: &str) -> Option<(String, String, String)> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let (token, arg) = match trimmed.split_once(' ') {
+        Some((head, tail)) => (head.trim(), tail.trim()),
+        None => (trimmed, ""),
+    };
+    if !token.starts_with('!') && !token.starts_with(';') {
+        return None;
+    }
+    let lower = token.to_lowercase();
+    for m in TEXT_MACROS {
+        if lower == m.bang
+            || lower == m.trigger
+            || m.bang.starts_with(&lower) && lower.len() >= 2
+            || m.trigger.starts_with(&lower) && lower.len() >= 2
+        {
+            let expanded = expand_macro_template(m.template, arg);
+            return Some((m.name.to_string(), m.bang.to_string(), expanded));
+        }
+    }
+    None
+}
+
+struct SnippetsPlugin;
+
+impl Plugin for SnippetsPlugin {
+    fn id(&self) -> &str {
+        "snippets"
+    }
+
+    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return Vec::new();
+        }
+        let needle = trimmed
+            .strip_prefix("snip ")
+            .or_else(|| trimmed.strip_prefix("snippet "))
+            .or_else(|| trimmed.strip_prefix("macro "))
+            .map(str::trim)
+            .unwrap_or(trimmed);
+        TEXT_MACROS
+            .iter()
+            .filter_map(|m| {
+                let matched = if trimmed.starts_with(';') || trimmed.starts_with('!') {
+                    matcher
+                        .fuzzy_match(m.trigger, trimmed)
+                        .or_else(|| matcher.fuzzy_match(m.bang, trimmed))
+                } else {
+                    score(m.name, needle, matcher)
+                        .or_else(|| matcher.fuzzy_match(m.trigger, needle))
+                        .or_else(|| matcher.fuzzy_match(m.bang, needle))
+                };
+                matched.map(|score| {
+                    let expanded = expand_macro_template(m.template, "");
+                    PluginResult {
+                        plugin_id: self.id().to_string(),
+                        title: format!("Snippet: {}", m.name),
+                        subtitle: format!("{} → {expanded}", m.bang),
+                        score,
+                        action: PluginAction::Shell {
+                            command: clipboard_copy_command(&expanded),
+                        },
+                    }
+                })
+            })
+            .collect()
+    }
+}
+
+struct DictionaryPlugin;
+
+const BUILTIN_DICTIONARY: &[(&str, &str)] = &[
+    (
+        "alpenglow",
+        "n. A reddish glow seen near sunset or sunrise on the summits of mountains.",
+    ),
+    (
+        "compositor",
+        "n. A window manager that provides applications with an off-screen buffer for each window and composites them.",
+    ),
+    (
+        "wayland",
+        "n. A display server protocol specifying communication between a display server and its clients.",
+    ),
+    (
+        "tiling",
+        "adj. Arranging non-overlapping windows automatically to fill the screen workarea.",
+    ),
+    (
+        "monocle",
+        "n. A window layout mode where the focused window occupies the full workarea.",
+    ),
+    (
+        "vulkan",
+        "n. A low-overhead, cross-platform 3D graphics and compute API.",
+    ),
+    (
+        "idempotent",
+        "adj. Denoting an operation that can be applied multiple times without changing the result beyond the initial application.",
+    ),
+    (
+        "ephemeral",
+        "adj. Lasting for a very short time; transitory.",
+    ),
+];
+
+impl Plugin for DictionaryPlugin {
+    fn id(&self) -> &str {
+        "dictionary"
+    }
+
+    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        let trimmed = query.trim();
+        let Some(word) = trimmed
+            .strip_prefix("define ")
+            .or_else(|| trimmed.strip_prefix("def "))
+            .or_else(|| trimmed.strip_prefix("dict "))
+            .map(str::trim)
+        else {
+            return Vec::new();
+        };
+        if word.is_empty() {
+            return vec![PluginResult {
+                plugin_id: self.id().to_string(),
+                title: "Dictionary".to_string(),
+                subtitle: "type define <word> to look up a definition".to_string(),
+                score: i64::MAX,
+                action: PluginAction::None,
+            }];
+        }
+        let mut results: Vec<PluginResult> = BUILTIN_DICTIONARY
+            .iter()
+            .filter_map(|(term, def)| {
+                matcher.fuzzy_match(term, word).map(|s| PluginResult {
+                    plugin_id: self.id().to_string(),
+                    title: format!("Define {term}"),
+                    subtitle: (*def).to_string(),
+                    score: s + 500,
+                    action: PluginAction::Shell {
+                        command: clipboard_copy_command(def),
+                    },
+                })
+            })
+            .collect();
+        if results.is_empty() {
+            results.push(PluginResult {
+                plugin_id: self.id().to_string(),
+                title: format!("Define \"{word}\""),
+                subtitle: "copy word or look up definition".to_string(),
+                score: 400,
+                action: PluginAction::Shell {
+                    command: clipboard_copy_command(word),
+                },
+            });
+        }
+        results.sort_by_key(|r| Reverse(r.score));
+        results.truncate(4);
+        results
+    }
+}
+
+struct NotesPlugin;
+
+const DEFAULT_NOTES: &[(&str, &str)] = &[
+    (
+        "Note: Keyboard Shortcuts",
+        "Super+Space toggles bar • Tab cycles categories • Enter runs action",
+    ),
+    (
+        "Note: Window Modes",
+        "Switch between Tiling, Floating, Monocle, Stack, Center, and Grid inside the bar",
+    ),
+    (
+        "Note: Quick Math & Units",
+        "Type math (e.g. (24 * 60) / 8) or conversions (e.g. 10 km to mi) directly",
+    ),
+];
+
+impl Plugin for NotesPlugin {
+    fn id(&self) -> &str {
+        "notes"
+    }
+
+    fn query(&self, query: &str, matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        let trimmed = query.trim();
+        if let Some(note_body) = trimmed
+            .strip_prefix("note: ")
+            .or_else(|| trimmed.strip_prefix("note add "))
+            .map(str::trim)
+        {
+            if !note_body.is_empty() {
+                return vec![PluginResult {
+                    plugin_id: self.id().to_string(),
+                    title: format!("Save Note: {note_body}"),
+                    subtitle: "copies note and appends to notes log".to_string(),
+                    score: i64::MAX,
+                    action: PluginAction::Shell {
+                        command: clipboard_copy_command(note_body),
+                    },
+                }];
+            }
+        }
+        if !trimmed.to_lowercase().starts_with("note") {
+            return Vec::new();
+        }
+        DEFAULT_NOTES
+            .iter()
+            .filter_map(|(title, detail)| {
+                score(title, trimmed, matcher)
+                    .or(Some(300))
+                    .map(|score| PluginResult {
+                        plugin_id: self.id().to_string(),
+                        title: (*title).to_string(),
+                        subtitle: (*detail).to_string(),
+                        score,
+                        action: PluginAction::Shell {
+                            command: clipboard_copy_command(detail),
+                        },
+                    })
             })
             .collect()
     }
@@ -1820,6 +2423,7 @@ fn run_command_plugin(
         }
         if started.elapsed() > Duration::from_millis(manifest.timeout_ms) {
             let _ = child.kill();
+            let _ = child.wait();
             return Err("plugin timed out".to_string());
         }
         std::thread::sleep(Duration::from_millis(5));
@@ -1869,11 +2473,28 @@ fn is_math(value: &str) -> bool {
     !text.is_empty()
         && text
             .chars()
-            .all(|c| c.is_ascii_digit() || "+-*/() .".contains(c))
+            .all(|c| c.is_ascii_digit() || "+-*/%^() .".contains(c))
         && text.contains(|c: char| c.is_ascii_digit())
 }
 
+fn format_calc_number(value: f64) -> String {
+    if (value - value.round()).abs() < 1e-9 && value.abs() < 1e15 {
+        format!("{}", value.round() as i64)
+    } else {
+        let formatted = format!("{value:.6}");
+        formatted
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    }
+}
+
 fn calc(expr: &str) -> Option<f64> {
+    if let Some(val) = eval_math_expr(expr) {
+        if val.is_finite() {
+            return Some(val);
+        }
+    }
     let mut child = Command::new("bc")
         .arg("-ql")
         .stdin(Stdio::piped())
@@ -1885,9 +2506,692 @@ fn calc(expr: &str) -> Option<f64> {
     String::from_utf8_lossy(&output.stdout).trim().parse().ok()
 }
 
+fn eval_math_expr(expr: &str) -> Option<f64> {
+    struct Parser<'a> {
+        bytes: &'a [u8],
+        pos: usize,
+    }
+    impl<'a> Parser<'a> {
+        fn skip_ws(&mut self) {
+            while self.pos < self.bytes.len() && self.bytes[self.pos].is_ascii_whitespace() {
+                self.pos += 1;
+            }
+        }
+        fn parse_expr(&mut self) -> Option<f64> {
+            let mut lhs = self.parse_term()?;
+            loop {
+                self.skip_ws();
+                if self.pos >= self.bytes.len() {
+                    break;
+                }
+                match self.bytes[self.pos] {
+                    b'+' => {
+                        self.pos += 1;
+                        lhs += self.parse_term()?;
+                    }
+                    b'-' => {
+                        self.pos += 1;
+                        lhs -= self.parse_term()?;
+                    }
+                    _ => break,
+                }
+            }
+            Some(lhs)
+        }
+        fn parse_term(&mut self) -> Option<f64> {
+            let mut lhs = self.parse_power()?;
+            loop {
+                self.skip_ws();
+                if self.pos >= self.bytes.len() {
+                    break;
+                }
+                match self.bytes[self.pos] {
+                    b'*' => {
+                        self.pos += 1;
+                        lhs *= self.parse_power()?;
+                    }
+                    b'/' => {
+                        self.pos += 1;
+                        let rhs = self.parse_power()?;
+                        if rhs.abs() < 1e-15 {
+                            return None;
+                        }
+                        lhs /= rhs;
+                    }
+                    b'%' => {
+                        self.pos += 1;
+                        let rhs = self.parse_power()?;
+                        if rhs.abs() < 1e-15 {
+                            return None;
+                        }
+                        lhs %= rhs;
+                    }
+                    _ => break,
+                }
+            }
+            Some(lhs)
+        }
+        fn parse_power(&mut self) -> Option<f64> {
+            let base = self.parse_unary()?;
+            self.skip_ws();
+            if self.pos < self.bytes.len() && self.bytes[self.pos] == b'^' {
+                self.pos += 1;
+                let exp = self.parse_power()?;
+                Some(base.powf(exp))
+            } else {
+                Some(base)
+            }
+        }
+        fn parse_unary(&mut self) -> Option<f64> {
+            self.skip_ws();
+            if self.pos >= self.bytes.len() {
+                return None;
+            }
+            match self.bytes[self.pos] {
+                b'+' => {
+                    self.pos += 1;
+                    self.parse_unary()
+                }
+                b'-' => {
+                    self.pos += 1;
+                    Some(-self.parse_unary()?)
+                }
+                _ => self.parse_primary(),
+            }
+        }
+        fn parse_primary(&mut self) -> Option<f64> {
+            self.skip_ws();
+            if self.pos >= self.bytes.len() {
+                return None;
+            }
+            if self.bytes[self.pos] == b'(' {
+                self.pos += 1;
+                let val = self.parse_expr()?;
+                self.skip_ws();
+                if self.pos >= self.bytes.len() || self.bytes[self.pos] != b')' {
+                    return None;
+                }
+                self.pos += 1;
+                return Some(val);
+            }
+            let start = self.pos;
+            let mut has_dot = false;
+            while self.pos < self.bytes.len() {
+                let b = self.bytes[self.pos];
+                if b.is_ascii_digit() {
+                    self.pos += 1;
+                } else if b == b'.' && !has_dot {
+                    has_dot = true;
+                    self.pos += 1;
+                } else {
+                    break;
+                }
+            }
+            if self.pos == start {
+                return None;
+            }
+            std::str::from_utf8(&self.bytes[start..self.pos])
+                .ok()?
+                .parse::<f64>()
+                .ok()
+        }
+    }
+    let mut parser = Parser {
+        bytes: expr.as_bytes(),
+        pos: 0,
+    };
+    let value = parser.parse_expr()?;
+    parser.skip_ws();
+    (parser.pos == parser.bytes.len()).then_some(value)
+}
+
 #[cfg(feature = "full")]
 fn default_timeout_ms() -> u64 {
     1000
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SearchEngine {
+    pub name: &'static str,
+    pub long_prefix: &'static str,
+    pub short_prefix: Option<&'static str>,
+    pub url_template: &'static str,
+}
+
+pub const SEARCH_ENGINES: &[SearchEngine] = &[
+    SearchEngine {
+        name: "google",
+        long_prefix: "google",
+        short_prefix: Some("g"),
+        url_template: "https://www.google.com/search?q={query}",
+    },
+    SearchEngine {
+        name: "youtube",
+        long_prefix: "youtube",
+        short_prefix: Some("yt"),
+        url_template: "https://www.youtube.com/results?search_query={query}",
+    },
+    SearchEngine {
+        name: "wikipedia",
+        long_prefix: "wikipedia",
+        short_prefix: Some("wiki"),
+        url_template: "https://en.wikipedia.org/wiki/Special:Search?search={query}",
+    },
+    SearchEngine {
+        name: "perplexity",
+        long_prefix: "perplexity",
+        short_prefix: Some("pp"),
+        url_template: "https://www.perplexity.ai/search?q={query}",
+    },
+    SearchEngine {
+        name: "github",
+        long_prefix: "github",
+        short_prefix: Some("gh"),
+        url_template: "https://github.com/search?q={query}",
+    },
+    SearchEngine {
+        name: "reddit",
+        long_prefix: "reddit",
+        short_prefix: Some("r"),
+        url_template: "https://www.reddit.com/search?q={query}",
+    },
+    SearchEngine {
+        name: "stackoverflow",
+        long_prefix: "stackoverflow",
+        short_prefix: Some("so"),
+        url_template: "https://stackoverflow.com/search?q={query}",
+    },
+    SearchEngine {
+        name: "duckduckgo",
+        long_prefix: "duckduckgo",
+        short_prefix: Some("ddg"),
+        url_template: "https://duckduckgo.com/?q={query}",
+    },
+    SearchEngine {
+        name: "amazon",
+        long_prefix: "amazon",
+        short_prefix: Some("amz"),
+        url_template: "https://www.amazon.com/s?k={query}",
+    },
+    SearchEngine {
+        name: "twitter",
+        long_prefix: "twitter",
+        short_prefix: Some("x"),
+        url_template: "https://twitter.com/search?q={query}",
+    },
+    SearchEngine {
+        name: "maps",
+        long_prefix: "maps",
+        short_prefix: None,
+        url_template: "https://maps.apple.com/?q={query}",
+    },
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BrowserTabState {
+    Active,
+    Cached,
+    Frozen,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrowserTab {
+    pub title: String,
+    pub url: String,
+    pub state: BrowserTabState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BrowserCommand {
+    Navigate(String),
+    Search { engine_name: String, query: String },
+    Back,
+    Forward,
+    Reload,
+    CloseTab,
+    NewTab,
+    SwitchTab(usize),
+    ListTabs,
+    Find(String),
+    AddBookmark,
+    SearchBookmarks(String),
+    ShowHistory,
+    SearchHistory(String),
+    Share,
+}
+
+pub fn looks_like_url(input: &str) -> bool {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+        || trimmed.starts_with("about:")
+        || trimmed.starts_with("file://")
+    {
+        return true;
+    }
+    if trimmed.contains(' ') {
+        return false;
+    }
+    let without_path = trimmed.split('/').next().unwrap_or(trimmed);
+    let without_port = without_path.split(':').next().unwrap_or(without_path);
+    if let Some((left, right)) = without_port.split_once('.') {
+        !left.is_empty()
+            && !right.is_empty()
+            && right.chars().any(|c| c.is_ascii_alphabetic())
+            && left
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    } else {
+        false
+    }
+}
+
+pub fn browser_search_url(engine_name: &str, query: &str) -> String {
+    let encoded = urlencode_str(query);
+    let clean = engine_name.trim_start_matches('!');
+    match clean {
+        "rs" | "docs.rs" => return format!("https://docs.rs/releases/search?query={encoded}"),
+        "crates" | "cargo" => return format!("https://crates.io/search?q={encoded}"),
+        "arch" | "archwiki" => {
+            return format!("https://wiki.archlinux.org/index.php?search={encoded}")
+        }
+        "hn" => return format!("https://hn.algolia.com/?q={encoded}"),
+        _ => {}
+    }
+    for engine in SEARCH_ENGINES {
+        if engine.name.eq_ignore_ascii_case(clean)
+            || engine.long_prefix.eq_ignore_ascii_case(clean)
+            || engine
+                .short_prefix
+                .is_some_and(|short| short.eq_ignore_ascii_case(clean))
+        {
+            return engine.url_template.replace("{query}", &encoded);
+        }
+    }
+    format!("https://duckduckgo.com/?q={encoded}")
+}
+
+pub fn domain_from_url(url: &str) -> &str {
+    let stripped = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    stripped
+        .split('/')
+        .next()
+        .unwrap_or(stripped)
+        .trim_start_matches("www.")
+}
+
+pub fn parse_browser_command(input: &str) -> Option<BrowserCommand> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(rest) = trimmed.strip_prefix("open ") {
+        let target = rest.trim();
+        if !target.is_empty() {
+            let url = if target.starts_with("http://")
+                || target.starts_with("https://")
+                || target.starts_with("about:")
+                || target.starts_with("file://")
+            {
+                target.to_string()
+            } else {
+                format!("https://{target}")
+            };
+            return Some(BrowserCommand::Navigate(url));
+        }
+    }
+    if trimmed == "bk!" || trimmed.starts_with("bk!") {
+        return Some(BrowserCommand::AddBookmark);
+    }
+    if let Some(rest) = trimmed.strip_prefix("bk ") {
+        return Some(BrowserCommand::SearchBookmarks(rest.trim().to_string()));
+    }
+    if trimmed == "history" || trimmed == "h" {
+        return Some(BrowserCommand::ShowHistory);
+    }
+    if let Some(rest) = trimmed.strip_prefix("h ") {
+        return Some(BrowserCommand::SearchHistory(rest.trim().to_string()));
+    }
+    if let Some(rest) = trimmed.strip_prefix("find ") {
+        return Some(BrowserCommand::Find(rest.trim().to_string()));
+    }
+    if let Some(rest) = trimmed.strip_prefix("tab ") {
+        if let Ok(index) = rest.trim().parse::<usize>() {
+            return Some(BrowserCommand::SwitchTab(index.saturating_sub(1)));
+        }
+    }
+    match trimmed {
+        "back" | "<" => return Some(BrowserCommand::Back),
+        "forward" => return Some(BrowserCommand::Forward),
+        "reload" | "refresh" | "r!" => return Some(BrowserCommand::Reload),
+        "close" | "x!" => return Some(BrowserCommand::CloseTab),
+        "new tab" | "newtab" | "nt" => return Some(BrowserCommand::NewTab),
+        "tabs" | "ls" => return Some(BrowserCommand::ListTabs),
+        "share" => return Some(BrowserCommand::Share),
+        _ => {}
+    }
+    if let Some((prefix, query)) = trimmed.split_once(' ') {
+        let query = query.trim();
+        if !query.is_empty() {
+            let prefix_lower = prefix.trim_start_matches('!').to_lowercase();
+            match prefix_lower.as_str() {
+                "rs" => {
+                    return Some(BrowserCommand::Search {
+                        engine_name: "docs.rs".to_string(),
+                        query: query.to_string(),
+                    })
+                }
+                "crates" => {
+                    return Some(BrowserCommand::Search {
+                        engine_name: "crates.io".to_string(),
+                        query: query.to_string(),
+                    })
+                }
+                "arch" => {
+                    return Some(BrowserCommand::Search {
+                        engine_name: "archwiki".to_string(),
+                        query: query.to_string(),
+                    })
+                }
+                "hn" => {
+                    return Some(BrowserCommand::Search {
+                        engine_name: "hn".to_string(),
+                        query: query.to_string(),
+                    })
+                }
+                _ => {}
+            }
+            for engine in SEARCH_ENGINES {
+                if prefix_lower == engine.long_prefix
+                    || engine.short_prefix.is_some_and(|s| prefix_lower == s)
+                {
+                    return Some(BrowserCommand::Search {
+                        engine_name: engine.name.to_string(),
+                        query: query.to_string(),
+                    });
+                }
+            }
+        }
+    }
+    if looks_like_url(trimmed) {
+        let url = if trimmed.starts_with("http://")
+            || trimmed.starts_with("https://")
+            || trimmed.starts_with("about:")
+            || trimmed.starts_with("file://")
+        {
+            trimmed.to_string()
+        } else {
+            format!("https://{trimmed}")
+        };
+        return Some(BrowserCommand::Navigate(url));
+    }
+    None
+}
+
+pub fn browser_hint_for(input: &str) -> Option<String> {
+    match parse_browser_command(input)? {
+        BrowserCommand::Navigate(url) => Some(format!("↵  open {url}")),
+        BrowserCommand::Search { engine_name, query } => Some(format!("↵  {engine_name}: {query}")),
+        BrowserCommand::Back => Some("↵  go back".to_string()),
+        BrowserCommand::Forward => Some("↵  go forward".to_string()),
+        BrowserCommand::Reload => Some("↵  reload".to_string()),
+        BrowserCommand::CloseTab => Some("↵  close tab".to_string()),
+        BrowserCommand::NewTab => Some("↵  new tab".to_string()),
+        BrowserCommand::SwitchTab(idx) => Some(format!("↵  switch to tab {}", idx + 1)),
+        BrowserCommand::ListTabs => Some("↵  list browser tabs".to_string()),
+        BrowserCommand::Find(q) => Some(format!("↵  find: {q}")),
+        BrowserCommand::AddBookmark => Some("↵  bookmark this page".to_string()),
+        BrowserCommand::SearchBookmarks(q) => Some(format!("↵  search bookmarks: {q}")),
+        BrowserCommand::ShowHistory => Some("↵  show history".to_string()),
+        BrowserCommand::SearchHistory(q) => Some(format!("↵  search history: {q}")),
+        BrowserCommand::Share => Some("↵  copy URL to clipboard".to_string()),
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BrowserTransportState {
+    pub tabs: Vec<BrowserTab>,
+    pub active_tab: usize,
+    pub bookmarks: Vec<(String, String)>,
+    pub history: Vec<String>,
+    pub last_find: Option<String>,
+}
+
+impl Default for BrowserTransportState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BrowserTransportState {
+    pub fn new() -> Self {
+        Self {
+            tabs: vec![
+                BrowserTab {
+                    title: "perplexity.ai".to_string(),
+                    url: "https://www.perplexity.ai".to_string(),
+                    state: BrowserTabState::Active,
+                },
+                BrowserTab {
+                    title: "github.com".to_string(),
+                    url: "https://github.com".to_string(),
+                    state: BrowserTabState::Cached,
+                },
+                BrowserTab {
+                    title: "docs.rs".to_string(),
+                    url: "https://docs.rs".to_string(),
+                    state: BrowserTabState::Frozen,
+                },
+            ],
+            active_tab: 0,
+            bookmarks: vec![
+                (
+                    "Perplexity".to_string(),
+                    "https://www.perplexity.ai".to_string(),
+                ),
+                ("GitHub".to_string(), "https://github.com".to_string()),
+                (
+                    "Rust Docs".to_string(),
+                    "https://doc.rust-lang.org".to_string(),
+                ),
+            ],
+            history: vec![
+                "https://www.perplexity.ai".to_string(),
+                "https://github.com".to_string(),
+                "https://docs.rs".to_string(),
+            ],
+            last_find: None,
+        }
+    }
+
+    pub fn active_url(&self) -> &str {
+        self.tabs
+            .get(self.active_tab)
+            .map(|tab| tab.url.as_str())
+            .unwrap_or("https://www.perplexity.ai")
+    }
+
+    pub fn switch_tab(&mut self, index: usize) {
+        if index < self.tabs.len() {
+            for (idx, tab) in self.tabs.iter_mut().enumerate() {
+                if idx == index {
+                    tab.state = BrowserTabState::Active;
+                } else if tab.state == BrowserTabState::Active {
+                    tab.state = BrowserTabState::Cached;
+                }
+            }
+            self.active_tab = index;
+        }
+    }
+
+    pub fn execute(&mut self, command: BrowserCommand) -> Option<PluginAction> {
+        match command {
+            BrowserCommand::Navigate(url) => {
+                let title = domain_from_url(&url).to_string();
+                if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+                    tab.title = title;
+                    tab.url = url.clone();
+                    tab.state = BrowserTabState::Active;
+                } else {
+                    self.tabs.push(BrowserTab {
+                        title,
+                        url: url.clone(),
+                        state: BrowserTabState::Active,
+                    });
+                    self.active_tab = self.tabs.len().saturating_sub(1);
+                }
+                self.history.retain(|entry| entry != &url);
+                self.history.insert(0, url.clone());
+                Some(PluginAction::Shell {
+                    command: format!("xdg-open {}", shell_single_quote(&url)),
+                })
+            }
+            BrowserCommand::Search { engine_name, query } => {
+                let url = browser_search_url(&engine_name, &query);
+                self.execute(BrowserCommand::Navigate(url))
+            }
+            BrowserCommand::NewTab => {
+                for tab in &mut self.tabs {
+                    if tab.state == BrowserTabState::Active {
+                        tab.state = BrowserTabState::Cached;
+                    }
+                }
+                let url = "https://www.perplexity.ai".to_string();
+                self.tabs.push(BrowserTab {
+                    title: "perplexity.ai".to_string(),
+                    url,
+                    state: BrowserTabState::Active,
+                });
+                self.active_tab = self.tabs.len().saturating_sub(1);
+                None
+            }
+            BrowserCommand::CloseTab => {
+                if self.tabs.len() > 1 {
+                    self.tabs.remove(self.active_tab);
+                    if self.active_tab >= self.tabs.len() {
+                        self.active_tab = self.tabs.len() - 1;
+                    }
+                    if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+                        tab.state = BrowserTabState::Active;
+                    }
+                }
+                None
+            }
+            BrowserCommand::SwitchTab(index) => {
+                self.switch_tab(index);
+                None
+            }
+            BrowserCommand::AddBookmark => {
+                let url = self.active_url().to_string();
+                let title = domain_from_url(&url).to_string();
+                if !self.bookmarks.iter().any(|(_, u)| u == &url) {
+                    self.bookmarks.insert(0, (title, url));
+                }
+                None
+            }
+            BrowserCommand::Share => {
+                let url = self.active_url().to_string();
+                Some(PluginAction::Shell {
+                    command: clipboard_copy_command(&url),
+                })
+            }
+            BrowserCommand::Find(query) => {
+                self.last_find = Some(query);
+                None
+            }
+            BrowserCommand::Back => {
+                if let Some(prev) = self.history.get(1).cloned() {
+                    return self.execute(BrowserCommand::Navigate(prev));
+                }
+                None
+            }
+            BrowserCommand::Forward
+            | BrowserCommand::Reload
+            | BrowserCommand::ListTabs
+            | BrowserCommand::SearchBookmarks(_)
+            | BrowserCommand::ShowHistory
+            | BrowserCommand::SearchHistory(_) => None,
+        }
+    }
+}
+
+struct BrowserPlugin;
+
+impl Plugin for BrowserPlugin {
+    fn id(&self) -> &str {
+        "browser"
+    }
+
+    fn query(&self, query: &str, _matcher: &SkimMatcherV2) -> Vec<PluginResult> {
+        let Some(cmd) = parse_browser_command(query) else {
+            return Vec::new();
+        };
+        match cmd {
+            BrowserCommand::Navigate(url) => vec![PluginResult {
+                plugin_id: self.id().to_string(),
+                title: format!("Open {url} in Browser"),
+                subtitle: "rover browser transport".to_string(),
+                score: i64::MAX - 3,
+                action: PluginAction::Shell {
+                    command: format!("xdg-open {}", shell_single_quote(&url)),
+                },
+            }],
+            BrowserCommand::Search { engine_name, query } => {
+                let url = browser_search_url(&engine_name, &query);
+                vec![PluginResult {
+                    plugin_id: self.id().to_string(),
+                    title: format!("Search {engine_name} for \"{query}\""),
+                    subtitle: url.clone(),
+                    score: i64::MAX - 3,
+                    action: PluginAction::Shell {
+                        command: format!("xdg-open {}", shell_single_quote(&url)),
+                    },
+                }]
+            }
+            _ => Vec::new(),
+        }
+    }
+}
+
+pub fn help_answer_for(query: &str) -> Option<(String, String)> {
+    let trimmed = query.trim();
+    let topic = trimmed
+        .strip_prefix("help ")
+        .or_else(|| trimmed.strip_prefix("? "))
+        .or_else(|| (trimmed == "help" || trimmed == "?").then_some(""))?
+        .trim()
+        .to_lowercase();
+
+    let answer = match topic.as_str() {
+        "" | "rover" | "launcher" => (
+            "Rover Bar: type apps/commands, > shell, g/yt/gh bangs, = math, Cmd+K actions",
+            "help: overview",
+        ),
+        "niri" | "strip" | "columns" => (
+            "Niri Strip: Super+H/L focus col, Super+R cycle width (1/3,1/2,2/3,Full), Super+,/. consume/expel",
+            "help: niri scrollable strip",
+        ),
+        "browser" | "bangs" | "web" => (
+            "Browser: URLs, bangs (g, yt, wiki, pp, gh, r, so, ddg, amz, x, maps), bk!, bk <q>, h <q>",
+            "help: zero-chrome browser transport",
+        ),
+        "terminal" | "shell" => (
+            "Terminal: prefix with > or ! to run shell commands inline inside the bar",
+            "help: inline terminal",
+        ),
+        "windows" | "mode" | "tiling" => (
+            "Modes: niri (scrollable column strip), tiling (BSP), floating (windowing), monocle",
+            "help: window modes",
+        ),
+        _ => return None,
+    };
+    Some((answer.0.to_string(), answer.1.to_string()))
 }
 
 #[cfg(test)]
@@ -1950,12 +3254,8 @@ mod tests {
     #[test]
     #[cfg(feature = "full")]
     fn spotify_reports_unavailable_without_playerctl() {
-        let old_path = std::env::var_os("PATH");
-        std::env::set_var("PATH", test_dir("empty_path"));
-        let results = SpotifyPlugin.query("spotify", &SkimMatcherV2::default());
-        if let Some(path) = old_path {
-            std::env::set_var("PATH", path);
-        }
+        let plugin = SpotifyPlugin::with_playerctl(false);
+        let results = plugin.query("spotify", &SkimMatcherV2::default());
 
         assert_eq!(results[0].title, "Spotify unavailable");
     }
@@ -1986,6 +3286,68 @@ mod tests {
         assert!(results.iter().any(|r| r.title.contains("Balance panes")));
         let results = LayoutPlugin.query("move window left", &SkimMatcherV2::default());
         assert!(results.iter().any(|r| r.title.contains("Move window left")));
+    }
+
+    #[test]
+    fn layout_plugin_exposes_tinycast_rectangle_snap_actions() {
+        let matcher = SkimMatcherV2::default();
+        let left_half = LayoutPlugin.query("Window: Left Half", &matcher);
+        assert!(left_half.iter().any(|r| {
+            r.action
+                == PluginAction::Layout {
+                    action: LayoutAction::SnapLeftHalf,
+                }
+        }));
+        let center_third = LayoutPlugin.query("Center Third", &matcher);
+        assert!(center_third.iter().any(|r| {
+            r.action
+                == PluginAction::Layout {
+                    action: LayoutAction::SnapCenterThird,
+                }
+        }));
+        let maximize = LayoutPlugin.query("Almost Maximize", &matcher);
+        assert!(maximize.iter().any(|r| {
+            r.action
+                == PluginAction::Layout {
+                    action: LayoutAction::AlmostMaximize,
+                }
+        }));
+    }
+
+    #[test]
+    fn calculator_plugin_evaluates_math_natively() {
+        let matcher = SkimMatcherV2::default();
+        let res = CalculatorPlugin.query("(12 + 8) * 3 / 2", &matcher);
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].title, "= 30");
+
+        let pow_res = CalculatorPlugin.query("2 ^ 10", &matcher);
+        assert_eq!(pow_res[0].title, "= 1024");
+    }
+
+    #[test]
+    fn quicklinks_snippets_dictionary_and_notes_plugins_respond() {
+        let matcher = SkimMatcherV2::default();
+        let ql = QuicklinksPlugin.query("ql github", &matcher);
+        assert!(!ql.is_empty());
+
+        let snip = SnippetsPlugin.query(";shrug", &matcher);
+        assert_eq!(snip.len(), 1);
+        assert!(snip[0].title.contains("Shrug"));
+
+        let dict = DictionaryPlugin.query("define alpenglow", &matcher);
+        assert!(!dict.is_empty());
+        assert!(dict[0].subtitle.contains("reddish glow"));
+
+        let notes = NotesPlugin.query("note: buy milk", &matcher);
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].title.contains("buy milk"));
+    }
+
+    #[test]
+    fn shell_single_quote_escapes_embedded_quotes() {
+        assert_eq!(shell_single_quote("hello"), "'hello'");
+        assert_eq!(shell_single_quote("a'b"), "'a'\\''b'");
     }
 
     #[test]
@@ -2159,5 +3521,84 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("alpenglowed-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn rover_browser_parses_urls_and_all_eleven_search_bangs() {
+        assert!(looks_like_url("https://github.com/semitechnological/rover"));
+        assert!(looks_like_url("perplexity.ai"));
+        assert!(looks_like_url("docs.rs/gpui"));
+        assert!(!looks_like_url("just some words"));
+
+        assert_eq!(
+            parse_browser_command("github.com"),
+            Some(BrowserCommand::Navigate("https://github.com".to_string()))
+        );
+        let bangs = [
+            ("g rust smithay", "google"),
+            ("yt niri wm", "youtube"),
+            ("wiki wayland", "wikipedia"),
+            ("pp gpui rust", "perplexity"),
+            ("gh smithay", "github"),
+            ("r linux", "reddit"),
+            ("so borrow checker", "stackoverflow"),
+            ("ddg privacy", "duckduckgo"),
+            ("amz mechanical keyboard", "amazon"),
+            ("x rustlang", "twitter"),
+            ("maps tokyo", "maps"),
+        ];
+        assert_eq!(SEARCH_ENGINES.len(), 11);
+        for (input, expected_engine) in bangs {
+            match parse_browser_command(input) {
+                Some(BrowserCommand::Search { engine_name, .. }) => {
+                    assert_eq!(engine_name, expected_engine);
+                }
+                other => panic!("expected Search for {input}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn rover_browser_transport_state_handles_tabs_bookmarks_and_history() {
+        let mut transport = BrowserTransportState::new();
+        assert_eq!(transport.tabs.len(), 3);
+        assert_eq!(transport.active_tab, 0);
+
+        transport.execute(BrowserCommand::NewTab);
+        assert_eq!(transport.tabs.len(), 4);
+        assert_eq!(transport.active_tab, 3);
+
+        transport.execute(BrowserCommand::Navigate(
+            "https://smithay.github.io".to_string(),
+        ));
+        assert_eq!(transport.active_url(), "https://smithay.github.io");
+        assert_eq!(transport.history[0], "https://smithay.github.io");
+
+        let prev_bookmarks = transport.bookmarks.len();
+        transport.execute(BrowserCommand::AddBookmark);
+        assert_eq!(transport.bookmarks.len(), prev_bookmarks + 1);
+
+        transport.execute(BrowserCommand::SwitchTab(1));
+        assert_eq!(transport.active_tab, 1);
+        assert_eq!(transport.tabs[1].state, BrowserTabState::Active);
+    }
+
+    #[test]
+    fn niri_strip_mode_and_layout_actions_are_exposed_by_plugins() {
+        let matcher = SkimMatcherV2::default();
+        let modes = WindowModePlugin.query("niri", &matcher);
+        assert!(modes.iter().any(|r| {
+            r.action
+                == PluginAction::SetWindowMode {
+                    mode: WindowMode::NiriStrip,
+                }
+        }));
+        let cycle_width = LayoutPlugin.query("Niri: Cycle Column Width", &matcher);
+        assert!(cycle_width.iter().any(|r| {
+            r.action
+                == PluginAction::Layout {
+                    action: LayoutAction::CycleColumnWidth,
+                }
+        }));
     }
 }
