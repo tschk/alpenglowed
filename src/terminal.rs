@@ -533,16 +533,8 @@ pub fn render_terminal_block_card(block: &TerminalBlock, is_latest: bool) -> Sta
 ///
 /// Renders the active prompt bar at the top and the chronological thread of command blocks
 /// moving downward below it. Can be embedded inside `LauncherWindow` or mounted standalone.
-pub fn render_warp_terminal(
-    console: Option<&TerminalConsole>,
-    input: &str,
-    max_blocks: usize,
-) -> Div {
+pub fn render_warp_terminal(console: Option<&TerminalConsole>, max_blocks: usize) -> Div {
     let blocks = console.map(TerminalConsole::blocks).unwrap_or_default();
-    let cwd = console
-        .map(TerminalConsole::current_cwd)
-        .unwrap_or_else(|| "~".to_string());
-    let branch = console.and_then(TerminalConsole::current_git_branch);
 
     div()
         .w_full()
@@ -552,83 +544,6 @@ pub fn render_warp_terminal(
         .flex()
         .flex_col()
         .gap(px(8.))
-        .child(
-            // Prompt Input Block at the top of the thread
-            div()
-                .w_full()
-                .rounded(px(12.))
-                .bg(rgb(0x1f1f25))
-                .border_1()
-                .border_color(rgb(0x3a3a44))
-                .px(px(12.))
-                .py(px(8.))
-                .flex()
-                .flex_col()
-                .gap(px(5.))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(6.))
-                                .child(icons::sf_icon(SfSymbol::Folder, 11.0, 0x60a5fa))
-                                .child(
-                                    div()
-                                        .font(font("Geist Mono"))
-                                        .text_size(px(11.))
-                                        .text_color(rgb(Theme::TEXT_SECONDARY))
-                                        .child(cwd),
-                                )
-                                .when_some(branch, |row, b| {
-                                    row.child(
-                                        div()
-                                            .px(px(6.))
-                                            .py(px(1.))
-                                            .rounded(px(5.))
-                                            .bg(rgb(0x282830))
-                                            .font(font("Geist Mono"))
-                                            .text_size(px(10.5))
-                                            .text_color(rgb(0xa78bfa))
-                                            .child(format!("⎇ {b}")),
-                                    )
-                                }),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(11.))
-                                .text_color(rgb(Theme::TEXT_TERTIARY))
-                                .child("Block Thread · ↵ Run"),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(8.))
-                        .child(icons::sf_icon(SfSymbol::ChevronRight, 13.0, 0x34d399))
-                        .child(
-                            div()
-                                .flex_1()
-                                .font(font("Geist Mono"))
-                                .text_size(px(13.5))
-                                .text_color(rgb(if input.is_empty() {
-                                    Theme::TEXT_TERTIARY
-                                } else {
-                                    Theme::TEXT_PRIMARY
-                                }))
-                                .child(if input.is_empty() {
-                                    "Type a shell command — output streams into a block below..."
-                                        .to_string()
-                                } else {
-                                    input.to_string()
-                                }),
-                        ),
-                ),
-        )
         .child(
             // Downward-moving thread of executed command blocks
             div()
@@ -645,7 +560,7 @@ pub fn render_warp_terminal(
                             .border_1()
                             .border_color(rgb(Theme::CARD_STROKE))
                             .px(px(14.))
-                            .py(px(12.))
+                            .py(px(14.))
                             .flex()
                             .items_center()
                             .justify_between()
@@ -654,17 +569,22 @@ pub fn render_warp_terminal(
                                     .flex()
                                     .items_center()
                                     .gap(px(10.))
-                                    .child(icons::sf_icon(
-                                        SfSymbol::Terminal,
-                                        15.0,
-                                        Theme::TEXT_SECONDARY,
-                                    ))
+                                    .child(icons::sf_icon(SfSymbol::Terminal, 15.0, 0x60a5fa))
                                     .child(
                                         div()
+                                            .font(font("Geist Mono"))
                                             .text_size(px(12.5))
                                             .text_color(rgb(Theme::TEXT_SECONDARY))
-                                            .child("No command blocks yet. Run any command above to start a thread."),
+                                            .child(
+                                                "Thread ready. Type command above and press Enter.",
+                                            ),
                                     ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(rgb(Theme::TEXT_TERTIARY))
+                                    .child("↵ to execute"),
                             ),
                     )
                 })
@@ -782,29 +702,32 @@ impl Render for StandaloneTerminalWindow {
                             .px(px(16.))
                             .flex()
                             .items_center()
-                            .justify_between()
+                            .gap(px(10.))
+                            .child(icons::sf_icon(SfSymbol::ChevronRight, 15.0, 0x34d399))
                             .child(
                                 div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(10.))
-                                    .child(icons::sf_icon(SfSymbol::Terminal, 16.0, 0x34d399))
-                                    .child(
-                                        div()
-                                            .text_size(px(15.))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(rgb(Theme::TEXT_PRIMARY))
-                                            .child("Terminal"),
-                                    ),
+                                    .flex_1()
+                                    .font(font("Geist Mono"))
+                                    .text_size(px(14.))
+                                    .text_color(rgb(if self.input.is_empty() {
+                                        Theme::TEXT_TERTIARY
+                                    } else {
+                                        Theme::TEXT_PRIMARY
+                                    }))
+                                    .child(if self.input.is_empty() {
+                                        "Type a terminal command... (↵ to run)".to_string()
+                                    } else {
+                                        self.input.clone()
+                                    }),
                             )
                             .child(
                                 div()
-                                    .text_size(px(12.))
+                                    .text_size(px(11.))
                                     .text_color(rgb(Theme::TEXT_TERTIARY))
-                                    .child("Standalone Block Session"),
+                                    .child("Block Terminal"),
                             ),
                     )
-                    .child(render_warp_terminal(self.console.as_ref(), &self.input, 5)),
+                    .child(render_warp_terminal(self.console.as_ref(), 5)),
             )
     }
 }

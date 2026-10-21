@@ -681,7 +681,6 @@ struct DesktopModel {
     notifications: notifications::NotificationState,
     terminal: Option<terminal::TerminalConsole>,
     terminal_open: bool,
-    terminal_input: String,
     role: role::SessionRole,
     #[cfg(feature = "compositor")]
     compositor_events: Option<std::sync::mpsc::Receiver<compositor::CompositorEvent>>,
@@ -763,7 +762,6 @@ impl DesktopModel {
             notifications,
             terminal: None,
             terminal_open: matches!(options.initial_view_mode, ViewMode::Terminal),
-            terminal_input: String::new(),
             #[cfg(feature = "compositor")]
             compositor_events: compositor_rx,
             #[cfg(feature = "compositor")]
@@ -2336,20 +2334,6 @@ impl LauncherWindow {
     }
 
     fn backspace(&mut self, cx: &mut Context<Self>) {
-        if self.desktop.read(cx).view_mode == ViewMode::Terminal {
-            let empty_input = self.desktop.read(cx).terminal_input.is_empty();
-            if empty_input {
-                self.desktop.update(cx, |desktop, cx| {
-                    desktop.set_view_mode(ViewMode::Main, cx);
-                });
-            } else {
-                self.desktop.update(cx, |desktop, cx| {
-                    desktop.terminal_input.pop();
-                    desktop.changed(cx);
-                });
-            }
-            return;
-        }
         let (query, in_sub) = {
             let d = self.desktop.read(cx);
             (d.query.clone(), d.view_mode.in_submenu())
@@ -2368,13 +2352,6 @@ impl LauncherWindow {
     }
 
     fn append(&mut self, ch: &str, cx: &mut Context<Self>) {
-        if self.desktop.read(cx).view_mode == ViewMode::Terminal {
-            self.desktop.update(cx, |desktop, cx| {
-                desktop.terminal_input.push_str(ch);
-                desktop.changed(cx);
-            });
-            return;
-        }
         let query = self.desktop.read(cx).query.clone();
         let mut next = query;
         next.push_str(ch);
@@ -2398,10 +2375,11 @@ impl LauncherWindow {
             return;
         }
         if self.desktop.read(cx).view_mode == ViewMode::Terminal {
-            let line = self.desktop.read(cx).terminal_input.clone();
+            let line = self.desktop.read(cx).query.clone();
             if !line.trim().is_empty() {
                 self.desktop.update(cx, |desktop, cx| {
-                    desktop.terminal_input.clear();
+                    desktop.history.record(&line);
+                    desktop.set_query(String::new(), cx);
                     desktop.apply(PluginAction::TerminalWrite { line }, cx);
                 });
             }
@@ -2418,7 +2396,7 @@ impl LauncherWindow {
                 });
                 self.desktop.update(cx, |desktop, cx| {
                     desktop.history.record(&query);
-                    desktop.query.clear();
+                    desktop.set_query(String::new(), cx);
                     let _ = desktop.browser.execute(cmd);
                     let active_url = desktop.browser.active_url().to_string();
                     desktop.browser_page = browser::load_internal_page(&active_url);
@@ -2667,10 +2645,11 @@ impl LauncherWindow {
             ViewMode::Main => "Search for apps and commands...",
             ViewMode::WindowControls => "Search windows and layout commands...",
             ViewMode::Browser => "Enter URL or search bang (!g, !gh, !yt, !wiki, !rs)...",
-            ViewMode::Terminal => "Type command and press Enter...",
+            ViewMode::Terminal => "Type a command... (↵ to run)",
             ViewMode::ClipboardHistory => "Search clipboard history...",
             ViewMode::FileSearch => "Search files (/path)...",
         };
+        let is_terminal = desktop.view_mode == ViewMode::Terminal;
         let query = if desktop.query.is_empty() {
             placeholder.to_string()
         } else {
@@ -2707,6 +2686,19 @@ impl LauncherWindow {
                         15.0,
                         TC_TEXT_SECONDARY,
                     ))
+            } else if is_terminal {
+                div()
+                    .id("tinycast-terminal-icon")
+                    .w(px(22.))
+                    .h(px(22.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icons::sf_icon(
+                        icons::SfSymbol::ChevronRight,
+                        15.0,
+                        0x34d399,
+                    ))
             } else {
                 div()
                     .id("tinycast-search-icon")
@@ -2724,7 +2716,8 @@ impl LauncherWindow {
             .child(
                 div()
                     .flex_1()
-                    .text_size(px(20.))
+                    .text_size(px(if is_terminal { 18. } else { 20. }))
+                    .when(is_terminal, |t| t.font(font("Geist Mono")))
                     .text_color(rgb(if desktop.query.is_empty() {
                         TC_TEXT_TERTIARY
                     } else {
@@ -2735,7 +2728,7 @@ impl LauncherWindow {
     }
 
     fn render_terminal_inline(&self, desktop: &DesktopModel) -> Div {
-        terminal::render_warp_terminal(desktop.terminal.as_ref(), &desktop.terminal_input, 2)
+        terminal::render_warp_terminal(desktop.terminal.as_ref(), 4)
     }
 
     fn render_browser_inline(&self, desktop: &DesktopModel) -> Div {
@@ -2743,10 +2736,28 @@ impl LauncherWindow {
         let app_entity = self.desktop.clone();
         let eng_entity = self.desktop.clone();
         let ext_entity = self.desktop.clone();
+        let switch_entity = self.desktop.clone();
+        let new_tab_entity = self.desktop.clone();
+        let close_tab_entity = self.desktop.clone();
+        let back_entity = self.desktop.clone();
+        let reload_entity = self.desktop.clone();
+
+        let tabs: Vec<browser::BrowserTabDisplay> = desktop
+            .browser
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(i, t)| browser::BrowserTabDisplay {
+                title: t.title.clone(),
+                url: t.url.clone(),
+                is_active: i == desktop.browser.active_tab,
+            })
+            .collect();
 
         browser::render_internal_browser(
             &desktop.browser_page,
             &desktop.browser_engine,
+            &tabs,
             move |url, _, cx| {
                 nav_entity.update(cx, |d, cx| {
                     let _ = d
@@ -2781,8 +2792,59 @@ impl LauncherWindow {
             move |_, cx| {
                 ext_entity.update(cx, |d, cx| {
                     let url = d.browser_page.url.clone();
-                    let _ = Command::new("xdg-open").arg(&url).spawn();
+                    let opener = if cfg!(target_os = "macos") {
+                        "open"
+                    } else {
+                        "xdg-open"
+                    };
+                    let _ = Command::new(opener).arg(&url).spawn();
                     d.last_action = format!("Opened {url}");
+                    d.changed(cx);
+                });
+            },
+            move |idx, _, cx| {
+                switch_entity.update(cx, |d, cx| {
+                    let _ = d.browser.execute(plugin::BrowserCommand::SwitchTab(idx));
+                    let url = d.browser.active_url().to_string();
+                    d.browser_page = browser::load_internal_page(&url);
+                    d.changed(cx);
+                });
+            },
+            move |_, cx| {
+                new_tab_entity.update(cx, |d, cx| {
+                    let _ = d.browser.execute(plugin::BrowserCommand::NewTab);
+                    let url = d.browser.active_url().to_string();
+                    d.browser_page = browser::load_internal_page(&url);
+                    d.changed(cx);
+                });
+            },
+            move |idx, _, cx| {
+                close_tab_entity.update(cx, |d, cx| {
+                    if d.browser.active_tab == idx {
+                        let _ = d.browser.execute(plugin::BrowserCommand::CloseTab);
+                    } else if idx < d.browser.tabs.len() {
+                        d.browser.tabs.remove(idx);
+                        if d.browser.active_tab >= d.browser.tabs.len() {
+                            d.browser.active_tab = d.browser.tabs.len().saturating_sub(1);
+                        }
+                    }
+                    let url = d.browser.active_url().to_string();
+                    d.browser_page = browser::load_internal_page(&url);
+                    d.changed(cx);
+                });
+            },
+            move |_, cx| {
+                back_entity.update(cx, |d, cx| {
+                    let _ = d.browser.execute(plugin::BrowserCommand::Back);
+                    let url = d.browser.active_url().to_string();
+                    d.browser_page = browser::load_internal_page(&url);
+                    d.changed(cx);
+                });
+            },
+            move |_, cx| {
+                reload_entity.update(cx, |d, cx| {
+                    let url = d.browser.active_url().to_string();
+                    d.browser_page = browser::load_internal_page(&url);
                     d.changed(cx);
                 });
             },
@@ -2796,7 +2858,7 @@ impl LauncherWindow {
             return self.render_terminal_inline(desktop);
         }
 
-        if desktop.view_mode == ViewMode::Browser && desktop.query.trim().is_empty() {
+        if desktop.view_mode == ViewMode::Browser {
             return self.render_browser_inline(desktop);
         }
 

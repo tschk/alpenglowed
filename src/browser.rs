@@ -2,9 +2,9 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use crepuscularity_gpui::prelude::*;
-use crepuscularity_gpui::{div, font, px, rgb, Div, FontWeight, SharedString};
+use crepuscularity_gpui::{div, font, px, rgb, Div, FontWeight, InteractiveElement, SharedString};
 
-use crate::components::{self, Theme};
+use crate::components::Theme;
 use crate::icons::{self, SfSymbol};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,14 +136,117 @@ pub fn install_web_app(title: &str, url: &str) -> std::io::Result<PathBuf> {
     Ok(path)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowserTabDisplay {
+    pub title: String,
+    pub url: String,
+    pub is_active: bool,
+}
+
+fn extract_page_links(url: &str, html: &str) -> Vec<(String, String)> {
+    let mut links = Vec::new();
+    let lower = html.to_lowercase();
+    let base_host = if let Some(slash_idx) = url.get(8..).and_then(|r| r.find('/')) {
+        &url[..8 + slash_idx]
+    } else {
+        url
+    };
+    let mut cursor = 0;
+    while let Some(rel) = lower[cursor..].find("<a ") {
+        let tag_start = cursor + rel;
+        let Some(tag_end_rel) = lower[tag_start..].find('>') else {
+            break;
+        };
+        let tag_end = tag_start + tag_end_rel;
+        let attrs = &html[tag_start..tag_end];
+        let Some(close_rel) = lower[tag_end..].find("</a>") else {
+            break;
+        };
+        let text = strip_html_tags(&html[tag_end..tag_end + close_rel]);
+        cursor = tag_end + close_rel + 4;
+
+        if let Some(href_pos) = attrs.find("href=\"").or_else(|| attrs.find("href='")) {
+            let quote = attrs.as_bytes()[href_pos + 5] as char;
+            let rest = &attrs[href_pos + 6..];
+            if let Some(end_quote) = rest.find(quote) {
+                let href = &rest[..end_quote];
+                let full_url = if href.starts_with("http://") || href.starts_with("https://") {
+                    href.to_string()
+                } else if href.starts_with('/') {
+                    format!("{base_host}{href}")
+                } else {
+                    continue;
+                };
+                let clean_text = collapse_whitespace(&text);
+                if clean_text.len() >= 3
+                    && clean_text.len() <= 36
+                    && !links.iter().any(|(t, _)| t == &clean_text)
+                {
+                    links.push((clean_text, full_url));
+                    if links.len() >= 6 {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if links.is_empty() {
+        default_quicklinks()
+    } else {
+        links
+    }
+}
+
+/// Strips <script>...</script> and <style>...</style> blocks to prevent JS/CSS leaking into readable reader text.
+fn strip_script_and_style(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let lower = html.to_lowercase();
+    let mut cursor = 0;
+    while cursor < html.len() {
+        let script_pos = lower[cursor..].find("<script");
+        let style_pos = lower[cursor..].find("<style");
+        let (tag, next_rel) = match (script_pos, style_pos) {
+            (Some(s), Some(st)) => {
+                if s < st {
+                    ("script", s)
+                } else {
+                    ("style", st)
+                }
+            }
+            (Some(s), None) => ("script", s),
+            (None, Some(st)) => ("style", st),
+            (None, None) => {
+                out.push_str(&html[cursor..]);
+                break;
+            }
+        };
+        let tag_start = cursor + next_rel;
+        out.push_str(&html[cursor..tag_start]);
+        let close_tag = format!("</{tag}>");
+        if let Some(close_rel) = lower[tag_start..].find(&close_tag) {
+            cursor = tag_start + close_rel + close_tag.len();
+        } else {
+            break;
+        }
+    }
+    out
+}
+
 /// Extracts readable text blocks and title from raw HTML.
 pub fn parse_html_to_page(url: &str, html: &str) -> InternalBrowserPage {
-    let title = extract_tag_content(html, "title").unwrap_or_else(|| domain_title(url));
+    let cleaned_html = strip_script_and_style(html);
+    let title = extract_tag_content(&cleaned_html, "title").unwrap_or_else(|| domain_title(url));
     let mut blocks = Vec::new();
-    for tag in ["h1", "h2", "p", "li"] {
-        for extracted in extract_all_tag_contents(html, tag) {
+    for tag in ["h1", "h2", "h3", "p", "li"] {
+        for extracted in extract_all_tag_contents(&cleaned_html, tag) {
             let clean = collapse_whitespace(&extracted);
-            if clean.len() >= 12 && blocks.len() < 6 && !blocks.contains(&clean) {
+            if clean.len() >= 12
+                && blocks.len() < 6
+                && !blocks.contains(&clean)
+                && !clean.contains("function(")
+                && !clean.contains("var ")
+                && !clean.contains("window.addEventListener")
+            {
                 blocks.push(clean);
             }
         }
@@ -151,12 +254,13 @@ pub fn parse_html_to_page(url: &str, html: &str) -> InternalBrowserPage {
     if blocks.is_empty() {
         blocks = curated_blocks_for_url(url);
     }
+    let links = extract_page_links(url, html);
     let webapp_installed = webapp_desktop_path(url).exists();
     InternalBrowserPage {
         url: url.to_string(),
         title,
         summary_blocks: blocks,
-        links: default_quicklinks(),
+        links,
         webapp_installed,
         status_banner: None,
     }
@@ -169,18 +273,23 @@ pub fn load_internal_page(url: &str) -> InternalBrowserPage {
         format!("https://{}", url.trim())
     };
 
-    // Fast non-blocking local/curated preview unless live fetch is requested via env
-    if matches!(
-        std::env::var("ALPENGLOWED_BROWSER_LIVE_FETCH").as_deref(),
-        Ok("1" | "true")
-    ) {
-        if let Ok(out) = Command::new("curl")
-            .args(["-sL", "--max-time", "2", &normalized])
-            .output()
-        {
-            if out.status.success() && !out.stdout.is_empty() {
-                let html = String::from_utf8_lossy(&out.stdout);
-                return parse_html_to_page(&normalized, &html);
+    // Live fetch via curl with fast 3-second timeout
+    if let Ok(out) = Command::new("curl")
+        .args([
+            "-sL",
+            "--max-time",
+            "3",
+            "-A",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            &normalized,
+        ])
+        .output()
+    {
+        if out.status.success() && !out.stdout.is_empty() {
+            let html = String::from_utf8_lossy(&out.stdout);
+            let page = parse_html_to_page(&normalized, &html);
+            if !page.summary_blocks.is_empty() {
+                return page;
             }
         }
     }
@@ -217,7 +326,7 @@ fn curated_blocks_for_url(url: &str) -> Vec<String> {
         vec![
             "Explore repositories, pull requests, issues, and releases directly from the internal browser.".to_string(),
             "Tip: Type !gh <query> in the search bar to jump straight to matching repositories.".to_string(),
-            "Click 'Install App' above to pin this site as a native Linux desktop launcher entry.".to_string(),
+            "Click 'Pin App' above to pin this site as a native Linux desktop launcher entry.".to_string(),
         ]
     } else if url.contains("docs.rs") || url.contains("crates.io") {
         vec![
@@ -232,7 +341,7 @@ fn curated_blocks_for_url(url: &str) -> Vec<String> {
     } else {
         vec![
             format!("Viewing {url} in the built-in reader view."),
-            "Use 'Install App' to create a native ~/.local/share/applications/*.desktop shortcut, or 'Install Engine' to install WebKit2GTK.".to_string(),
+            "Use 'Pin App' to create a native ~/.local/share/applications/*.desktop shortcut, or 'Open' to launch in default browser.".to_string(),
         ]
     }
 }
@@ -315,14 +424,31 @@ fn collapse_whitespace(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Renders the Internal Browser view (with Web App Install & Browser Engine Install actions).
-pub fn render_internal_browser<FNav, FInstallApp, FInstallEngine, FOpenExt>(
+/// Renders the Internal Browser view with tabs, toolbar, search bangs, and live page content.
+#[allow(clippy::too_many_arguments)]
+pub fn render_internal_browser<
+    FNav,
+    FInstallApp,
+    FInstallEngine,
+    FOpenExt,
+    FSwitchTab,
+    FNewTab,
+    FCloseTab,
+    FBack,
+    FReload,
+>(
     page: &InternalBrowserPage,
     engine: &BrowserEngineStatus,
+    tabs: &[BrowserTabDisplay],
     on_navigate: FNav,
     on_install_app: FInstallApp,
     on_install_engine: FInstallEngine,
     on_open_external: FOpenExt,
+    on_switch_tab: FSwitchTab,
+    on_new_tab: FNewTab,
+    on_close_tab: FCloseTab,
+    on_back: FBack,
+    on_reload: FReload,
 ) -> Div
 where
     FNav: Fn(String, &mut crepuscularity_gpui::Window, &mut crepuscularity_gpui::App)
@@ -333,21 +459,131 @@ where
     FInstallEngine:
         Fn(&mut crepuscularity_gpui::Window, &mut crepuscularity_gpui::App) + Clone + 'static,
     FOpenExt: Fn(&mut crepuscularity_gpui::Window, &mut crepuscularity_gpui::App) + Clone + 'static,
+    FSwitchTab: Fn(usize, &mut crepuscularity_gpui::Window, &mut crepuscularity_gpui::App)
+        + Clone
+        + 'static,
+    FNewTab: Fn(&mut crepuscularity_gpui::Window, &mut crepuscularity_gpui::App) + Clone + 'static,
+    FCloseTab: Fn(usize, &mut crepuscularity_gpui::Window, &mut crepuscularity_gpui::App)
+        + Clone
+        + 'static,
+    FBack: Fn(&mut crepuscularity_gpui::Window, &mut crepuscularity_gpui::App) + Clone + 'static,
+    FReload: Fn(&mut crepuscularity_gpui::Window, &mut crepuscularity_gpui::App) + Clone + 'static,
 {
     div()
         .w_full()
         .px(px(12.))
-        .pt(px(4.))
+        .pt(px(2.))
         .pb(px(8.))
         .flex()
         .flex_col()
-        .gap(px(8.))
+        .gap(px(6.))
+        // 1. Browser Tab Strip
         .child(
-            // Browser Address & Install Bar
             div()
                 .w_full()
-                .h(px(36.))
-                .px(px(10.))
+                .h(px(28.))
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(px(6.))
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .overflow_hidden()
+                        .children(tabs.iter().enumerate().map(|(idx, tab)| {
+                            let switch_fn = on_switch_tab.clone();
+                            let close_fn = on_close_tab.clone();
+                            let is_active = tab.is_active;
+                            div()
+                                .id(SharedString::from(format!("browser-tab-{idx}")))
+                                .h(px(26.))
+                                .px(px(8.))
+                                .rounded(px(7.))
+                                .bg(rgb(if is_active { 0x2b2b35 } else { 0x1c1c22 }))
+                                .border_1()
+                                .border_color(rgb(if is_active {
+                                    Theme::CARD_BORDER
+                                } else {
+                                    Theme::CARD_STROKE
+                                }))
+                                .flex()
+                                .items_center()
+                                .gap(px(6.))
+                                .cursor_pointer()
+                                .on_click(move |_, w, cx| switch_fn(idx, w, cx))
+                                .child(icons::sf_icon(
+                                    SfSymbol::Globe,
+                                    10.5,
+                                    if is_active {
+                                        0x60a5fa
+                                    } else {
+                                        Theme::TEXT_TERTIARY
+                                    },
+                                ))
+                                .child(
+                                    div()
+                                        .text_size(px(11.))
+                                        .font_weight(if is_active {
+                                            FontWeight::MEDIUM
+                                        } else {
+                                            FontWeight::NORMAL
+                                        })
+                                        .text_color(rgb(if is_active {
+                                            Theme::TEXT_PRIMARY
+                                        } else {
+                                            Theme::TEXT_SECONDARY
+                                        }))
+                                        .child(tab.title.chars().take(18).collect::<String>()),
+                                )
+                                .when(tabs.len() > 1, |row| {
+                                    row.child(
+                                        div()
+                                            .id(SharedString::from(format!(
+                                                "browser-close-tab-{idx}"
+                                            )))
+                                            .w(px(14.))
+                                            .h(px(14.))
+                                            .rounded(px(3.))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .cursor_pointer()
+                                            .on_click(move |_, w, cx| close_fn(idx, w, cx))
+                                            .child(icons::sf_icon(
+                                                SfSymbol::Xmark,
+                                                8.5,
+                                                Theme::TEXT_TERTIARY,
+                                            )),
+                                    )
+                                })
+                        })),
+                )
+                .child(
+                    div()
+                        .id("browser-new-tab-btn")
+                        .w(px(24.))
+                        .h(px(24.))
+                        .rounded(px(6.))
+                        .bg(rgb(0x22222a))
+                        .border_1()
+                        .border_color(rgb(Theme::CARD_STROKE))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .cursor_pointer()
+                        .on_click(move |_, w, cx| on_new_tab(w, cx))
+                        .child(icons::sf_icon(SfSymbol::Plus, 11.0, Theme::TEXT_SECONDARY)),
+                ),
+        )
+        // 2. Navigation & Omnibox Toolbar
+        .child(
+            div()
+                .w_full()
+                .h(px(34.))
+                .px(px(8.))
                 .rounded(px(10.))
                 .bg(rgb(0x1e1e24))
                 .border_1()
@@ -360,25 +596,75 @@ where
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(7.))
-                        .overflow_hidden()
-                        .child(icons::sf_icon(SfSymbol::LockFill, 11.0, 0x34d399))
+                        .gap(px(4.))
                         .child(
                             div()
-                                .font(font("Geist Mono"))
-                                .text_size(px(12.))
-                                .text_color(rgb(Theme::TEXT_PRIMARY))
-                                .child(page.url.clone()),
+                                .id("browser-back-btn")
+                                .w(px(22.))
+                                .h(px(22.))
+                                .rounded(px(5.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .cursor_pointer()
+                                .on_click(move |_, w, cx| on_back(w, cx))
+                                .child(icons::sf_icon(
+                                    SfSymbol::ChevronLeft,
+                                    11.0,
+                                    Theme::TEXT_SECONDARY,
+                                )),
                         )
                         .child(
                             div()
-                                .px(px(6.))
-                                .py(px(1.))
+                                .id("browser-reload-btn")
+                                .w(px(22.))
+                                .h(px(22.))
                                 .rounded(px(5.))
-                                .bg(rgb(0x282830))
-                                .text_size(px(10.5))
-                                .text_color(rgb(Theme::TEXT_TERTIARY))
-                                .child(engine.engine_name.clone()),
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .cursor_pointer()
+                                .on_click(move |_, w, cx| on_reload(w, cx))
+                                .child(icons::sf_icon(
+                                    SfSymbol::Clock,
+                                    10.5,
+                                    Theme::TEXT_SECONDARY,
+                                )),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(6.))
+                                .px(px(8.))
+                                .h(px(24.))
+                                .rounded(px(6.))
+                                .bg(rgb(0x26262f))
+                                .child(icons::sf_icon(SfSymbol::LockFill, 10.0, 0x34d399))
+                                .child(
+                                    div()
+                                        .font(font("Geist Mono"))
+                                        .text_size(px(11.5))
+                                        .text_color(rgb(Theme::TEXT_PRIMARY))
+                                        .child(page.url.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .id("browser-engine-status-pill")
+                                        .px(px(5.))
+                                        .py(px(0.5))
+                                        .rounded(px(4.))
+                                        .bg(rgb(if engine.installed { 0x1e1e26 } else { 0x3b1c1c }))
+                                        .text_size(px(10.))
+                                        .text_color(rgb(if engine.installed {
+                                            Theme::TEXT_TERTIARY
+                                        } else {
+                                            0xf87171
+                                        }))
+                                        .cursor_pointer()
+                                        .on_click(move |_, w, cx| on_install_engine(w, cx))
+                                        .child(engine.engine_name.clone()),
+                                ),
                         ),
                 )
                 .child(
@@ -387,7 +673,6 @@ where
                         .items_center()
                         .gap(px(6.))
                         .child(
-                            // Install Web App (.desktop) button
                             div()
                                 .id("browser-install-webapp-btn")
                                 .h(px(24.))
@@ -406,7 +691,7 @@ where
                                 }))
                                 .flex()
                                 .items_center()
-                                .gap(px(5.))
+                                .gap(px(4.))
                                 .cursor_pointer()
                                 .on_click(move |_, w, cx| on_install_app(w, cx))
                                 .child(icons::sf_icon(
@@ -415,7 +700,7 @@ where
                                     } else {
                                         SfSymbol::ArrowDownCircle
                                     },
-                                    11.0,
+                                    10.5,
                                     if page.webapp_installed {
                                         0x34d399
                                     } else {
@@ -425,23 +710,21 @@ where
                                 .child(
                                     div()
                                         .text_size(px(11.))
-                                        .font_weight(FontWeight::MEDIUM)
                                         .text_color(rgb(if page.webapp_installed {
                                             0x34d399
                                         } else {
                                             Theme::TEXT_PRIMARY
                                         }))
                                         .child(if page.webapp_installed {
-                                            "App Installed"
+                                            "Installed"
                                         } else {
-                                            "Install App"
+                                            "Pin App"
                                         }),
                                 ),
                         )
                         .child(
-                            // Install Native Browser Engine button
                             div()
-                                .id("browser-install-engine-btn")
+                                .id("browser-open-external-btn")
                                 .h(px(24.))
                                 .px(px(8.))
                                 .rounded(px(6.))
@@ -450,36 +733,62 @@ where
                                 .border_color(rgb(0x383842))
                                 .flex()
                                 .items_center()
-                                .gap(px(5.))
+                                .gap(px(4.))
                                 .cursor_pointer()
-                                .on_click(move |_, w, cx| on_install_engine(w, cx))
-                                .child(icons::sf_icon(SfSymbol::ArrowDownCircle, 11.0, 0x60a5fa))
+                                .on_click(move |_, w, cx| on_open_external(w, cx))
+                                .child(icons::sf_icon(SfSymbol::ArrowUpRightSquare, 10.5, 0x60a5fa))
                                 .child(
                                     div()
                                         .text_size(px(11.))
                                         .text_color(rgb(Theme::TEXT_SECONDARY))
-                                        .child(format!("Install ({})", engine.package_manager)),
+                                        .child("Open"),
                                 ),
-                        )
-                        .child(
-                            // Open in external browser button
-                            div()
-                                .id("browser-open-external-btn")
-                                .w(px(24.))
-                                .h(px(24.))
-                                .rounded(px(6.))
-                                .bg(rgb(0x25252d))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .cursor_pointer()
-                                .on_click(move |_, w, cx| on_open_external(w, cx))
-                                .child(icons::sf_icon(
-                                    SfSymbol::ArrowUpRightSquare,
-                                    12.0,
-                                    Theme::TEXT_SECONDARY,
-                                )),
                         ),
+                ),
+        )
+        // 3. Search Bangs Quick Access Strip
+        .child(
+            div()
+                .w_full()
+                .px(px(2.))
+                .flex()
+                .items_center()
+                .gap(px(5.))
+                .children(
+                    [
+                        ("!g Google", "https://www.google.com"),
+                        ("!gh GitHub", "https://github.com"),
+                        ("!ddg DuckDuckGo", "https://duckduckgo.com"),
+                        ("!rs Docs.rs", "https://docs.rs"),
+                        ("!wiki Wikipedia", "https://en.wikipedia.org"),
+                        ("!yt YouTube", "https://www.youtube.com"),
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, (label, target))| {
+                        let nav = on_navigate.clone();
+                        let target_url = target.to_string();
+                        div()
+                            .id(SharedString::from(format!("browser-bang-chip-{idx}")))
+                            .h(px(22.))
+                            .px(px(7.))
+                            .rounded(px(5.))
+                            .bg(rgb(0x202026))
+                            .border_1()
+                            .border_color(rgb(Theme::CARD_STROKE))
+                            .flex()
+                            .items_center()
+                            .gap(px(4.))
+                            .cursor_pointer()
+                            .on_click(move |_, w, cx| nav(target_url.clone(), w, cx))
+                            .child(
+                                div()
+                                    .font(font("Geist Mono"))
+                                    .text_size(px(10.5))
+                                    .text_color(rgb(Theme::TEXT_TERTIARY))
+                                    .child(label),
+                            )
+                    }),
                 ),
         )
         .when_some(page.status_banner.as_ref(), |col, msg| {
@@ -487,88 +796,110 @@ where
                 div()
                     .w_full()
                     .px(px(12.))
-                    .py(px(6.))
-                    .rounded(px(8.))
+                    .py(px(5.))
+                    .rounded(px(7.))
                     .bg(rgb(0x162b24))
                     .border_1()
                     .border_color(rgb(0x285e48))
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .child(icons::sf_icon(SfSymbol::Checkmark, 11.0, 0x34d399))
+                    .child(icons::sf_icon(SfSymbol::Checkmark, 10.5, 0x34d399))
                     .child(
                         div()
-                            .text_size(px(11.5))
+                            .text_size(px(11.))
                             .text_color(rgb(0x34d399))
                             .child(msg.clone()),
                     ),
             )
         })
+        // 4. Live Rendered Web Page Card
         .child(
-            // Rendered Web Page Content Card
             div()
                 .w_full()
                 .rounded(px(12.))
                 .bg(rgb(0x1b1b20))
                 .border_1()
                 .border_color(rgb(Theme::CARD_STROKE))
-                .p(px(14.))
+                .p(px(12.))
                 .flex()
                 .flex_col()
-                .gap(px(8.))
+                .gap(px(6.))
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(8.))
-                        .child(icons::sf_icon(SfSymbol::Globe, 15.0, 0x60a5fa))
+                        .justify_between()
                         .child(
                             div()
-                                .text_size(px(15.))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(rgb(Theme::TEXT_PRIMARY))
-                                .child(page.title.clone()),
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .child(icons::sf_icon(SfSymbol::Globe, 14.0, 0x60a5fa))
+                                .child(
+                                    div()
+                                        .text_size(px(14.))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(rgb(Theme::TEXT_PRIMARY))
+                                        .child(page.title.clone()),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .px(px(6.))
+                                .py(px(1.))
+                                .rounded(px(4.))
+                                .bg(rgb(0x24242d))
+                                .text_size(px(10.5))
+                                .text_color(rgb(Theme::TEXT_TERTIARY))
+                                .child(slugify_domain(&page.url)),
                         ),
                 )
-                .children(page.summary_blocks.iter().map(|paragraph| {
+                .children(page.summary_blocks.iter().take(5).map(|paragraph| {
                     div()
-                        .text_size(px(12.5))
+                        .text_size(px(12.))
                         .text_color(rgb(Theme::TEXT_SECONDARY))
                         .child(paragraph.clone())
                 })),
         )
-        .child(components::section_header("Quicklinks", false))
+        // 5. Page Links & Navigation Section
         .child(
             div()
                 .w_full()
-                .px(px(4.))
                 .flex()
                 .items_center()
-                .gap(px(6.))
-                .children(page.links.iter().enumerate().map(|(idx, (label, target))| {
-                    let target_url = target.clone();
-                    let nav = on_navigate.clone();
-                    div()
-                        .id(SharedString::from(format!("browser-quicklink-{idx}")))
-                        .h(px(28.))
-                        .px(px(10.))
-                        .rounded(px(8.))
-                        .bg(rgb(0x222228))
-                        .border_1()
-                        .border_color(rgb(Theme::CARD_STROKE))
-                        .flex()
-                        .items_center()
-                        .gap(px(6.))
-                        .cursor_pointer()
-                        .on_click(move |_, w, cx| nav(target_url.clone(), w, cx))
-                        .child(icons::sf_icon(SfSymbol::Link, 11.0, Theme::TEXT_SECONDARY))
-                        .child(
+                .gap(px(5.))
+                .overflow_hidden()
+                .children(
+                    page.links
+                        .iter()
+                        .take(4)
+                        .enumerate()
+                        .map(|(idx, (label, target))| {
+                            let target_url = target.clone();
+                            let nav = on_navigate.clone();
                             div()
-                                .text_size(px(12.))
-                                .text_color(rgb(Theme::TEXT_PRIMARY))
-                                .child(label.clone()),
-                        )
-                })),
+                                .id(SharedString::from(format!("browser-page-link-{idx}")))
+                                .h(px(24.))
+                                .px(px(8.))
+                                .rounded(px(6.))
+                                .bg(rgb(0x222228))
+                                .border_1()
+                                .border_color(rgb(Theme::CARD_STROKE))
+                                .flex()
+                                .items_center()
+                                .gap(px(5.))
+                                .cursor_pointer()
+                                .on_click(move |_, w, cx| nav(target_url.clone(), w, cx))
+                                .child(icons::sf_icon(SfSymbol::Link, 10.0, Theme::TEXT_SECONDARY))
+                                .child(
+                                    div()
+                                        .text_size(px(11.5))
+                                        .text_color(rgb(Theme::TEXT_PRIMARY))
+                                        .child(label.clone()),
+                                )
+                        }),
+                ),
         )
 }
 
