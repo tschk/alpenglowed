@@ -1,6 +1,8 @@
 #!/bin/sh
 set -eu
 
+export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
+
 if [ "$(uname)" = "Darwin" ]; then
     export SDKROOT="${SDKROOT:-$(xcrun --show-sdk-path 2>/dev/null || true)}"
     if [ -n "${SDKROOT:-}" ] && [ -z "${BINDGEN_EXTRA_CLANG_ARGS:-}" ]; then

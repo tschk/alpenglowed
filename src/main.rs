@@ -816,6 +816,8 @@ impl DesktopModel {
         }
         if matches!(mode, ViewMode::Browser) {
             self.browser_page = browser::load_internal_page(self.browser.active_url());
+        } else {
+            browser::detach_native_webview();
         }
         self.query.clear();
         self.runner.query = match mode {
@@ -838,6 +840,11 @@ impl DesktopModel {
         self.terminal_open = matches!(category, BarCategory::Terminal);
         if self.terminal_open && self.terminal.is_none() {
             self.terminal = terminal::TerminalConsole::spawn();
+            if let Some(ref term) = self.terminal {
+                if term.blocks().is_empty() {
+                    term.seed_demo_blocks();
+                }
+            }
         }
         let preset_query = match category {
             BarCategory::Clipboard => Some("clipboard".to_string()),
@@ -2628,6 +2635,81 @@ impl LauncherWindow {
 
     fn render_bar(&self, cx: &App) -> impl IntoElement {
         let desktop = self.desktop.read(cx);
+        let in_submenu = desktop.view_mode.in_submenu();
+        let back_entity = self.desktop.clone();
+
+        if desktop.view_mode == ViewMode::Terminal {
+            let cwd = desktop
+                .terminal
+                .as_ref()
+                .map(|t| t.current_cwd())
+                .unwrap_or_else(|| "~".to_string());
+            let branch = desktop
+                .terminal
+                .as_ref()
+                .and_then(|t| t.current_git_branch());
+            return terminal::render_terminal_starship_header(
+                &cwd,
+                branch.as_deref(),
+                &desktop.query,
+                in_submenu,
+                move |_, cx| {
+                    back_entity.update(cx, |d, cx| {
+                        d.set_view_mode(ViewMode::Main, cx);
+                    });
+                },
+            );
+        }
+
+        if desktop.view_mode == ViewMode::Browser {
+            let url_display = if !desktop.query.is_empty() {
+                desktop.query.clone()
+            } else {
+                desktop.browser_page.url.clone()
+            };
+            return div()
+                .w_full()
+                .h(px(components::Theme::HEADER_HEIGHT))
+                .px(px(16.))
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .child(
+                    div()
+                        .id("browser-back-btn")
+                        .cursor_pointer()
+                        .on_click(move |_, _, cx| {
+                            back_entity.update(cx, |d, cx| {
+                                d.set_view_mode(ViewMode::Main, cx);
+                            });
+                        })
+                        .child(icons::sf_icon(
+                            icons::SfSymbol::ChevronLeft,
+                            15.0,
+                            TC_TEXT_SECONDARY,
+                        )),
+                )
+                .child(icons::sf_icon(icons::SfSymbol::LockFill, 13.0, 0x34d399))
+                .child(
+                    div()
+                        .flex_1()
+                        .font(font("Geist Mono"))
+                        .text_size(px(15.))
+                        .text_color(rgb(if desktop.query.is_empty() {
+                            TC_TEXT_PRIMARY
+                        } else {
+                            0x60a5fa
+                        }))
+                        .child(url_display),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(TC_TEXT_TERTIARY))
+                        .child("↵ to load"),
+                );
+        }
+
         let selection = desktop.runner.selection_label();
         let subtitle = if desktop.query.trim().is_empty() {
             shell_text_component(
@@ -2649,15 +2731,12 @@ impl LauncherWindow {
             ViewMode::ClipboardHistory => "Search clipboard history...",
             ViewMode::FileSearch => "Search files (/path)...",
         };
-        let is_terminal = desktop.view_mode == ViewMode::Terminal;
         let query = if desktop.query.is_empty() {
             placeholder.to_string()
         } else {
             desktop.query.clone()
         };
         let bar = shell_bar_component(&query, &meta);
-        let in_submenu = desktop.view_mode.in_submenu();
-        let back_entity = self.desktop.clone();
 
         div()
             .w_full()
@@ -2686,19 +2765,6 @@ impl LauncherWindow {
                         15.0,
                         TC_TEXT_SECONDARY,
                     ))
-            } else if is_terminal {
-                div()
-                    .id("tinycast-terminal-icon")
-                    .w(px(22.))
-                    .h(px(22.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(icons::sf_icon(
-                        icons::SfSymbol::ChevronRight,
-                        15.0,
-                        0x34d399,
-                    ))
             } else {
                 div()
                     .id("tinycast-search-icon")
@@ -2716,8 +2782,7 @@ impl LauncherWindow {
             .child(
                 div()
                     .flex_1()
-                    .text_size(px(if is_terminal { 18. } else { 20. }))
-                    .when(is_terminal, |t| t.font(font("Geist Mono")))
+                    .text_size(px(20.))
                     .text_color(rgb(if desktop.query.is_empty() {
                         TC_TEXT_TERTIARY
                     } else {
@@ -2732,123 +2797,7 @@ impl LauncherWindow {
     }
 
     fn render_browser_inline(&self, desktop: &DesktopModel) -> Div {
-        let nav_entity = self.desktop.clone();
-        let app_entity = self.desktop.clone();
-        let eng_entity = self.desktop.clone();
-        let ext_entity = self.desktop.clone();
-        let switch_entity = self.desktop.clone();
-        let new_tab_entity = self.desktop.clone();
-        let close_tab_entity = self.desktop.clone();
-        let back_entity = self.desktop.clone();
-        let reload_entity = self.desktop.clone();
-
-        let tabs: Vec<browser::BrowserTabDisplay> = desktop
-            .browser
-            .tabs
-            .iter()
-            .enumerate()
-            .map(|(i, t)| browser::BrowserTabDisplay {
-                title: t.title.clone(),
-                url: t.url.clone(),
-                is_active: i == desktop.browser.active_tab,
-            })
-            .collect();
-
-        browser::render_internal_browser(
-            &desktop.browser_page,
-            &desktop.browser_engine,
-            &tabs,
-            move |url, _, cx| {
-                nav_entity.update(cx, |d, cx| {
-                    let _ = d
-                        .browser
-                        .execute(plugin::BrowserCommand::Navigate(url.clone()));
-                    d.browser_page = browser::load_internal_page(&url);
-                    d.changed(cx);
-                });
-            },
-            move |_, cx| {
-                app_entity.update(cx, |d, cx| {
-                    let title = d.browser_page.title.clone();
-                    let url = d.browser_page.url.clone();
-                    if let Ok(path) = browser::install_web_app(&title, &url) {
-                        d.browser_page.webapp_installed = true;
-                        d.browser_page.status_banner = Some(format!(
-                            "Installed Web App shortcut at {}",
-                            terminal::shorten_home_path(&path.display().to_string())
-                        ));
-                    }
-                    d.changed(cx);
-                });
-            },
-            move |_, cx| {
-                eng_entity.update(cx, |d, cx| {
-                    let cmd = d.browser_engine.install_command.clone();
-                    d.browser_page.status_banner =
-                        Some(format!("Queued browser engine installer: {cmd}"));
-                    d.changed(cx);
-                });
-            },
-            move |_, cx| {
-                ext_entity.update(cx, |d, cx| {
-                    let url = d.browser_page.url.clone();
-                    let opener = if cfg!(target_os = "macos") {
-                        "open"
-                    } else {
-                        "xdg-open"
-                    };
-                    let _ = Command::new(opener).arg(&url).spawn();
-                    d.last_action = format!("Opened {url}");
-                    d.changed(cx);
-                });
-            },
-            move |idx, _, cx| {
-                switch_entity.update(cx, |d, cx| {
-                    let _ = d.browser.execute(plugin::BrowserCommand::SwitchTab(idx));
-                    let url = d.browser.active_url().to_string();
-                    d.browser_page = browser::load_internal_page(&url);
-                    d.changed(cx);
-                });
-            },
-            move |_, cx| {
-                new_tab_entity.update(cx, |d, cx| {
-                    let _ = d.browser.execute(plugin::BrowserCommand::NewTab);
-                    let url = d.browser.active_url().to_string();
-                    d.browser_page = browser::load_internal_page(&url);
-                    d.changed(cx);
-                });
-            },
-            move |idx, _, cx| {
-                close_tab_entity.update(cx, |d, cx| {
-                    if d.browser.active_tab == idx {
-                        let _ = d.browser.execute(plugin::BrowserCommand::CloseTab);
-                    } else if idx < d.browser.tabs.len() {
-                        d.browser.tabs.remove(idx);
-                        if d.browser.active_tab >= d.browser.tabs.len() {
-                            d.browser.active_tab = d.browser.tabs.len().saturating_sub(1);
-                        }
-                    }
-                    let url = d.browser.active_url().to_string();
-                    d.browser_page = browser::load_internal_page(&url);
-                    d.changed(cx);
-                });
-            },
-            move |_, cx| {
-                back_entity.update(cx, |d, cx| {
-                    let _ = d.browser.execute(plugin::BrowserCommand::Back);
-                    let url = d.browser.active_url().to_string();
-                    d.browser_page = browser::load_internal_page(&url);
-                    d.changed(cx);
-                });
-            },
-            move |_, cx| {
-                reload_entity.update(cx, |d, cx| {
-                    let url = d.browser.active_url().to_string();
-                    d.browser_page = browser::load_internal_page(&url);
-                    d.changed(cx);
-                });
-            },
-        )
+        browser::render_internal_browser(&desktop.browser_page, &desktop.browser_engine)
     }
 
     fn render_results(&self, cx: &App) -> impl IntoElement {

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use crepuscularity_gpui::prelude::*;
-use crepuscularity_gpui::{div, font, px, rgb, Div, FontWeight, InteractiveElement, SharedString};
+use crepuscularity_gpui::{div, font, px, rgb, Div, FontWeight};
 
 use crate::components::Theme;
 use crate::icons::{self, SfSymbol};
@@ -424,407 +424,258 @@ fn collapse_whitespace(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Renders the Internal Browser view with tabs, toolbar, search bangs, and live page content.
-#[allow(clippy::too_many_arguments)]
-pub fn render_internal_browser<
-    FNav,
-    FInstallApp,
-    FInstallEngine,
-    FOpenExt,
-    FSwitchTab,
-    FNewTab,
-    FCloseTab,
-    FBack,
-    FReload,
->(
-    page: &InternalBrowserPage,
-    engine: &BrowserEngineStatus,
-    tabs: &[BrowserTabDisplay],
-    on_navigate: FNav,
-    on_install_app: FInstallApp,
-    on_install_engine: FInstallEngine,
-    on_open_external: FOpenExt,
-    on_switch_tab: FSwitchTab,
-    on_new_tab: FNewTab,
-    on_close_tab: FCloseTab,
-    on_back: FBack,
-    on_reload: FReload,
-) -> Div
-where
-    FNav: Fn(String, &mut crepuscularity_gpui::Window, &mut crepuscularity_gpui::App)
-        + Clone
-        + 'static,
-    FInstallApp:
-        Fn(&mut crepuscularity_gpui::Window, &mut crepuscularity_gpui::App) + Clone + 'static,
-    FInstallEngine:
-        Fn(&mut crepuscularity_gpui::Window, &mut crepuscularity_gpui::App) + Clone + 'static,
-    FOpenExt: Fn(&mut crepuscularity_gpui::Window, &mut crepuscularity_gpui::App) + Clone + 'static,
-    FSwitchTab: Fn(usize, &mut crepuscularity_gpui::Window, &mut crepuscularity_gpui::App)
-        + Clone
-        + 'static,
-    FNewTab: Fn(&mut crepuscularity_gpui::Window, &mut crepuscularity_gpui::App) + Clone + 'static,
-    FCloseTab: Fn(usize, &mut crepuscularity_gpui::Window, &mut crepuscularity_gpui::App)
-        + Clone
-        + 'static,
-    FBack: Fn(&mut crepuscularity_gpui::Window, &mut crepuscularity_gpui::App) + Clone + 'static,
-    FReload: Fn(&mut crepuscularity_gpui::Window, &mut crepuscularity_gpui::App) + Clone + 'static,
-{
+#[cfg(target_os = "macos")]
+pub mod macos_webview {
+    use std::ffi::{c_char, c_void, CString};
+    use std::sync::Mutex;
+
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct CGPoint {
+        pub x: f64,
+        pub y: f64,
+    }
+
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct CGSize {
+        pub width: f64,
+        pub height: f64,
+    }
+
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct CGRect {
+        pub origin: CGPoint,
+        pub size: CGSize,
+    }
+
+    #[link(name = "objc")]
+    unsafe extern "C" {
+        fn objc_getClass(name: *const c_char) -> *mut c_void;
+        fn sel_registerName(name: *const c_char) -> *mut c_void;
+        fn objc_msgSend();
+    }
+
+    #[link(name = "WebKit", kind = "framework")]
+    unsafe extern "C" {}
+
+    pub struct NativeWebView {
+        pub raw: *mut c_void,
+        pub current_url: String,
+    }
+
+    unsafe impl Send for NativeWebView {}
+    unsafe impl Sync for NativeWebView {}
+
+    static GLOBAL_WEBVIEW: Mutex<Option<NativeWebView>> = Mutex::new(None);
+
+    pub fn attach_or_navigate(url: &str, x: f64, y: f64, width: f64, height: f64) {
+        unsafe {
+            let ns_app_cls = objc_getClass(c"NSApplication".as_ptr());
+            if ns_app_cls.is_null() {
+                return;
+            }
+            let shared_app: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                std::mem::transmute(objc_msgSend as *const ());
+            let app = shared_app(ns_app_cls, sel_registerName(c"sharedApplication".as_ptr()));
+            if app.is_null() {
+                return;
+            }
+
+            let key_window: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                std::mem::transmute(objc_msgSend as *const ());
+            let mut win = key_window(app, sel_registerName(c"keyWindow".as_ptr()));
+            if win.is_null() {
+                let windows_fn: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                    std::mem::transmute(objc_msgSend as *const ());
+                let windows = windows_fn(app, sel_registerName(c"windows".as_ptr()));
+                if !windows.is_null() {
+                    let first_obj: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                        std::mem::transmute(objc_msgSend as *const ());
+                    win = first_obj(windows, sel_registerName(c"firstObject".as_ptr()));
+                }
+            }
+            if win.is_null() {
+                return;
+            }
+
+            let content_view_fn: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                std::mem::transmute(objc_msgSend as *const ());
+            let content_view = content_view_fn(win, sel_registerName(c"contentView".as_ptr()));
+            if content_view.is_null() {
+                return;
+            }
+
+            let mut guard = GLOBAL_WEBVIEW.lock().unwrap();
+            let frame = CGRect {
+                origin: CGPoint { x, y },
+                size: CGSize { width, height },
+            };
+
+            let webview_ptr = if let Some(ref mut wv) = *guard {
+                let set_frame: extern "C" fn(*mut c_void, *mut c_void, CGRect) =
+                    std::mem::transmute(objc_msgSend as *const ());
+                set_frame(wv.raw, sel_registerName(c"setFrame:".as_ptr()), frame);
+                let set_hidden: extern "C" fn(*mut c_void, *mut c_void, bool) =
+                    std::mem::transmute(objc_msgSend as *const ());
+                set_hidden(wv.raw, sel_registerName(c"setHidden:".as_ptr()), false);
+                wv.raw
+            } else {
+                let wk_cls = objc_getClass(c"WKWebView".as_ptr());
+                if wk_cls.is_null() {
+                    return;
+                }
+                let alloc_fn: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                    std::mem::transmute(objc_msgSend as *const ());
+                let allocated = alloc_fn(wk_cls, sel_registerName(c"alloc".as_ptr()));
+
+                let init_with_frame: extern "C" fn(
+                    *mut c_void,
+                    *mut c_void,
+                    CGRect,
+                ) -> *mut c_void = std::mem::transmute(objc_msgSend as *const ());
+                let wv = init_with_frame(
+                    allocated,
+                    sel_registerName(c"initWithFrame:".as_ptr()),
+                    frame,
+                );
+                if wv.is_null() {
+                    return;
+                }
+
+                let set_wants_layer: extern "C" fn(*mut c_void, *mut c_void, bool) =
+                    std::mem::transmute(objc_msgSend as *const ());
+                set_wants_layer(wv, sel_registerName(c"setWantsLayer:".as_ptr()), true);
+
+                let layer_fn: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                    std::mem::transmute(objc_msgSend as *const ());
+                let layer = layer_fn(wv, sel_registerName(c"layer".as_ptr()));
+                if !layer.is_null() {
+                    let set_corner_radius: extern "C" fn(*mut c_void, *mut c_void, f64) =
+                        std::mem::transmute(objc_msgSend as *const ());
+                    set_corner_radius(layer, sel_registerName(c"setCornerRadius:".as_ptr()), 14.0);
+                    let set_masks: extern "C" fn(*mut c_void, *mut c_void, bool) =
+                        std::mem::transmute(objc_msgSend as *const ());
+                    set_masks(layer, sel_registerName(c"setMasksToBounds:".as_ptr()), true);
+                }
+
+                let add_subview: extern "C" fn(*mut c_void, *mut c_void, *mut c_void) =
+                    std::mem::transmute(objc_msgSend as *const ());
+                add_subview(content_view, sel_registerName(c"addSubview:".as_ptr()), wv);
+
+                *guard = Some(NativeWebView {
+                    raw: wv,
+                    current_url: String::new(),
+                });
+                wv
+            };
+
+            let should_load = guard
+                .as_ref()
+                .map(|wv| wv.current_url != url)
+                .unwrap_or(true);
+
+            if should_load {
+                let ns_str_cls = objc_getClass(c"NSString".as_ptr());
+                let str_with_utf8: extern "C" fn(
+                    *mut c_void,
+                    *mut c_void,
+                    *const c_char,
+                ) -> *mut c_void = std::mem::transmute(objc_msgSend as *const ());
+                let c_url = CString::new(url).unwrap_or_default();
+                let ns_url_str = str_with_utf8(
+                    ns_str_cls,
+                    sel_registerName(c"stringWithUTF8String:".as_ptr()),
+                    c_url.as_ptr(),
+                );
+
+                let ns_url_cls = objc_getClass(c"NSURL".as_ptr());
+                let url_with_str: extern "C" fn(
+                    *mut c_void,
+                    *mut c_void,
+                    *mut c_void,
+                ) -> *mut c_void = std::mem::transmute(objc_msgSend as *const ());
+                let ns_url = url_with_str(
+                    ns_url_cls,
+                    sel_registerName(c"URLWithString:".as_ptr()),
+                    ns_url_str,
+                );
+
+                if !ns_url.is_null() {
+                    let ns_req_cls = objc_getClass(c"NSURLRequest".as_ptr());
+                    let req_with_url: extern "C" fn(
+                        *mut c_void,
+                        *mut c_void,
+                        *mut c_void,
+                    ) -> *mut c_void = std::mem::transmute(objc_msgSend as *const ());
+                    let req = req_with_url(
+                        ns_req_cls,
+                        sel_registerName(c"requestWithURL:".as_ptr()),
+                        ns_url,
+                    );
+
+                    let load_req: extern "C" fn(
+                        *mut c_void,
+                        *mut c_void,
+                        *mut c_void,
+                    ) -> *mut c_void = std::mem::transmute(objc_msgSend as *const ());
+                    load_req(webview_ptr, sel_registerName(c"loadRequest:".as_ptr()), req);
+                }
+
+                if let Some(ref mut wv) = *guard {
+                    wv.current_url = url.to_string();
+                }
+            }
+        }
+    }
+
+    pub fn detach() {
+        if let Ok(mut guard) = GLOBAL_WEBVIEW.lock() {
+            if let Some(wv) = guard.take() {
+                unsafe {
+                    let remove: extern "C" fn(*mut c_void, *mut c_void) =
+                        std::mem::transmute(objc_msgSend as *const ());
+                    remove(wv.raw, sel_registerName(c"removeFromSuperview".as_ptr()));
+                }
+            }
+        }
+    }
+}
+
+pub fn detach_native_webview() {
+    #[cfg(target_os = "macos")]
+    macos_webview::detach();
+}
+
+/// Renders the minimal Internal Browser viewport.
+///
+/// On macOS, attaches the native WKWebView directly into the window canvas.
+/// On Linux or fallback, renders a clean full-bleed web page view without clutter.
+pub fn render_internal_browser(page: &InternalBrowserPage, _engine: &BrowserEngineStatus) -> Div {
+    #[cfg(target_os = "macos")]
+    {
+        macos_webview::attach_or_navigate(&page.url, 14.0, 14.0, 722.0, 405.0);
+    }
+
     div()
         .w_full()
-        .px(px(12.))
-        .pt(px(2.))
-        .pb(px(8.))
-        .flex()
-        .flex_col()
-        .gap(px(6.))
-        // 1. Browser Tab Strip
+        .h_full()
+        .px(px(14.))
+        .pt(px(4.))
+        .pb(px(14.))
         .child(
             div()
-                .w_full()
-                .h(px(28.))
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap(px(6.))
-                .child(
-                    div()
-                        .flex_1()
-                        .flex()
-                        .items_center()
-                        .gap(px(4.))
-                        .overflow_hidden()
-                        .children(tabs.iter().enumerate().map(|(idx, tab)| {
-                            let switch_fn = on_switch_tab.clone();
-                            let close_fn = on_close_tab.clone();
-                            let is_active = tab.is_active;
-                            div()
-                                .id(SharedString::from(format!("browser-tab-{idx}")))
-                                .h(px(26.))
-                                .px(px(8.))
-                                .rounded(px(7.))
-                                .bg(rgb(if is_active { 0x2b2b35 } else { 0x1c1c22 }))
-                                .border_1()
-                                .border_color(rgb(if is_active {
-                                    Theme::CARD_BORDER
-                                } else {
-                                    Theme::CARD_STROKE
-                                }))
-                                .flex()
-                                .items_center()
-                                .gap(px(6.))
-                                .cursor_pointer()
-                                .on_click(move |_, w, cx| switch_fn(idx, w, cx))
-                                .child(icons::sf_icon(
-                                    SfSymbol::Globe,
-                                    10.5,
-                                    if is_active {
-                                        0x60a5fa
-                                    } else {
-                                        Theme::TEXT_TERTIARY
-                                    },
-                                ))
-                                .child(
-                                    div()
-                                        .text_size(px(11.))
-                                        .font_weight(if is_active {
-                                            FontWeight::MEDIUM
-                                        } else {
-                                            FontWeight::NORMAL
-                                        })
-                                        .text_color(rgb(if is_active {
-                                            Theme::TEXT_PRIMARY
-                                        } else {
-                                            Theme::TEXT_SECONDARY
-                                        }))
-                                        .child(tab.title.chars().take(18).collect::<String>()),
-                                )
-                                .when(tabs.len() > 1, |row| {
-                                    row.child(
-                                        div()
-                                            .id(SharedString::from(format!(
-                                                "browser-close-tab-{idx}"
-                                            )))
-                                            .w(px(14.))
-                                            .h(px(14.))
-                                            .rounded(px(3.))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .cursor_pointer()
-                                            .on_click(move |_, w, cx| close_fn(idx, w, cx))
-                                            .child(icons::sf_icon(
-                                                SfSymbol::Xmark,
-                                                8.5,
-                                                Theme::TEXT_TERTIARY,
-                                            )),
-                                    )
-                                })
-                        })),
-                )
-                .child(
-                    div()
-                        .id("browser-new-tab-btn")
-                        .w(px(24.))
-                        .h(px(24.))
-                        .rounded(px(6.))
-                        .bg(rgb(0x22222a))
-                        .border_1()
-                        .border_color(rgb(Theme::CARD_STROKE))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .cursor_pointer()
-                        .on_click(move |_, w, cx| on_new_tab(w, cx))
-                        .child(icons::sf_icon(SfSymbol::Plus, 11.0, Theme::TEXT_SECONDARY)),
-                ),
-        )
-        // 2. Navigation & Omnibox Toolbar
-        .child(
-            div()
-                .w_full()
-                .h(px(34.))
-                .px(px(8.))
-                .rounded(px(10.))
-                .bg(rgb(0x1e1e24))
+                .size_full()
+                .rounded(px(14.))
+                .bg(rgb(0x101015))
                 .border_1()
                 .border_color(rgb(Theme::CARD_STROKE))
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap(px(8.))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(4.))
-                        .child(
-                            div()
-                                .id("browser-back-btn")
-                                .w(px(22.))
-                                .h(px(22.))
-                                .rounded(px(5.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .cursor_pointer()
-                                .on_click(move |_, w, cx| on_back(w, cx))
-                                .child(icons::sf_icon(
-                                    SfSymbol::ChevronLeft,
-                                    11.0,
-                                    Theme::TEXT_SECONDARY,
-                                )),
-                        )
-                        .child(
-                            div()
-                                .id("browser-reload-btn")
-                                .w(px(22.))
-                                .h(px(22.))
-                                .rounded(px(5.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .cursor_pointer()
-                                .on_click(move |_, w, cx| on_reload(w, cx))
-                                .child(icons::sf_icon(
-                                    SfSymbol::Clock,
-                                    10.5,
-                                    Theme::TEXT_SECONDARY,
-                                )),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(6.))
-                                .px(px(8.))
-                                .h(px(24.))
-                                .rounded(px(6.))
-                                .bg(rgb(0x26262f))
-                                .child(icons::sf_icon(SfSymbol::LockFill, 10.0, 0x34d399))
-                                .child(
-                                    div()
-                                        .font(font("Geist Mono"))
-                                        .text_size(px(11.5))
-                                        .text_color(rgb(Theme::TEXT_PRIMARY))
-                                        .child(page.url.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .id("browser-engine-status-pill")
-                                        .px(px(5.))
-                                        .py(px(0.5))
-                                        .rounded(px(4.))
-                                        .bg(rgb(if engine.installed { 0x1e1e26 } else { 0x3b1c1c }))
-                                        .text_size(px(10.))
-                                        .text_color(rgb(if engine.installed {
-                                            Theme::TEXT_TERTIARY
-                                        } else {
-                                            0xf87171
-                                        }))
-                                        .cursor_pointer()
-                                        .on_click(move |_, w, cx| on_install_engine(w, cx))
-                                        .child(engine.engine_name.clone()),
-                                ),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(6.))
-                        .child(
-                            div()
-                                .id("browser-install-webapp-btn")
-                                .h(px(24.))
-                                .px(px(8.))
-                                .rounded(px(6.))
-                                .bg(rgb(if page.webapp_installed {
-                                    0x162b24
-                                } else {
-                                    0x2b2b34
-                                }))
-                                .border_1()
-                                .border_color(rgb(if page.webapp_installed {
-                                    0x34d399
-                                } else {
-                                    0x3e3e48
-                                }))
-                                .flex()
-                                .items_center()
-                                .gap(px(4.))
-                                .cursor_pointer()
-                                .on_click(move |_, w, cx| on_install_app(w, cx))
-                                .child(icons::sf_icon(
-                                    if page.webapp_installed {
-                                        SfSymbol::Checkmark
-                                    } else {
-                                        SfSymbol::ArrowDownCircle
-                                    },
-                                    10.5,
-                                    if page.webapp_installed {
-                                        0x34d399
-                                    } else {
-                                        Theme::TEXT_PRIMARY
-                                    },
-                                ))
-                                .child(
-                                    div()
-                                        .text_size(px(11.))
-                                        .text_color(rgb(if page.webapp_installed {
-                                            0x34d399
-                                        } else {
-                                            Theme::TEXT_PRIMARY
-                                        }))
-                                        .child(if page.webapp_installed {
-                                            "Installed"
-                                        } else {
-                                            "Pin App"
-                                        }),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .id("browser-open-external-btn")
-                                .h(px(24.))
-                                .px(px(8.))
-                                .rounded(px(6.))
-                                .bg(rgb(0x25252d))
-                                .border_1()
-                                .border_color(rgb(0x383842))
-                                .flex()
-                                .items_center()
-                                .gap(px(4.))
-                                .cursor_pointer()
-                                .on_click(move |_, w, cx| on_open_external(w, cx))
-                                .child(icons::sf_icon(SfSymbol::ArrowUpRightSquare, 10.5, 0x60a5fa))
-                                .child(
-                                    div()
-                                        .text_size(px(11.))
-                                        .text_color(rgb(Theme::TEXT_SECONDARY))
-                                        .child("Open"),
-                                ),
-                        ),
-                ),
-        )
-        // 3. Search Bangs Quick Access Strip
-        .child(
-            div()
-                .w_full()
-                .px(px(2.))
-                .flex()
-                .items_center()
-                .gap(px(5.))
-                .children(
-                    [
-                        ("!g Google", "https://www.google.com"),
-                        ("!gh GitHub", "https://github.com"),
-                        ("!ddg DuckDuckGo", "https://duckduckgo.com"),
-                        ("!rs Docs.rs", "https://docs.rs"),
-                        ("!wiki Wikipedia", "https://en.wikipedia.org"),
-                        ("!yt YouTube", "https://www.youtube.com"),
-                    ]
-                    .into_iter()
-                    .enumerate()
-                    .map(|(idx, (label, target))| {
-                        let nav = on_navigate.clone();
-                        let target_url = target.to_string();
-                        div()
-                            .id(SharedString::from(format!("browser-bang-chip-{idx}")))
-                            .h(px(22.))
-                            .px(px(7.))
-                            .rounded(px(5.))
-                            .bg(rgb(0x202026))
-                            .border_1()
-                            .border_color(rgb(Theme::CARD_STROKE))
-                            .flex()
-                            .items_center()
-                            .gap(px(4.))
-                            .cursor_pointer()
-                            .on_click(move |_, w, cx| nav(target_url.clone(), w, cx))
-                            .child(
-                                div()
-                                    .font(font("Geist Mono"))
-                                    .text_size(px(10.5))
-                                    .text_color(rgb(Theme::TEXT_TERTIARY))
-                                    .child(label),
-                            )
-                    }),
-                ),
-        )
-        .when_some(page.status_banner.as_ref(), |col, msg| {
-            col.child(
-                div()
-                    .w_full()
-                    .px(px(12.))
-                    .py(px(5.))
-                    .rounded(px(7.))
-                    .bg(rgb(0x162b24))
-                    .border_1()
-                    .border_color(rgb(0x285e48))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .child(icons::sf_icon(SfSymbol::Checkmark, 10.5, 0x34d399))
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(rgb(0x34d399))
-                            .child(msg.clone()),
-                    ),
-            )
-        })
-        // 4. Live Rendered Web Page Card
-        .child(
-            div()
-                .w_full()
-                .rounded(px(12.))
-                .bg(rgb(0x1b1b20))
-                .border_1()
-                .border_color(rgb(Theme::CARD_STROKE))
-                .p(px(12.))
+                .overflow_hidden()
+                .p(px(20.))
                 .flex()
                 .flex_col()
-                .gap(px(6.))
+                .gap(px(14.))
                 .child(
                     div()
                         .flex()
@@ -838,7 +689,7 @@ where
                                 .child(icons::sf_icon(SfSymbol::Globe, 14.0, 0x60a5fa))
                                 .child(
                                     div()
-                                        .text_size(px(14.))
+                                        .text_size(px(16.))
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .text_color(rgb(Theme::TEXT_PRIMARY))
                                         .child(page.title.clone()),
@@ -847,59 +698,22 @@ where
                         .child(
                             div()
                                 .px(px(6.))
-                                .py(px(1.))
-                                .rounded(px(4.))
-                                .bg(rgb(0x24242d))
+                                .py(px(2.))
+                                .rounded(px(5.))
+                                .bg(rgb(0x202028))
+                                .font(font("Geist Mono"))
                                 .text_size(px(10.5))
                                 .text_color(rgb(Theme::TEXT_TERTIARY))
                                 .child(slugify_domain(&page.url)),
                         ),
                 )
-                .children(page.summary_blocks.iter().take(5).map(|paragraph| {
+                .children(page.summary_blocks.iter().take(6).map(|paragraph| {
                     div()
-                        .text_size(px(12.))
+                        .text_size(px(13.))
+                        .line_height(px(19.))
                         .text_color(rgb(Theme::TEXT_SECONDARY))
                         .child(paragraph.clone())
                 })),
-        )
-        // 5. Page Links & Navigation Section
-        .child(
-            div()
-                .w_full()
-                .flex()
-                .items_center()
-                .gap(px(5.))
-                .overflow_hidden()
-                .children(
-                    page.links
-                        .iter()
-                        .take(4)
-                        .enumerate()
-                        .map(|(idx, (label, target))| {
-                            let target_url = target.clone();
-                            let nav = on_navigate.clone();
-                            div()
-                                .id(SharedString::from(format!("browser-page-link-{idx}")))
-                                .h(px(24.))
-                                .px(px(8.))
-                                .rounded(px(6.))
-                                .bg(rgb(0x222228))
-                                .border_1()
-                                .border_color(rgb(Theme::CARD_STROKE))
-                                .flex()
-                                .items_center()
-                                .gap(px(5.))
-                                .cursor_pointer()
-                                .on_click(move |_, w, cx| nav(target_url.clone(), w, cx))
-                                .child(icons::sf_icon(SfSymbol::Link, 10.0, Theme::TEXT_SECONDARY))
-                                .child(
-                                    div()
-                                        .text_size(px(11.5))
-                                        .text_color(rgb(Theme::TEXT_PRIMARY))
-                                        .child(label.clone()),
-                                )
-                        }),
-                ),
         )
 }
 

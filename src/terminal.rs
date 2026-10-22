@@ -529,10 +529,104 @@ pub fn render_terminal_block_card(block: &TerminalBlock, is_latest: bool) -> Sta
         )
 }
 
+/// Renders the Starship-style terminal header (cwd, git branch badge, and prompt input line)
+/// directly inside the original input bar.
+pub fn render_terminal_starship_header(
+    cwd: &str,
+    git_branch: Option<&str>,
+    input: &str,
+    in_submenu: bool,
+    on_back: impl Fn(&mut crepuscularity_gpui::Window, &mut crepuscularity_gpui::App) + Clone + 'static,
+) -> Div {
+    div()
+        .w_full()
+        .px(px(16.))
+        .py(px(8.))
+        .flex()
+        .flex_col()
+        .gap(px(5.))
+        // 1. Starship metadata on top
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .when(in_submenu, |row| {
+                            row.child(
+                                div()
+                                    .id("terminal-back-btn")
+                                    .cursor_pointer()
+                                    .on_click(move |_, w, cx| on_back(w, cx))
+                                    .child(icons::sf_icon(
+                                        SfSymbol::ChevronLeft,
+                                        13.0,
+                                        Theme::TEXT_SECONDARY,
+                                    )),
+                            )
+                        })
+                        .child(icons::sf_icon(SfSymbol::Folder, 11.5, 0x60a5fa))
+                        .child(
+                            div()
+                                .font(font("Geist Mono"))
+                                .text_size(px(11.5))
+                                .text_color(rgb(Theme::TEXT_SECONDARY))
+                                .child(cwd.to_string()),
+                        )
+                        .when_some(git_branch, |row, branch| {
+                            row.child(
+                                div()
+                                    .px(px(6.))
+                                    .py(px(1.))
+                                    .rounded(px(4.))
+                                    .bg(rgb(0x282830))
+                                    .font(font("Geist Mono"))
+                                    .text_size(px(10.5))
+                                    .text_color(rgb(0xa78bfa))
+                                    .child(format!("⎇ {branch}")),
+                            )
+                        }),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(Theme::TEXT_TERTIARY))
+                        .child("↵ to run"),
+                ),
+        )
+        // 2. Terminal prompt input directly underneath
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .child(icons::sf_icon(SfSymbol::ChevronRight, 15.0, 0x34d399))
+                .child(
+                    div()
+                        .flex_1()
+                        .font(font("Geist Mono"))
+                        .text_size(px(17.))
+                        .text_color(rgb(if input.is_empty() {
+                            Theme::TEXT_TERTIARY
+                        } else {
+                            Theme::TEXT_PRIMARY
+                        }))
+                        .child(if input.is_empty() {
+                            "Type a command...".to_string()
+                        } else {
+                            input.to_string()
+                        }),
+                ),
+        )
+}
+
 /// Reusable, importable GPUI Rich Block Terminal component.
 ///
-/// Renders the active prompt bar at the top and the chronological thread of command blocks
-/// moving downward below it. Can be embedded inside `LauncherWindow` or mounted standalone.
+/// Renders the chronological thread of command blocks moving downward.
 pub fn render_warp_terminal(console: Option<&TerminalConsole>, max_blocks: usize) -> Div {
     let blocks = console.map(TerminalConsole::blocks).unwrap_or_default();
 
@@ -546,55 +640,13 @@ pub fn render_warp_terminal(console: Option<&TerminalConsole>, max_blocks: usize
         .gap(px(8.))
         .child(
             // Downward-moving thread of executed command blocks
-            div()
-                .w_full()
-                .flex()
-                .flex_col()
-                .gap(px(8.))
-                .when(blocks.is_empty(), |col| {
-                    col.child(
-                        div()
-                            .w_full()
-                            .rounded(px(12.))
-                            .bg(rgb(0x1a1a1f))
-                            .border_1()
-                            .border_color(rgb(Theme::CARD_STROKE))
-                            .px(px(14.))
-                            .py(px(14.))
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(10.))
-                                    .child(icons::sf_icon(SfSymbol::Terminal, 15.0, 0x60a5fa))
-                                    .child(
-                                        div()
-                                            .font(font("Geist Mono"))
-                                            .text_size(px(12.5))
-                                            .text_color(rgb(Theme::TEXT_SECONDARY))
-                                            .child(
-                                                "Thread ready. Type command above and press Enter.",
-                                            ),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(rgb(Theme::TEXT_TERTIARY))
-                                    .child("↵ to execute"),
-                            ),
-                    )
-                })
-                .children(
-                    blocks
-                        .iter()
-                        .take(max_blocks)
-                        .enumerate()
-                        .map(|(idx, block)| render_terminal_block_card(block, idx == 0)),
-                ),
+            div().w_full().flex().flex_col().gap(px(8.)).children(
+                blocks
+                    .iter()
+                    .take(max_blocks)
+                    .enumerate()
+                    .map(|(idx, block)| render_terminal_block_card(block, idx == 0)),
+            ),
         )
 }
 
@@ -695,38 +747,21 @@ impl Render for StandaloneTerminalWindow {
                     .overflow_hidden()
                     .flex()
                     .flex_col()
-                    .child(
-                        div()
-                            .w_full()
-                            .h(px(Theme::HEADER_HEIGHT))
-                            .px(px(16.))
-                            .flex()
-                            .items_center()
-                            .gap(px(10.))
-                            .child(icons::sf_icon(SfSymbol::ChevronRight, 15.0, 0x34d399))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .font(font("Geist Mono"))
-                                    .text_size(px(14.))
-                                    .text_color(rgb(if self.input.is_empty() {
-                                        Theme::TEXT_TERTIARY
-                                    } else {
-                                        Theme::TEXT_PRIMARY
-                                    }))
-                                    .child(if self.input.is_empty() {
-                                        "Type a terminal command... (↵ to run)".to_string()
-                                    } else {
-                                        self.input.clone()
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(rgb(Theme::TEXT_TERTIARY))
-                                    .child("Block Terminal"),
-                            ),
-                    )
+                    .child({
+                        let cwd = self
+                            .console
+                            .as_ref()
+                            .map(|c| c.current_cwd())
+                            .unwrap_or_else(|| "~".to_string());
+                        let branch = self.console.as_ref().and_then(|c| c.current_git_branch());
+                        render_terminal_starship_header(
+                            &cwd,
+                            branch.as_deref(),
+                            &self.input,
+                            false,
+                            |_, _| {},
+                        )
+                    })
                     .child(render_warp_terminal(self.console.as_ref(), 5)),
             )
     }
