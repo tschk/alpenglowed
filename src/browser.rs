@@ -553,7 +553,7 @@ pub mod macos_webview {
             let h = if height > 0.0 {
                 height
             } else {
-                (bounds.size.height - 46.0).max(100.0)
+                (bounds.size.height - 38.0).max(100.0)
             };
 
             let mut guard = GLOBAL_WEBVIEW.lock().unwrap();
@@ -610,7 +610,7 @@ pub mod macos_webview {
                 if !layer.is_null() {
                     let set_corner_radius: extern "C" fn(*mut c_void, *mut c_void, f64) =
                         std::mem::transmute(objc_msgSend as *const ());
-                    set_corner_radius(layer, sel_registerName(c"setCornerRadius:".as_ptr()), 12.0);
+                    set_corner_radius(layer, sel_registerName(c"setCornerRadius:".as_ptr()), 0.0);
                     let set_masks: extern "C" fn(*mut c_void, *mut c_void, bool) =
                         std::mem::transmute(objc_msgSend as *const ());
                     set_masks(layer, sel_registerName(c"setMasksToBounds:".as_ptr()), true);
@@ -709,6 +709,79 @@ pub mod macos_webview {
             }
         }
     }
+
+    pub fn go_back() {
+        if let Ok(guard) = GLOBAL_WEBVIEW.lock() {
+            if let Some(ref wv) = *guard {
+                unsafe {
+                    let go_back_fn: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                        std::mem::transmute(objc_msgSend as *const ());
+                    go_back_fn(wv.raw, sel_registerName(c"goBack".as_ptr()));
+                }
+            }
+        }
+    }
+
+    pub fn go_forward() {
+        if let Ok(guard) = GLOBAL_WEBVIEW.lock() {
+            if let Some(ref wv) = *guard {
+                unsafe {
+                    let go_fwd_fn: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                        std::mem::transmute(objc_msgSend as *const ());
+                    go_fwd_fn(wv.raw, sel_registerName(c"goForward".as_ptr()));
+                }
+            }
+        }
+    }
+
+    pub fn reload() {
+        if let Ok(guard) = GLOBAL_WEBVIEW.lock() {
+            if let Some(ref wv) = *guard {
+                unsafe {
+                    let reload_fn: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                        std::mem::transmute(objc_msgSend as *const ());
+                    reload_fn(wv.raw, sel_registerName(c"reload".as_ptr()));
+                }
+            }
+        }
+    }
+
+    pub fn set_zoom(zoom: f64) {
+        if let Ok(guard) = GLOBAL_WEBVIEW.lock() {
+            if let Some(ref wv) = *guard {
+                unsafe {
+                    let set_zoom_fn: extern "C" fn(*mut c_void, *mut c_void, f64) =
+                        std::mem::transmute(objc_msgSend as *const ());
+                    set_zoom_fn(wv.raw, sel_registerName(c"setPageZoom:".as_ptr()), zoom);
+                }
+            }
+        }
+    }
+
+    pub fn current_title() -> Option<String> {
+        if let Ok(guard) = GLOBAL_WEBVIEW.lock() {
+            if let Some(ref wv) = *guard {
+                unsafe {
+                    let title_fn: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                        std::mem::transmute(objc_msgSend as *const ());
+                    let title_obj = title_fn(wv.raw, sel_registerName(c"title".as_ptr()));
+                    if !title_obj.is_null() {
+                        let utf8_fn: extern "C" fn(*mut c_void, *mut c_void) -> *const c_char =
+                            std::mem::transmute(objc_msgSend as *const ());
+                        let utf8 = utf8_fn(title_obj, sel_registerName(c"UTF8String".as_ptr()));
+                        if !utf8.is_null() {
+                            let title =
+                                std::ffi::CStr::from_ptr(utf8).to_string_lossy().to_string();
+                            if !title.is_empty() {
+                                return Some(title);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
 }
 
 pub fn detach_native_webview() {
@@ -719,6 +792,63 @@ pub fn detach_native_webview() {
 pub fn set_native_webview_hidden(hidden: bool) {
     #[cfg(target_os = "macos")]
     macos_webview::set_hidden(hidden);
+}
+
+pub fn browser_go_back() {
+    #[cfg(target_os = "macos")]
+    macos_webview::go_back();
+}
+
+pub fn browser_go_forward() {
+    #[cfg(target_os = "macos")]
+    macos_webview::go_forward();
+}
+
+pub fn browser_reload() {
+    #[cfg(target_os = "macos")]
+    macos_webview::reload();
+}
+
+pub fn browser_set_zoom(zoom: f64) {
+    #[cfg(target_os = "macos")]
+    macos_webview::set_zoom(zoom);
+}
+
+pub fn browser_current_title() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        macos_webview::current_title()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+pub fn copy_to_clipboard(text: &str) {
+    #[cfg(target_os = "macos")]
+    {
+        let child = Command::new("pbcopy")
+            .stdin(std::process::Stdio::piped())
+            .spawn();
+        if let Ok(mut c) = child {
+            if let Some(mut stdin) = c.stdin.take() {
+                use std::io::Write;
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            let _ = c.wait();
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "printf '%s' '{}' | wl-copy 2>/dev/null || printf '%s' '{}' | xclip -selection clipboard 2>/dev/null",
+                text, text
+            ))
+            .spawn();
+    }
 }
 
 /// Renders the minimal Internal Browser viewport.
@@ -798,6 +928,11 @@ pub struct StandaloneBrowserWindow {
     pub command_query: String,
     pub command_selected: usize,
     pub history: Vec<String>,
+    pub bookmarks: Vec<String>,
+    pub editing_url: bool,
+    pub url_input: String,
+    pub zoom: f64,
+    pub copied_toast: bool,
 }
 
 impl StandaloneBrowserWindow {
@@ -806,7 +941,7 @@ impl StandaloneBrowserWindow {
         let tabs = vec![
             BrowserTabDisplay {
                 title: "Docs.rs".to_string(),
-                url: initial,
+                url: initial.clone(),
                 is_active: true,
             },
             BrowserTabDisplay {
@@ -827,7 +962,16 @@ impl StandaloneBrowserWindow {
             command_bar_open,
             command_query: String::new(),
             command_selected: 0,
-            history: Vec::new(),
+            history: vec![initial],
+            bookmarks: vec![
+                "https://docs.rs".to_string(),
+                "https://github.com".to_string(),
+                "https://crates.io".to_string(),
+            ],
+            editing_url: false,
+            url_input: String::new(),
+            zoom: 1.0,
+            copied_toast: false,
         }
     }
 
@@ -841,8 +985,127 @@ impl StandaloneBrowserWindow {
     pub fn navigate(&mut self, url: String) {
         if let Some(tab) = self.tabs.get_mut(self.active_tab) {
             tab.title = slugify_domain(&url);
-            tab.url = url;
+            tab.url = url.clone();
         }
+        if !self.history.first().map(|h| h == &url).unwrap_or(false) {
+            self.history.insert(0, url);
+        }
+        self.editing_url = false;
+        self.command_bar_open = false;
+        self.copied_toast = false;
+    }
+
+    pub fn new_tab(&mut self, url: Option<String>) {
+        let target = url.unwrap_or_else(|| "https://docs.rs".to_string());
+        for tab in &mut self.tabs {
+            tab.is_active = false;
+        }
+        let id = self.tabs.len() + 1;
+        self.tabs.push(BrowserTabDisplay {
+            title: format!("Tab {id}"),
+            url: target.clone(),
+            is_active: true,
+        });
+        self.active_tab = self.tabs.len() - 1;
+        self.editing_url = false;
+        self.command_bar_open = false;
+        self.copied_toast = false;
+    }
+
+    pub fn close_tab(&mut self, idx: usize) {
+        if self.tabs.len() <= 1 {
+            if let Some(tab) = self.tabs.first_mut() {
+                tab.title = "Docs.rs".to_string();
+                tab.url = "https://docs.rs".to_string();
+            }
+            return;
+        }
+        if idx < self.tabs.len() {
+            self.tabs.remove(idx);
+            if self.active_tab >= self.tabs.len() {
+                self.active_tab = self.tabs.len().saturating_sub(1);
+            }
+            for (i, tab) in self.tabs.iter_mut().enumerate() {
+                tab.is_active = i == self.active_tab;
+            }
+        }
+        self.copied_toast = false;
+    }
+
+    pub fn switch_tab(&mut self, idx: usize) {
+        if idx < self.tabs.len() {
+            self.active_tab = idx;
+            for (i, tab) in self.tabs.iter_mut().enumerate() {
+                tab.is_active = i == idx;
+            }
+            self.editing_url = false;
+            self.command_bar_open = false;
+            self.copied_toast = false;
+        }
+    }
+
+    pub fn next_tab(&mut self) {
+        if !self.tabs.is_empty() {
+            let next = (self.active_tab + 1) % self.tabs.len();
+            self.switch_tab(next);
+        }
+    }
+
+    pub fn prev_tab(&mut self) {
+        if !self.tabs.is_empty() {
+            let prev = if self.active_tab == 0 {
+                self.tabs.len().saturating_sub(1)
+            } else {
+                self.active_tab - 1
+            };
+            self.switch_tab(prev);
+        }
+    }
+
+    pub fn go_back(&mut self) {
+        browser_go_back();
+    }
+
+    pub fn go_forward(&mut self) {
+        browser_go_forward();
+    }
+
+    pub fn reload(&mut self) {
+        browser_reload();
+    }
+
+    pub fn zoom_in(&mut self) {
+        self.zoom = (self.zoom + 0.1).min(2.5);
+        browser_set_zoom(self.zoom);
+    }
+
+    pub fn zoom_out(&mut self) {
+        self.zoom = (self.zoom - 0.1).max(0.5);
+        browser_set_zoom(self.zoom);
+    }
+
+    pub fn reset_zoom(&mut self) {
+        self.zoom = 1.0;
+        browser_set_zoom(1.0);
+    }
+
+    pub fn toggle_bookmark(&mut self) {
+        let url = self.active_url();
+        if let Some(pos) = self.bookmarks.iter().position(|b| b == &url) {
+            self.bookmarks.remove(pos);
+        } else {
+            self.bookmarks.push(url);
+        }
+    }
+
+    pub fn is_bookmarked(&self) -> bool {
+        self.bookmarks.contains(&self.active_url())
+    }
+
+    pub fn copy_url(&mut self) {
+        let url = self.active_url();
+        copy_to_clipboard(&url);
+        self.copied_toast = true;
     }
 
     pub fn execute_command(&mut self, query: &str) {
@@ -860,8 +1123,11 @@ impl StandaloneBrowserWindow {
                 "!g" => format!("https://www.google.com/search?q={rest}"),
                 "!gh" => format!("https://github.com/search?q={rest}"),
                 "!rs" => format!("https://docs.rs/releases/search?query={rest}"),
+                "!cr" | "!crate" => format!("https://crates.io/search?q={rest}"),
                 "!yt" => format!("https://www.youtube.com/results?search_query={rest}"),
-                "!wiki" => format!("https://en.wikipedia.org/wiki/Special:Search?search={rest}"),
+                "!w" | "!wiki" => {
+                    format!("https://en.wikipedia.org/wiki/Special:Search?search={rest}")
+                }
                 _ => format!("https://duckduckgo.com/?q={rest}"),
             }
         } else if q.contains('.') && !q.contains(' ') {
@@ -872,17 +1138,20 @@ impl StandaloneBrowserWindow {
         self.navigate(target_url);
         self.command_bar_open = false;
         self.command_query.clear();
+        self.editing_url = false;
     }
 }
 
 impl Render for StandaloneBrowserWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_url = self.active_url();
+        let is_bookmarked = self.is_bookmarked();
+        let zoom_pct = (self.zoom * 100.0).round() as u32;
 
         #[cfg(target_os = "macos")]
         {
             if !self.command_bar_open {
-                macos_webview::attach_or_navigate(&active_url, 0.0, 0.0, 1020.0, 634.0);
+                macos_webview::attach_or_navigate(&active_url, 0.0, 0.0, 0.0, 0.0);
                 macos_webview::set_hidden(false);
             } else {
                 macos_webview::set_hidden(true);
@@ -912,6 +1181,15 @@ impl Render for StandaloneBrowserWindow {
                 0x34d399,
             ),
             (
+                "Search Docs.rs",
+                format!(
+                    "Search Rust documentation for '{}'",
+                    if q.is_empty() { "..." } else { q }
+                ),
+                SfSymbol::DocOnDoc,
+                0xf59e0b,
+            ),
+            (
                 "Search GitHub",
                 format!(
                     "Search GitHub repositories for '{}'",
@@ -919,15 +1197,6 @@ impl Render for StandaloneBrowserWindow {
                 ),
                 SfSymbol::DocTextMagnifyingGlass,
                 0xa78bfa,
-            ),
-            (
-                "Search Docs.rs",
-                format!(
-                    "Search Rust crates on Docs.rs for '{}'",
-                    if q.is_empty() { "..." } else { q }
-                ),
-                SfSymbol::DocOnDoc,
-                0xf59e0b,
             ),
             (
                 "New Tab",
@@ -941,12 +1210,18 @@ impl Render for StandaloneBrowserWindow {
                 SfSymbol::ArrowUturnBackward,
                 0x94a3b8,
             ),
+            (
+                "Copy URL",
+                "Copy active URL to system clipboard".to_string(),
+                SfSymbol::DocOnDoc,
+                0x38bdf8,
+            ),
         ];
 
         div()
             .id("alpenglow-browser-container")
             .size_full()
-            .bg(rgb(0x101015))
+            .bg(rgb(0x0e0e12))
             .overflow_hidden()
             .flex()
             .flex_col()
@@ -954,49 +1229,138 @@ impl Render for StandaloneBrowserWindow {
                 let key = event.keystroke.key.as_str();
                 let mods = event.keystroke.modifiers;
 
-                if (mods.platform || mods.control) && (key == "k" || key == "l" || key == "space") {
-                    this.command_bar_open = !this.command_bar_open;
-                    cx.notify();
-                    cx.stop_propagation();
-                    return;
-                }
-                if (mods.platform || mods.control) && key == "t" {
-                    let id = this.tabs.len() + 1;
-                    this.tabs.push(BrowserTabDisplay {
-                        title: format!("Tab {id}"),
-                        url: "https://duckduckgo.com".to_string(),
-                        is_active: false,
-                    });
-                    this.active_tab = this.tabs.len() - 1;
-                    cx.notify();
-                    cx.stop_propagation();
-                    return;
-                }
-                if (mods.platform || mods.control) && key == "w" {
-                    if this.tabs.len() > 1 {
-                        this.tabs.remove(this.active_tab);
-                        if this.active_tab >= this.tabs.len() {
-                            this.active_tab = this.tabs.len().saturating_sub(1);
+                // Modifiers (Cmd / Ctrl)
+                if mods.platform || mods.control {
+                    if key == "t" {
+                        this.new_tab(None);
+                        cx.notify();
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if key == "w" {
+                        this.close_tab(this.active_tab);
+                        cx.notify();
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if key == "r" {
+                        this.reload();
+                        cx.notify();
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if key == "l" {
+                        this.editing_url = !this.editing_url;
+                        if this.editing_url {
+                            this.url_input = this.active_url();
                         }
                         cx.notify();
+                        cx.stop_propagation();
+                        return;
                     }
-                    cx.stop_propagation();
-                    return;
+                    if key == "k" || key == "space" {
+                        this.command_bar_open = !this.command_bar_open;
+                        if !this.command_bar_open {
+                            this.command_query.clear();
+                        }
+                        cx.notify();
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if key == "[" || key == "left" {
+                        this.go_back();
+                        cx.notify();
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if key == "]" || key == "right" {
+                        this.go_forward();
+                        cx.notify();
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if key == "=" || key == "+" {
+                        this.zoom_in();
+                        cx.notify();
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if key == "-" {
+                        this.zoom_out();
+                        cx.notify();
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if key == "0" {
+                        this.reset_zoom();
+                        cx.notify();
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if key == "d" {
+                        this.toggle_bookmark();
+                        cx.notify();
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if mods.shift && key == "c" {
+                        this.copy_url();
+                        cx.notify();
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if let Ok(num) = key.parse::<usize>() {
+                        if (1..=9).contains(&num) {
+                            this.switch_tab(num - 1);
+                            cx.notify();
+                            cx.stop_propagation();
+                            return;
+                        }
+                    }
                 }
-                if (mods.platform || mods.control) && key == "r" {
-                    let url = this.active_url();
-                    this.navigate(url);
-                    cx.notify();
-                    cx.stop_propagation();
-                    return;
+
+                if key == "escape" {
+                    if this.command_bar_open {
+                        this.command_bar_open = false;
+                        this.command_query.clear();
+                        cx.notify();
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if this.editing_url {
+                        this.editing_url = false;
+                        cx.notify();
+                        cx.stop_propagation();
+                        return;
+                    }
                 }
-                if key == "escape" && this.command_bar_open {
-                    this.command_bar_open = false;
-                    this.command_query.clear();
-                    cx.notify();
-                    cx.stop_propagation();
-                    return;
+
+                if this.editing_url {
+                    if key == "enter" {
+                        let q = this.url_input.clone();
+                        this.execute_command(&q);
+                        cx.notify();
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if key == "backspace" {
+                        this.url_input.pop();
+                        cx.notify();
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if !mods.platform && !mods.control && !mods.alt {
+                        if let Some(ch) = event.keystroke.key_char.as_deref() {
+                            if ch.chars().count() == 1 && !ch.chars().all(|c| c.is_control()) {
+                                this.url_input.push_str(ch);
+                                cx.notify();
+                                cx.stop_propagation();
+                                return;
+                            }
+                        }
+                    }
                 }
+
                 if this.command_bar_open {
                     if key == "enter" {
                         let q = this.command_query.clone();
@@ -1018,7 +1382,7 @@ impl Render for StandaloneBrowserWindow {
                         return;
                     }
                     if key == "down" {
-                        this.command_selected = (this.command_selected + 1).min(5);
+                        this.command_selected = (this.command_selected + 1).min(6);
                         cx.notify();
                         cx.stop_propagation();
                         return;
@@ -1034,15 +1398,15 @@ impl Render for StandaloneBrowserWindow {
                     }
                 }
             }))
-            // 1. Safari Compact Mode Tab Chips Bar
+            // 1. Slim 38px Safari Compact Mode Tab Chips Bar
             .child(
                 div()
                     .w_full()
-                    .h(px(46.))
-                    .px(px(14.))
-                    .bg(rgb(0x131318))
+                    .h(px(38.))
+                    .px(px(8.))
+                    .bg(rgb(0x131319))
                     .border_b_1()
-                    .border_color(rgb(Theme::CARD_STROKE))
+                    .border_color(rgb(0x22222d))
                     .flex()
                     .items_center()
                     .justify_between()
@@ -1050,44 +1414,47 @@ impl Render for StandaloneBrowserWindow {
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(8.))
+                            .gap(px(6.))
                             .when(cfg!(target_os = "macos"), |r| r.pl(px(74.)))
-                            // Nav chevron buttons
+                            // Nav Back button
                             .child(
                                 div()
-                                    .h(px(28.))
-                                    .w(px(28.))
-                                    .rounded(px(14.))
-                                    .bg(rgb(0x1c1c24))
+                                    .id("browser-back-button")
+                                    .h(px(26.))
+                                    .w(px(26.))
+                                    .rounded(px(13.))
+                                    .bg(rgb(0x1c1c26))
                                     .border_1()
-                                    .border_color(rgb(Theme::CARD_STROKE))
+                                    .border_color(rgb(0x2a2a38))
                                     .flex()
                                     .items_center()
                                     .justify_center()
                                     .cursor_pointer()
-                                    .child(icons::sf_icon(
-                                        SfSymbol::ChevronLeft,
-                                        11.0,
-                                        Theme::TEXT_SECONDARY,
-                                    )),
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.go_back();
+                                        cx.notify();
+                                    }))
+                                    .child(icons::sf_icon(SfSymbol::ChevronLeft, 10.5, 0x94a3b8)),
                             )
+                            // Nav Forward button
                             .child(
                                 div()
-                                    .h(px(28.))
-                                    .w(px(28.))
-                                    .rounded(px(14.))
-                                    .bg(rgb(0x1c1c24))
+                                    .id("browser-forward-button")
+                                    .h(px(26.))
+                                    .w(px(26.))
+                                    .rounded(px(13.))
+                                    .bg(rgb(0x1c1c26))
                                     .border_1()
-                                    .border_color(rgb(Theme::CARD_STROKE))
+                                    .border_color(rgb(0x2a2a38))
                                     .flex()
                                     .items_center()
                                     .justify_center()
                                     .cursor_pointer()
-                                    .child(icons::sf_icon(
-                                        SfSymbol::ChevronRight,
-                                        11.0,
-                                        Theme::TEXT_SECONDARY,
-                                    )),
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.go_forward();
+                                        cx.notify();
+                                    }))
+                                    .child(icons::sf_icon(SfSymbol::ChevronRight, 10.5, 0x94a3b8)),
                             )
                             // Floating Tab Chips
                             .children(self.tabs.iter().enumerate().map(|(idx, tab)| {
@@ -1096,77 +1463,133 @@ impl Render for StandaloneBrowserWindow {
                                     // Active Tab Chip in Safari compact style: contains the current link!
                                     div()
                                         .id(SharedString::from(format!("tab-chip-active-{idx}")))
-                                        .h(px(32.))
-                                        .px(px(12.))
-                                        .rounded(px(16.))
-                                        .bg(rgb(0x282834))
+                                        .h(px(28.))
+                                        .px(px(10.))
+                                        .rounded(px(7.))
+                                        .bg(rgb(0x222230))
                                         .border_1()
-                                        .border_color(rgb(0x424256))
+                                        .border_color(rgb(0x3e3e54))
                                         .flex()
                                         .items_center()
-                                        .gap(px(8.))
-                                        .cursor_pointer()
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.command_bar_open = !this.command_bar_open;
-                                            cx.notify();
-                                        }))
-                                        .child(icons::sf_icon(SfSymbol::LockFill, 11.0, 0x34d399))
+                                        .gap(px(7.))
+                                        .child(icons::sf_icon(SfSymbol::LockFill, 10.5, 0x34d399))
+                                        .when(self.editing_url, |chip| {
+                                            let edit_text = if self.url_input.is_empty() {
+                                                "Type URL or search...".to_string()
+                                            } else {
+                                                format!("{}▍", self.url_input)
+                                            };
+                                            chip.child(
+                                                div()
+                                                    .font(font("Geist Mono"))
+                                                    .text_size(px(11.5))
+                                                    .text_color(rgb(if self.url_input.is_empty() {
+                                                        0x64748b
+                                                    } else {
+                                                        0xffffff
+                                                    }))
+                                                    .child(edit_text),
+                                            )
+                                        })
+                                        .when(!self.editing_url, |chip| {
+                                            chip.child(
+                                                div()
+                                                    .id("active-tab-url-text")
+                                                    .font(font("Geist Mono"))
+                                                    .text_size(px(11.5))
+                                                    .text_color(rgb(0xffffff))
+                                                    .cursor_pointer()
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.editing_url = true;
+                                                        this.url_input = this.active_url();
+                                                        cx.notify();
+                                                    }))
+                                                    .child(tab.url.clone()),
+                                            )
+                                            // Bookmark toggle
+                                            .child(
+                                                div()
+                                                    .id("active-tab-bookmark-toggle")
+                                                    .cursor_pointer()
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.toggle_bookmark();
+                                                        cx.notify();
+                                                    }))
+                                                    .child(icons::sf_icon(
+                                                        SfSymbol::Bookmark,
+                                                        9.5,
+                                                        if is_bookmarked {
+                                                            0xf59e0b
+                                                        } else {
+                                                            0x64748b
+                                                        },
+                                                    )),
+                                            )
+                                            // Reload button
+                                            .child(
+                                                div()
+                                                    .id("active-tab-reload-button")
+                                                    .cursor_pointer()
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.reload();
+                                                        cx.notify();
+                                                    }))
+                                                    .child(icons::sf_icon(
+                                                        SfSymbol::ArrowUturnBackward,
+                                                        9.5,
+                                                        0x94a3b8,
+                                                    )),
+                                            )
+                                        })
+                                        // Close tab button
                                         .child(
                                             div()
-                                                .font(font("Geist Mono"))
-                                                .text_size(px(12.))
-                                                .text_color(rgb(Theme::TEXT_PRIMARY))
-                                                .child(tab.url.clone()),
+                                                .id(SharedString::from(format!(
+                                                    "close-active-tab-{idx}"
+                                                )))
+                                                .text_size(px(11.))
+                                                .text_color(rgb(0x64748b))
+                                                .cursor_pointer()
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.close_tab(idx);
+                                                    cx.notify();
+                                                }))
+                                                .child("×"),
                                         )
-                                        .child(icons::sf_icon(
-                                            SfSymbol::ArrowUturnBackward,
-                                            9.5,
-                                            Theme::TEXT_TERTIARY,
-                                        ))
                                 } else {
                                     // Inactive Tab Chip
                                     div()
                                         .id(SharedString::from(format!("tab-chip-{idx}")))
-                                        .h(px(28.))
-                                        .px(px(10.))
-                                        .rounded(px(14.))
-                                        .bg(rgb(0x1c1c24))
+                                        .h(px(26.))
+                                        .px(px(8.))
+                                        .rounded(px(6.))
+                                        .bg(rgb(0x181822))
                                         .border_1()
-                                        .border_color(rgb(Theme::CARD_STROKE))
+                                        .border_color(rgb(0x282836))
                                         .flex()
                                         .items_center()
-                                        .gap(px(6.))
+                                        .gap(px(5.))
                                         .cursor_pointer()
                                         .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.active_tab = idx;
-                                            this.command_bar_open = false;
+                                            this.switch_tab(idx);
                                             cx.notify();
                                         }))
-                                        .child(icons::sf_icon(
-                                            SfSymbol::Globe,
-                                            11.0,
-                                            Theme::TEXT_TERTIARY,
-                                        ))
+                                        .child(icons::sf_icon(SfSymbol::Globe, 10.0, 0x64748b))
                                         .child(
                                             div()
-                                                .text_size(px(11.5))
-                                                .text_color(rgb(Theme::TEXT_SECONDARY))
+                                                .text_size(px(11.0))
+                                                .text_color(rgb(0x94a3b8))
                                                 .child(tab.title.clone()),
                                         )
                                         .child(
                                             div()
                                                 .id(SharedString::from(format!("close-chip-{idx}")))
-                                                .text_size(px(11.))
-                                                .text_color(rgb(Theme::TEXT_TERTIARY))
+                                                .text_size(px(10.5))
+                                                .text_color(rgb(0x64748b))
                                                 .cursor_pointer()
                                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                                    if this.tabs.len() > 1 {
-                                                        this.tabs.remove(idx);
-                                                        if this.active_tab >= this.tabs.len() {
-                                                            this.active_tab = this.tabs.len() - 1;
-                                                        }
-                                                        cx.notify();
-                                                    }
+                                                    this.close_tab(idx);
+                                                    cx.notify();
                                                 }))
                                                 .child("×"),
                                         )
@@ -1176,66 +1599,117 @@ impl Render for StandaloneBrowserWindow {
                             .child(
                                 div()
                                     .id("tab-add-chip")
-                                    .h(px(28.))
-                                    .w(px(28.))
-                                    .rounded(px(14.))
-                                    .bg(rgb(0x1c1c24))
+                                    .h(px(26.))
+                                    .w(px(26.))
+                                    .rounded(px(13.))
+                                    .bg(rgb(0x1a1a24))
                                     .border_1()
-                                    .border_color(rgb(Theme::CARD_STROKE))
+                                    .border_color(rgb(0x282836))
                                     .flex()
                                     .items_center()
                                     .justify_center()
                                     .cursor_pointer()
                                     .on_click(cx.listener(|this, _, _, cx| {
-                                        let id = this.tabs.len() + 1;
-                                        this.tabs.push(BrowserTabDisplay {
-                                            title: format!("Tab {id}"),
-                                            url: "https://duckduckgo.com".to_string(),
-                                            is_active: false,
-                                        });
-                                        this.active_tab = this.tabs.len() - 1;
+                                        this.new_tab(None);
                                         cx.notify();
                                     }))
-                                    .child(icons::sf_icon(
-                                        SfSymbol::Plus,
-                                        11.0,
-                                        Theme::TEXT_SECONDARY,
-                                    )),
+                                    .child(icons::sf_icon(SfSymbol::Plus, 10.5, 0x94a3b8)),
                             ),
                     )
                     .child(
-                        // Command bar button
                         div()
-                            .id("browser-cmd-k-trigger")
-                            .h(px(26.))
-                            .px(px(8.))
-                            .rounded(px(13.))
-                            .bg(rgb(0x202028))
-                            .border_1()
-                            .border_color(rgb(Theme::CARD_STROKE))
                             .flex()
                             .items_center()
-                            .gap(px(4.))
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.command_bar_open = !this.command_bar_open;
-                                cx.notify();
-                            }))
-                            .child(icons::sf_icon(
-                                SfSymbol::MagnifyingGlass,
-                                10.0,
-                                Theme::TEXT_SECONDARY,
-                            ))
+                            .gap(px(6.))
+                            // Zoom indicator
+                            .when(zoom_pct != 100, |row| {
+                                row.child(
+                                    div()
+                                        .id("browser-zoom-indicator")
+                                        .h(px(24.))
+                                        .px(px(6.))
+                                        .rounded(px(5.))
+                                        .bg(rgb(0x251c36))
+                                        .border_1()
+                                        .border_color(rgb(0x4c2e73))
+                                        .flex()
+                                        .items_center()
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.reset_zoom();
+                                            cx.notify();
+                                        }))
+                                        .child(
+                                            div()
+                                                .font(font("Geist Mono"))
+                                                .text_size(px(10.0))
+                                                .text_color(rgb(0xc084fc))
+                                                .child(format!("{zoom_pct}%")),
+                                        ),
+                                )
+                            })
+                            // Copy URL pill
                             .child(
                                 div()
-                                    .font(font("Geist Mono"))
-                                    .text_size(px(11.))
-                                    .text_color(rgb(Theme::TEXT_TERTIARY))
-                                    .child("⌘K"),
+                                    .id("browser-copy-url")
+                                    .h(px(24.))
+                                    .px(px(6.))
+                                    .rounded(px(5.))
+                                    .bg(rgb(0x181822))
+                                    .border_1()
+                                    .border_color(rgb(0x282836))
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(3.))
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.copy_url();
+                                        cx.notify();
+                                    }))
+                                    .child(icons::sf_icon(
+                                        if self.copied_toast {
+                                            SfSymbol::Checkmark
+                                        } else {
+                                            SfSymbol::DocOnDoc
+                                        },
+                                        10.0,
+                                        if self.copied_toast {
+                                            0x34d399
+                                        } else {
+                                            0x94a3b8
+                                        },
+                                    )),
+                            )
+                            // Command bar button
+                            .child(
+                                div()
+                                    .id("browser-cmd-k-trigger")
+                                    .h(px(24.))
+                                    .px(px(7.))
+                                    .rounded(px(5.))
+                                    .bg(rgb(0x1c1c28))
+                                    .border_1()
+                                    .border_color(rgb(0x2d2d3e))
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(4.))
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.command_bar_open = !this.command_bar_open;
+                                        cx.notify();
+                                    }))
+                                    .child(icons::sf_icon(SfSymbol::MagnifyingGlass, 9.5, 0x94a3b8))
+                                    .child(
+                                        div()
+                                            .font(font("Geist Mono"))
+                                            .text_size(px(10.5))
+                                            .text_color(rgb(0x64748b))
+                                            .child("⌘K"),
+                                    ),
                             ),
                     ),
             )
-            // 2. Full-Bleed Webview Viewport below the tab chips
+            // 2. Full-Bleed Edge-to-Edge Webview Viewport (0px Bezels!)
             .child(
                 div()
                     .flex_1()
@@ -1245,24 +1719,47 @@ impl Render for StandaloneBrowserWindow {
                         // Webview container canvas
                         div()
                             .size_full()
-                            .bg(rgb(0x0e0e12))
+                            .bg(rgb(0x0a0a0f))
                             .flex()
                             .flex_col()
                             .justify_center()
-                            .items_center(),
+                            .items_center()
+                            .when(self.command_bar_open, |canvas| {
+                                canvas.child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .items_center()
+                                        .gap(px(8.))
+                                        .child(icons::sf_icon(SfSymbol::Globe, 28.0, 0x334155))
+                                        .child(
+                                            div()
+                                                .font(font("Geist Mono"))
+                                                .text_size(px(13.))
+                                                .text_color(rgb(0x64748b))
+                                                .child(self.active_url()),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(11.))
+                                                .text_color(rgb(0x475569))
+                                                .child("WebKit view paused while searching"),
+                                        ),
+                                )
+                            }),
                     )
                     .when(self.command_bar_open, |parent| {
                         parent.child(
                             // 3. Command Bar overlay modal responding to browser context
                             div()
                                 .absolute()
-                                .top(px(20.))
-                                .left(px(190.))
-                                .w(px(640.))
-                                .rounded(px(16.))
-                                .bg(rgb(0x16161d))
+                                .top(px(24.))
+                                .left(px(240.))
+                                .w(px(580.))
+                                .rounded(px(12.))
+                                .bg(rgb(0x151520))
                                 .border_1()
-                                .border_color(rgb(0x383848))
+                                .border_color(rgb(0x2d2d40))
                                 .shadow_lg()
                                 .flex()
                                 .flex_col()
@@ -1270,27 +1767,27 @@ impl Render for StandaloneBrowserWindow {
                                 .child(
                                     div()
                                         .w_full()
-                                        .h(px(52.))
-                                        .px(px(16.))
+                                        .h(px(46.))
+                                        .px(px(14.))
                                         .border_b_1()
-                                        .border_color(rgb(Theme::CARD_STROKE))
+                                        .border_color(rgb(0x222230))
                                         .flex()
                                         .items_center()
-                                        .gap(px(12.))
+                                        .gap(px(10.))
                                         .child(icons::sf_icon(
                                             SfSymbol::MagnifyingGlass,
-                                            16.0,
+                                            14.0,
                                             0x34d399,
                                         ))
                                         .child(
                                             div()
                                                 .flex_1()
                                                 .font(font("Geist Mono"))
-                                                .text_size(px(16.))
+                                                .text_size(px(14.))
                                                 .text_color(rgb(if self.command_query.is_empty() {
-                                                    Theme::TEXT_TERTIARY
+                                                    0x64748b
                                                 } else {
-                                                    Theme::TEXT_PRIMARY
+                                                    0xffffff
                                                 }))
                                                 .child(if self.command_query.is_empty() {
                                                     "Search web or enter URL...".to_string()
@@ -1300,61 +1797,84 @@ impl Render for StandaloneBrowserWindow {
                                         )
                                         .child(
                                             div()
-                                                .text_size(px(11.))
-                                                .text_color(rgb(Theme::TEXT_TERTIARY))
+                                                .text_size(px(10.5))
+                                                .text_color(rgb(0x64748b))
                                                 .child("↵ to load • esc to close"),
                                         ),
                                 )
                                 .child(
                                     div()
                                         .w_full()
-                                        .p(px(8.))
+                                        .p(px(6.))
                                         .flex()
                                         .flex_col()
-                                        .gap(px(3.))
+                                        .gap(px(2.))
                                         .children(actions.into_iter().enumerate().map(
                                             |(idx, (title, sub, icon, color))| {
                                                 let is_sel = idx == self.command_selected;
+                                                let target = target_nav.clone();
+                                                let q_str = q.to_string();
                                                 div()
                                                     .id(SharedString::from(format!(
                                                         "browser-cmd-row-{idx}"
                                                     )))
-                                                    .h(px(38.))
+                                                    .h(px(34.))
                                                     .px(px(10.))
-                                                    .rounded(px(8.))
+                                                    .rounded(px(6.))
                                                     .bg(rgb(if is_sel {
-                                                        0x242430
+                                                        0x222232
                                                     } else {
-                                                        0x16161d
+                                                        0x151520
                                                     }))
                                                     .flex()
                                                     .items_center()
                                                     .justify_between()
                                                     .cursor_pointer()
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        match idx {
+                                                            0 => this.execute_command(&target),
+                                                            1 => this.execute_command(&format!(
+                                                                "!ddg {q_str}"
+                                                            )),
+                                                            2 => this.execute_command(&format!(
+                                                                "!rs {q_str}"
+                                                            )),
+                                                            3 => this.execute_command(&format!(
+                                                                "!gh {q_str}"
+                                                            )),
+                                                            4 => this.new_tab(None),
+                                                            5 => this.reload(),
+                                                            6 => this.copy_url(),
+                                                            _ => {
+                                                                let _ = install_web_app(
+                                                                    &this.active_url(),
+                                                                    &this.active_url(),
+                                                                );
+                                                                this.command_bar_open = false;
+                                                            }
+                                                        }
+                                                        cx.notify();
+                                                    }))
                                                     .child(
                                                         div()
                                                             .flex()
                                                             .items_center()
-                                                            .gap(px(10.))
+                                                            .gap(px(9.))
                                                             .child(icons::sf_icon(
-                                                                icon, 13.0, color,
+                                                                icon, 12.0, color,
                                                             ))
                                                             .child(
                                                                 div()
-                                                                    .text_size(px(13.))
+                                                                    .text_size(px(12.5))
                                                                     .font_weight(FontWeight::MEDIUM)
-                                                                    .text_color(rgb(
-                                                                        Theme::TEXT_PRIMARY,
-                                                                    ))
+                                                                    .text_color(rgb(0xffffff))
                                                                     .child(title),
                                                             )
                                                             .child(
                                                                 div()
                                                                     .font(font("Geist Mono"))
-                                                                    .text_size(px(11.))
-                                                                    .text_color(rgb(
-                                                                        Theme::TEXT_TERTIARY,
-                                                                    ))
+                                                                    .text_size(px(10.5))
+                                                                    .text_color(rgb(0x64748b))
                                                                     .child(sub),
                                                             ),
                                                     )
@@ -1370,20 +1890,20 @@ impl Render for StandaloneBrowserWindow {
 pub fn open_browser_window(initial_url: Option<String>, cx: &mut App) {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds {
-            origin: Point::new(px(120.), px(80.)),
+            origin: Point::new(px(100.), px(60.)),
             size: Size {
-                width: px(1020.),
-                height: px(680.),
+                width: px(1060.),
+                height: px(700.),
             },
         })),
         titlebar: Some(TitlebarOptions {
             title: Some("Alpenglow Browser".into()),
             appears_transparent: true,
-            traffic_light_position: Some(Point::new(px(12.), px(15.))),
+            traffic_light_position: Some(Point::new(px(12.), px(12.))),
         }),
         window_min_size: Some(Size {
-            width: px(640.),
-            height: px(400.),
+            width: px(520.),
+            height: px(340.),
         }),
         is_resizable: true,
         window_background: WindowBackgroundAppearance::Opaque,
@@ -1431,5 +1951,75 @@ mod tests {
         let status = detect_browser_engine();
         assert!(!status.engine_name.is_empty());
         assert!(!status.install_command.is_empty());
+    }
+
+    #[test]
+    fn standalone_browser_tab_management_and_navigation_works() {
+        let mut win = StandaloneBrowserWindow::new(Some("https://docs.rs".to_string()));
+        assert_eq!(win.tabs.len(), 3);
+        assert_eq!(win.active_url(), "https://docs.rs");
+
+        win.new_tab(Some("https://alpenglowed.dev".to_string()));
+        assert_eq!(win.tabs.len(), 4);
+        assert_eq!(win.active_tab, 3);
+        assert_eq!(win.active_url(), "https://alpenglowed.dev");
+
+        win.prev_tab();
+        assert_eq!(win.active_tab, 2);
+
+        win.next_tab();
+        assert_eq!(win.active_tab, 3);
+
+        win.close_tab(3);
+        assert_eq!(win.tabs.len(), 3);
+        assert_eq!(win.active_tab, 2);
+    }
+
+    #[test]
+    fn standalone_browser_bookmarks_and_zoom_work() {
+        let mut win = StandaloneBrowserWindow::new(Some("https://my-custom-site.org".to_string()));
+        assert!(!win.is_bookmarked());
+
+        win.toggle_bookmark();
+        assert!(win.is_bookmarked());
+
+        win.toggle_bookmark();
+        assert!(!win.is_bookmarked());
+
+        let initial_zoom = win.zoom;
+        win.zoom_in();
+        assert!(win.zoom > initial_zoom);
+
+        win.zoom_out();
+        assert!((win.zoom - initial_zoom).abs() < f64::EPSILON);
+
+        win.reset_zoom();
+        assert!((win.zoom - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn standalone_browser_command_execution_resolves_bangs_and_urls() {
+        let mut win = StandaloneBrowserWindow::new(Some("about:blank".to_string()));
+
+        win.execute_command("!rs gpui");
+        assert_eq!(
+            win.active_url(),
+            "https://docs.rs/releases/search?query=gpui"
+        );
+
+        win.execute_command("!gh warpdotdev");
+        assert_eq!(win.active_url(), "https://github.com/search?q=warpdotdev");
+
+        win.execute_command("alpenglowed.dev");
+        assert_eq!(win.active_url(), "https://alpenglowed.dev");
+
+        win.execute_command("https://crates.io");
+        assert_eq!(win.active_url(), "https://crates.io");
+
+        win.execute_command("simple search terms");
+        assert_eq!(
+            win.active_url(),
+            "https://duckduckgo.com/?q=simple search terms"
+        );
     }
 }
