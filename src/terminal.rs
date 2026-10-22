@@ -540,14 +540,16 @@ pub fn render_terminal_starship_header(
 ) -> Div {
     div()
         .w_full()
-        .px(px(16.))
-        .py(px(8.))
+        .px(px(14.))
+        .pt(px(10.))
+        .pb(px(6.))
         .flex()
         .flex_col()
-        .gap(px(5.))
-        // 1. Starship metadata on top
+        .gap(px(8.))
+        // 1. Floating Starship Chips directly above the input
         .child(
             div()
+                .w_full()
                 .flex()
                 .items_center()
                 .justify_between()
@@ -557,50 +559,130 @@ pub fn render_terminal_starship_header(
                         .items_center()
                         .gap(px(6.))
                         .when(in_submenu, |row| {
+                            let back = on_back.clone();
                             row.child(
                                 div()
-                                    .id("terminal-back-btn")
+                                    .id("terminal-back-chip")
+                                    .h(px(24.))
+                                    .px(px(8.))
+                                    .rounded(px(12.))
+                                    .bg(rgb(0x1e1e26))
+                                    .border_1()
+                                    .border_color(rgb(Theme::CARD_STROKE))
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(4.))
                                     .cursor_pointer()
-                                    .on_click(move |_, w, cx| on_back(w, cx))
+                                    .on_click(move |_, w, cx| back(w, cx))
                                     .child(icons::sf_icon(
                                         SfSymbol::ChevronLeft,
-                                        13.0,
+                                        11.0,
                                         Theme::TEXT_SECONDARY,
-                                    )),
+                                    ))
+                                    .child(
+                                        div()
+                                            .text_size(px(11.))
+                                            .text_color(rgb(Theme::TEXT_SECONDARY))
+                                            .child("Back"),
+                                    ),
                             )
                         })
-                        .child(icons::sf_icon(SfSymbol::Folder, 11.5, 0x60a5fa))
+                        // Floating CWD Chip
                         .child(
                             div()
-                                .font(font("Geist Mono"))
-                                .text_size(px(11.5))
-                                .text_color(rgb(Theme::TEXT_SECONDARY))
-                                .child(cwd.to_string()),
+                                .id("terminal-cwd-chip")
+                                .h(px(24.))
+                                .px(px(10.))
+                                .rounded(px(12.))
+                                .bg(rgb(0x162234))
+                                .border_1()
+                                .border_color(rgb(0x233d63))
+                                .flex()
+                                .items_center()
+                                .gap(px(5.))
+                                .child(icons::sf_icon(SfSymbol::Folder, 11.0, 0x60a5fa))
+                                .child(
+                                    div()
+                                        .font(font("Geist Mono"))
+                                        .text_size(px(11.))
+                                        .text_color(rgb(0x93c5fd))
+                                        .child(cwd.to_string()),
+                                ),
                         )
+                        // Floating Git Branch Chip
                         .when_some(git_branch, |row, branch| {
                             row.child(
                                 div()
-                                    .px(px(6.))
-                                    .py(px(1.))
-                                    .rounded(px(4.))
-                                    .bg(rgb(0x282830))
-                                    .font(font("Geist Mono"))
-                                    .text_size(px(10.5))
-                                    .text_color(rgb(0xa78bfa))
-                                    .child(format!("⎇ {branch}")),
+                                    .id("terminal-branch-chip")
+                                    .h(px(24.))
+                                    .px(px(10.))
+                                    .rounded(px(12.))
+                                    .bg(rgb(0x281c38))
+                                    .border_1()
+                                    .border_color(rgb(0x522f77))
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(5.))
+                                    .child(
+                                        div()
+                                            .font(font("Geist Mono"))
+                                            .text_size(px(11.))
+                                            .text_color(rgb(0xc084fc))
+                                            .child(format!("⎇ {branch}")),
+                                    ),
                             )
-                        }),
+                        })
+                        // Floating Shell Environment Chip
+                        .child(
+                            div()
+                                .id("terminal-env-chip")
+                                .h(px(24.))
+                                .px(px(8.))
+                                .rounded(px(12.))
+                                .bg(rgb(0x162a20))
+                                .border_1()
+                                .border_color(rgb(0x25523d))
+                                .flex()
+                                .items_center()
+                                .gap(px(4.))
+                                .child(icons::sf_icon(SfSymbol::Terminal, 10.5, 0x34d399))
+                                .child(
+                                    div()
+                                        .font(font("Geist Mono"))
+                                        .text_size(px(10.5))
+                                        .text_color(rgb(0x34d399))
+                                        .child("zsh"),
+                                ),
+                        ),
                 )
                 .child(
                     div()
-                        .text_size(px(11.))
-                        .text_color(rgb(Theme::TEXT_TERTIARY))
-                        .child("↵ to run"),
+                        .h(px(24.))
+                        .px(px(8.))
+                        .rounded(px(12.))
+                        .bg(rgb(0x1a1a22))
+                        .border_1()
+                        .border_color(rgb(Theme::CARD_STROKE))
+                        .flex()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_size(px(10.5))
+                                .text_color(rgb(Theme::TEXT_TERTIARY))
+                                .child("↵ to run"),
+                        ),
                 ),
         )
-        // 2. Terminal prompt input directly underneath
+        // 2. Terminal prompt input directly underneath the floating chips
         .child(
             div()
+                .w_full()
+                .h(px(40.))
+                .px(px(12.))
+                .rounded(px(10.))
+                .bg(rgb(0x14141a))
+                .border_1()
+                .border_color(rgb(Theme::CARD_STROKE))
                 .flex()
                 .items_center()
                 .gap(px(8.))
@@ -609,7 +691,7 @@ pub fn render_terminal_starship_header(
                     div()
                         .flex_1()
                         .font(font("Geist Mono"))
-                        .text_size(px(17.))
+                        .text_size(px(16.))
                         .text_color(rgb(if input.is_empty() {
                             Theme::TEXT_TERTIARY
                         } else {

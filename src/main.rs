@@ -2797,7 +2797,139 @@ impl LauncherWindow {
     }
 
     fn render_browser_inline(&self, desktop: &DesktopModel) -> Div {
-        browser::render_internal_browser(&desktop.browser_page, &desktop.browser_engine)
+        let q = desktop.query.trim();
+        let target_url = if q.starts_with("http://") || q.starts_with("https://") {
+            q.to_string()
+        } else if !q.is_empty() {
+            format!("https://duckduckgo.com/?q={}", q)
+        } else {
+            desktop.browser_page.url.clone()
+        };
+
+        let actions = vec![
+            (
+                "Open in Alpenglow Browser",
+                format!("Navigate to {target_url}"),
+                icons::SfSymbol::Globe,
+                0x60a5fa,
+                vec!["↵"],
+            ),
+            (
+                "Search DuckDuckGo",
+                format!("Search web for '{}'", if q.is_empty() { "..." } else { q }),
+                icons::SfSymbol::MagnifyingGlass,
+                0x34d399,
+                vec!["!ddg"],
+            ),
+            (
+                "Search GitHub",
+                format!(
+                    "Search code repositories for '{}'",
+                    if q.is_empty() { "..." } else { q }
+                ),
+                icons::SfSymbol::DocTextMagnifyingGlass,
+                0xa78bfa,
+                vec!["!gh"],
+            ),
+            (
+                "Search Docs.rs",
+                format!(
+                    "Search Rust documentation for '{}'",
+                    if q.is_empty() { "..." } else { q }
+                ),
+                icons::SfSymbol::DocOnDoc,
+                0xf59e0b,
+                vec!["!rs"],
+            ),
+            (
+                "New Tab",
+                "Open a blank tab in Alpenglow Browser".to_string(),
+                icons::SfSymbol::Plus,
+                0x94a3b8,
+                vec!["⌘T"],
+            ),
+            (
+                "Reload Active Page",
+                "Reload current web page".to_string(),
+                icons::SfSymbol::ArrowUturnBackward,
+                0x94a3b8,
+                vec!["⌘R"],
+            ),
+        ];
+
+        let engine_badge = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .px(px(8.))
+            .py(px(4.))
+            .mb(px(2.))
+            .rounded(px(6.))
+            .bg(rgb(components::Theme::BAR_SURFACE))
+            .border_1()
+            .border_color(rgb(components::Theme::CARD_BORDER))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(icons::sf_icon(icons::SfSymbol::Globe, 12., 0x60a5fa))
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(rgb(0x94a3b8))
+                            .child("Alpenglow Browser Engine"),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(div().w(px(6.)).h(px(6.)).rounded(px(3.)).bg(rgb(0x34d399)))
+                    .child(
+                        div()
+                            .text_size(px(10.))
+                            .font_family("Geist Mono")
+                            .text_color(rgb(0xe2e8f0))
+                            .child(desktop.browser_engine.engine_name.clone()),
+                    ),
+            );
+
+        div()
+            .w_full()
+            .px(px(8.))
+            .pt(px(4.))
+            .pb(px(8.))
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .child(engine_badge)
+            .children(actions.into_iter().enumerate().map(
+                |(idx, (title, sub, icon, color, keys))| {
+                    let selected = idx == desktop.selected_pill.min(5);
+                    let desktop_entity = self.desktop.clone();
+                    let target = target_url.clone();
+                    components::list_row(
+                        SharedString::from(format!("browser-action-{idx}")),
+                        selected,
+                        icon,
+                        color,
+                        false,
+                        title,
+                        Some(SharedString::from(sub.clone())),
+                        &keys,
+                        "Browser",
+                    )
+                    .on_click(move |_, _, cx| {
+                        let target_clone = target.clone();
+                        desktop_entity.update(cx, |d, cx| {
+                            browser::open_browser_window(Some(target_clone), cx);
+                            d.changed(cx);
+                        });
+                    })
+                },
+            ))
     }
 
     fn render_results(&self, cx: &App) -> impl IntoElement {
@@ -3861,6 +3993,10 @@ fn main() {
                 open_installer_window(source, target, cx);
             } else if std::env::args().any(|arg| arg == "--standalone-terminal") {
                 terminal::open_standalone_terminal_window(cx);
+            } else if options.initial_view_mode == ViewMode::Browser
+                || std::env::args().any(|arg| arg == "browser" || arg == "--browser")
+            {
+                browser::open_browser_window(None, cx);
             } else {
                 focus_or_open_launcher(&desktop, cx);
             }
