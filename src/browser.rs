@@ -3,13 +3,76 @@ use std::process::Command;
 
 use crepuscularity_gpui::prelude::*;
 use crepuscularity_gpui::{
-    div, font, px, rgb, App, Bounds, Context, Div, FontWeight, KeyDownEvent, Point, Render,
-    SharedString, Size, TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds,
-    WindowDecorations, WindowOptions,
+    actions, div, font, px, rgb, App, Bounds, Context, Div, FocusHandle, FontWeight, KeyBinding,
+    KeyDownEvent, Point, Render, SharedString, Size, TitlebarOptions, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowOptions,
 };
 
 use crate::components::Theme;
 use crate::icons::{self, SfSymbol};
+
+actions!(
+    alpenglow_browser,
+    [
+        BrowserNewTab,
+        BrowserCloseTab,
+        BrowserReload,
+        BrowserFocusUrl,
+        BrowserToggleCmdBar,
+        BrowserGoBack,
+        BrowserGoForward,
+        BrowserZoomIn,
+        BrowserZoomOut,
+        BrowserResetZoom,
+        BrowserToggleBookmark,
+        BrowserCopyUrl,
+        BrowserNextTab,
+        BrowserPrevTab,
+        BrowserSelectTab1,
+        BrowserSelectTab2,
+        BrowserSelectTab3,
+        BrowserSelectTab4,
+        BrowserSelectTab5,
+        BrowserSelectTab6,
+        BrowserSelectTab7,
+        BrowserSelectTab8,
+        BrowserSelectTab9,
+        BrowserEscape,
+    ]
+);
+
+pub fn bind_browser_keys(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("cmd-t", BrowserNewTab, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-w", BrowserCloseTab, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-r", BrowserReload, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-l", BrowserFocusUrl, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-k", BrowserToggleCmdBar, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-space", BrowserToggleCmdBar, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-[", BrowserGoBack, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-left", BrowserGoBack, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-]", BrowserGoForward, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-right", BrowserGoForward, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-=", BrowserZoomIn, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-+", BrowserZoomIn, Some("alpenglow_browser")),
+        KeyBinding::new("cmd--", BrowserZoomOut, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-0", BrowserResetZoom, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-d", BrowserToggleBookmark, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-shift-c", BrowserCopyUrl, Some("alpenglow_browser")),
+        KeyBinding::new("ctrl-tab", BrowserNextTab, Some("alpenglow_browser")),
+        KeyBinding::new("ctrl-shift-tab", BrowserPrevTab, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-1", BrowserSelectTab1, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-2", BrowserSelectTab2, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-3", BrowserSelectTab3, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-4", BrowserSelectTab4, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-5", BrowserSelectTab5, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-6", BrowserSelectTab6, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-7", BrowserSelectTab7, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-8", BrowserSelectTab8, Some("alpenglow_browser")),
+        KeyBinding::new("cmd-9", BrowserSelectTab9, Some("alpenglow_browser")),
+        KeyBinding::new("escape", BrowserEscape, Some("alpenglow_browser")),
+    ]);
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrowserEngineStatus {
@@ -474,8 +537,63 @@ pub mod macos_webview {
 
     static GLOBAL_WEBVIEW: Mutex<Option<NativeWebView>> = Mutex::new(None);
 
+    pub fn ensure_regular_activation_policy() {
+        unsafe {
+            let ns_app_cls = objc_getClass(c"NSApplication".as_ptr());
+            if ns_app_cls.is_null() {
+                return;
+            }
+            let shared_app: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                std::mem::transmute(objc_msgSend as *const ());
+            let app = shared_app(ns_app_cls, sel_registerName(c"sharedApplication".as_ptr()));
+            if app.is_null() {
+                return;
+            }
+            // NSApplicationActivationPolicyRegular = 0
+            let set_policy: extern "C" fn(*mut c_void, *mut c_void, isize) -> bool =
+                std::mem::transmute(objc_msgSend as *const ());
+            set_policy(app, sel_registerName(c"setActivationPolicy:".as_ptr()), 0);
+
+            let activate: extern "C" fn(*mut c_void, *mut c_void, bool) =
+                std::mem::transmute(objc_msgSend as *const ());
+            activate(
+                app,
+                sel_registerName(c"activateIgnoringOtherApps:".as_ptr()),
+                true,
+            );
+        }
+    }
+
+    pub fn ensure_window_active_and_key() {
+        unsafe {
+            let ns_app_cls = objc_getClass(c"NSApplication".as_ptr());
+            if ns_app_cls.is_null() {
+                return;
+            }
+            let shared_app: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                std::mem::transmute(objc_msgSend as *const ());
+            let app = shared_app(ns_app_cls, sel_registerName(c"sharedApplication".as_ptr()));
+            if app.is_null() {
+                return;
+            }
+            let key_window: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                std::mem::transmute(objc_msgSend as *const ());
+            let win = key_window(app, sel_registerName(c"keyWindow".as_ptr()));
+            if !win.is_null() {
+                let make_key: extern "C" fn(*mut c_void, *mut c_void, *mut c_void) =
+                    std::mem::transmute(objc_msgSend as *const ());
+                make_key(
+                    win,
+                    sel_registerName(c"makeKeyAndOrderFront:".as_ptr()),
+                    std::ptr::null_mut(),
+                );
+            }
+        }
+    }
+
     pub fn attach_or_navigate(url: &str, x: f64, y: f64, width: f64, height: f64) {
         unsafe {
+            ensure_regular_activation_policy();
             let ns_app_cls = objc_getClass(c"NSApplication".as_ptr());
             if ns_app_cls.is_null() {
                 return;
@@ -535,6 +653,14 @@ pub mod macos_webview {
                 return;
             }
 
+            let make_key: extern "C" fn(*mut c_void, *mut c_void, *mut c_void) =
+                std::mem::transmute(objc_msgSend as *const ());
+            make_key(
+                win,
+                sel_registerName(c"makeKeyAndOrderFront:".as_ptr()),
+                std::ptr::null_mut(),
+            );
+
             let content_view_fn: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
                 std::mem::transmute(objc_msgSend as *const ());
             let content_view = content_view_fn(win, sel_registerName(c"contentView".as_ptr()));
@@ -542,9 +668,21 @@ pub mod macos_webview {
                 return;
             }
 
+            let is_flipped_fn: extern "C" fn(*mut c_void, *mut c_void) -> bool =
+                std::mem::transmute(objc_msgSend as *const ());
+            let is_flipped = is_flipped_fn(content_view, sel_registerName(c"isFlipped".as_ptr()));
+
             let bounds_fn: extern "C" fn(*mut c_void, *mut c_void) -> CGRect =
                 std::mem::transmute(objc_msgSend as *const ());
             let bounds = bounds_fn(content_view, sel_registerName(c"bounds".as_ptr()));
+            let top_bar_height = 38.0;
+            let actual_y = if y > 0.0 {
+                y
+            } else if is_flipped {
+                top_bar_height
+            } else {
+                0.0
+            };
             let w = if width > 0.0 {
                 width
             } else {
@@ -553,12 +691,12 @@ pub mod macos_webview {
             let h = if height > 0.0 {
                 height
             } else {
-                (bounds.size.height - 38.0).max(100.0)
+                (bounds.size.height - top_bar_height).max(50.0)
             };
 
             let mut guard = GLOBAL_WEBVIEW.lock().unwrap();
             let frame = CGRect {
-                origin: CGPoint { x, y },
+                origin: CGPoint { x, y: actual_y },
                 size: CGSize {
                     width: w,
                     height: h,
@@ -784,6 +922,16 @@ pub mod macos_webview {
     }
 }
 
+pub fn ensure_regular_activation_policy() {
+    #[cfg(target_os = "macos")]
+    macos_webview::ensure_regular_activation_policy();
+}
+
+pub fn ensure_window_active_and_key() {
+    #[cfg(target_os = "macos")]
+    macos_webview::ensure_window_active_and_key();
+}
+
 pub fn detach_native_webview() {
     #[cfg(target_os = "macos")]
     macos_webview::detach();
@@ -933,10 +1081,25 @@ pub struct StandaloneBrowserWindow {
     pub url_input: String,
     pub zoom: f64,
     pub copied_toast: bool,
+    pub focus_handle: Option<FocusHandle>,
 }
 
 impl StandaloneBrowserWindow {
     pub fn new(initial_url: Option<String>) -> Self {
+        Self::with_focus(initial_url, None)
+    }
+
+    pub fn with_context(
+        initial_url: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let fh = cx.focus_handle();
+        fh.focus(window);
+        Self::with_focus(initial_url, Some(fh))
+    }
+
+    pub fn with_focus(initial_url: Option<String>, focus_handle: Option<FocusHandle>) -> Self {
         let initial = initial_url.unwrap_or_else(|| "https://docs.rs".to_string());
         let tabs = vec![
             BrowserTabDisplay {
@@ -972,6 +1135,7 @@ impl StandaloneBrowserWindow {
             url_input: String::new(),
             zoom: 1.0,
             copied_toast: false,
+            focus_handle,
         }
     }
 
@@ -1143,7 +1307,7 @@ impl StandaloneBrowserWindow {
 }
 
 impl Render for StandaloneBrowserWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_url = self.active_url();
         let is_bookmarked = self.is_bookmarked();
         let zoom_pct = (self.zoom * 100.0).round() as u32;
@@ -1218,13 +1382,134 @@ impl Render for StandaloneBrowserWindow {
             ),
         ];
 
-        div()
+        if (self.editing_url || self.command_bar_open) && self.focus_handle.is_some() {
+            if let Some(ref fh) = self.focus_handle {
+                fh.focus(window);
+            }
+        }
+
+        let mut container = div()
             .id("alpenglow-browser-container")
+            .key_context("alpenglow_browser")
             .size_full()
             .bg(rgb(0x0e0e12))
             .overflow_hidden()
             .flex()
-            .flex_col()
+            .flex_col();
+
+        if let Some(ref fh) = self.focus_handle {
+            container = container.track_focus(fh);
+        }
+
+        container
+            .on_action(cx.listener(|this, _: &BrowserNewTab, _, cx| {
+                this.new_tab(None);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserCloseTab, _, cx| {
+                this.close_tab(this.active_tab);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserReload, _, cx| {
+                this.reload();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserFocusUrl, _, cx| {
+                this.editing_url = !this.editing_url;
+                if this.editing_url {
+                    this.url_input = this.active_url();
+                }
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserToggleCmdBar, _, cx| {
+                this.command_bar_open = !this.command_bar_open;
+                if !this.command_bar_open {
+                    this.command_query.clear();
+                }
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserGoBack, _, cx| {
+                this.go_back();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserGoForward, _, cx| {
+                this.go_forward();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserZoomIn, _, cx| {
+                this.zoom_in();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserZoomOut, _, cx| {
+                this.zoom_out();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserResetZoom, _, cx| {
+                this.reset_zoom();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserToggleBookmark, _, cx| {
+                this.toggle_bookmark();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserCopyUrl, _, cx| {
+                this.copy_url();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserNextTab, _, cx| {
+                this.next_tab();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserPrevTab, _, cx| {
+                this.prev_tab();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserSelectTab1, _, cx| {
+                this.switch_tab(0);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserSelectTab2, _, cx| {
+                this.switch_tab(1);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserSelectTab3, _, cx| {
+                this.switch_tab(2);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserSelectTab4, _, cx| {
+                this.switch_tab(3);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserSelectTab5, _, cx| {
+                this.switch_tab(4);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserSelectTab6, _, cx| {
+                this.switch_tab(5);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserSelectTab7, _, cx| {
+                this.switch_tab(6);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserSelectTab8, _, cx| {
+                this.switch_tab(7);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserSelectTab9, _, cx| {
+                this.switch_tab(8);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &BrowserEscape, _, cx| {
+                if this.command_bar_open {
+                    this.command_bar_open = false;
+                    this.command_query.clear();
+                    cx.notify();
+                } else if this.editing_url {
+                    this.editing_url = false;
+                    cx.notify();
+                }
+            }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 let key = event.keystroke.key.as_str();
                 let mods = event.keystroke.modifiers;
@@ -1888,6 +2173,9 @@ impl Render for StandaloneBrowserWindow {
 }
 
 pub fn open_browser_window(initial_url: Option<String>, cx: &mut App) {
+    bind_browser_keys(cx);
+    ensure_regular_activation_policy();
+
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds {
             origin: Point::new(px(100.), px(60.)),
@@ -1911,8 +2199,9 @@ pub fn open_browser_window(initial_url: Option<String>, cx: &mut App) {
         ..Default::default()
     };
     let _ = cx.open_window(options, move |window, cx| {
-        let view = cx.new(|_| StandaloneBrowserWindow::new(initial_url));
+        let view = cx.new(|cx| StandaloneBrowserWindow::with_context(initial_url, window, cx));
         window.activate_window();
+        ensure_window_active_and_key();
         view
     });
 }

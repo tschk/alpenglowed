@@ -3931,6 +3931,9 @@ fn main() {
     Application::new()
         .with_assets(icons::IconAssets)
         .run(move |cx: &mut App| {
+            browser::bind_browser_keys(cx);
+            browser::ensure_regular_activation_policy();
+
             let _ = cx
                 .text_system()
                 .add_fonts(vec![Cow::Borrowed(GEIST), Cow::Borrowed(GEIST_MONO)]);
