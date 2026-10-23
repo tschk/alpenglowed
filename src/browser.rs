@@ -3,8 +3,8 @@ use std::process::Command;
 
 use crepuscularity_gpui::prelude::*;
 use crepuscularity_gpui::{
-    actions, div, font, px, rgb, App, Bounds, Context, Div, FocusHandle, FontWeight, KeyBinding,
-    KeyDownEvent, Point, Render, SharedString, Size, TitlebarOptions, Window,
+    actions, div, font, px, rgb, rgba, App, Bounds, Context, Div, FocusHandle, FontWeight,
+    KeyBinding, KeyDownEvent, Point, Render, SharedString, Size, TitlebarOptions, Window,
     WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowOptions,
 };
 
@@ -1255,6 +1255,213 @@ impl StandaloneBrowserWindow {
         self.command_query.clear();
         self.editing_url = false;
     }
+
+    pub fn omnibar_candidates(&self) -> Vec<OmnibarCandidate> {
+        let q = self.command_query.trim();
+        let mut list = Vec::new();
+
+        if !q.is_empty() {
+            if q.starts_with("http://") || q.starts_with("https://") {
+                list.push(OmnibarCandidate {
+                    title: "Open URL".to_string(),
+                    subtitle: q.to_string(),
+                    icon: SfSymbol::Globe,
+                    icon_color: TC_ACCENT,
+                    action: OmnibarAction::Navigate(q.to_string()),
+                });
+            } else if q.starts_with('!') {
+                let parts: Vec<&str> = q.splitn(2, ' ').collect();
+                let bang = parts[0];
+                let rest = parts.get(1).copied().unwrap_or("");
+                let (engine_name, target) = match bang {
+                    "!g" => ("Google", format!("https://www.google.com/search?q={rest}")),
+                    "!gh" => ("GitHub", format!("https://github.com/search?q={rest}")),
+                    "!rs" => (
+                        "Docs.rs",
+                        format!("https://docs.rs/releases/search?query={rest}"),
+                    ),
+                    "!cr" | "!crate" => ("Crates.io", format!("https://crates.io/search?q={rest}")),
+                    "!yt" => (
+                        "YouTube",
+                        format!("https://www.youtube.com/results?search_query={rest}"),
+                    ),
+                    "!w" | "!wiki" => (
+                        "Wikipedia",
+                        format!("https://en.wikipedia.org/wiki/Special:Search?search={rest}"),
+                    ),
+                    _ => ("DuckDuckGo", format!("https://duckduckgo.com/?q={rest}")),
+                };
+                list.push(OmnibarCandidate {
+                    title: format!("Search {engine_name}"),
+                    subtitle: format!("Query: '{rest}'"),
+                    icon: SfSymbol::BoltFill,
+                    icon_color: 0xf59e0b,
+                    action: OmnibarAction::Navigate(target),
+                });
+            } else if q.contains('.') && !q.contains(' ') {
+                list.push(OmnibarCandidate {
+                    title: "Go to Website".to_string(),
+                    subtitle: format!("https://{q}"),
+                    icon: SfSymbol::Globe,
+                    icon_color: TC_ACCENT,
+                    action: OmnibarAction::Navigate(format!("https://{q}")),
+                });
+            } else {
+                list.push(OmnibarCandidate {
+                    title: "Search DuckDuckGo".to_string(),
+                    subtitle: format!("Search web for '{q}'"),
+                    icon: SfSymbol::MagnifyingGlass,
+                    icon_color: TC_ACCENT,
+                    action: OmnibarAction::Navigate(format!("https://duckduckgo.com/?q={q}")),
+                });
+                list.push(OmnibarCandidate {
+                    title: "Search Docs.rs".to_string(),
+                    subtitle: format!("Rust documentation for '{q}'"),
+                    icon: SfSymbol::DocOnDoc,
+                    icon_color: 0xf59e0b,
+                    action: OmnibarAction::Navigate(format!(
+                        "https://docs.rs/releases/search?query={q}"
+                    )),
+                });
+                list.push(OmnibarCandidate {
+                    title: "Search GitHub".to_string(),
+                    subtitle: format!("Repositories for '{q}'"),
+                    icon: SfSymbol::DocTextMagnifyingGlass,
+                    icon_color: 0xa78bfa,
+                    action: OmnibarAction::Navigate(format!("https://github.com/search?q={q}")),
+                });
+            }
+
+            let q_lower = q.to_lowercase();
+            for (idx, tab) in self.tabs.iter().enumerate() {
+                if idx != self.active_tab
+                    && (tab.title.to_lowercase().contains(&q_lower)
+                        || tab.url.to_lowercase().contains(&q_lower))
+                {
+                    list.push(OmnibarCandidate {
+                        title: format!("Switch to Tab {}: {}", idx + 1, tab.title),
+                        subtitle: tab.url.clone(),
+                        icon: SfSymbol::MacWindow,
+                        icon_color: 0xa78bfa,
+                        action: OmnibarAction::SwitchTab(idx),
+                    });
+                }
+            }
+        } else {
+            list.push(OmnibarCandidate {
+                title: "New Tab".to_string(),
+                subtitle: "Open blank tab (⌘T)".to_string(),
+                icon: SfSymbol::Plus,
+                icon_color: 0x94a3b8,
+                action: OmnibarAction::NewTab,
+            });
+            list.push(OmnibarCandidate {
+                title: "Reload Page".to_string(),
+                subtitle: "Refresh current page (⌘R)".to_string(),
+                icon: SfSymbol::ArrowUturnBackward,
+                icon_color: 0x94a3b8,
+                action: OmnibarAction::Reload,
+            });
+            list.push(OmnibarCandidate {
+                title: "Copy URL".to_string(),
+                subtitle: self.active_url(),
+                icon: SfSymbol::DocOnDoc,
+                icon_color: TC_ACCENT,
+                action: OmnibarAction::CopyUrl,
+            });
+            list.push(OmnibarCandidate {
+                title: "Bookmark Page".to_string(),
+                subtitle: "Toggle bookmark for active page (⌘D)".to_string(),
+                icon: SfSymbol::Bookmark,
+                icon_color: 0xf59e0b,
+                action: OmnibarAction::Bookmark,
+            });
+            list.push(OmnibarCandidate {
+                title: "Duplicate Tab".to_string(),
+                subtitle: "Open copy of active tab in new tab".to_string(),
+                icon: SfSymbol::DocOnDoc,
+                icon_color: 0x94a3b8,
+                action: OmnibarAction::DuplicateTab,
+            });
+            for (idx, tab) in self.tabs.iter().enumerate() {
+                if idx != self.active_tab {
+                    list.push(OmnibarCandidate {
+                        title: format!("Switch to Tab {}: {}", idx + 1, tab.title),
+                        subtitle: tab.url.clone(),
+                        icon: SfSymbol::MacWindow,
+                        icon_color: 0xa78bfa,
+                        action: OmnibarAction::SwitchTab(idx),
+                    });
+                }
+            }
+            list.push(OmnibarCandidate {
+                title: "Close Tab".to_string(),
+                subtitle: "Close current active tab (⌘W)".to_string(),
+                icon: SfSymbol::Xmark,
+                icon_color: 0xf87171,
+                action: OmnibarAction::CloseTab,
+            });
+            list.push(OmnibarCandidate {
+                title: "Install as Web App".to_string(),
+                subtitle: "Create .desktop application launcher".to_string(),
+                icon: SfSymbol::ArrowDownCircle,
+                icon_color: 0x34d399,
+                action: OmnibarAction::InstallWebApp,
+            });
+        }
+        list
+    }
+
+    pub fn execute_omnibar_action(&mut self, action: OmnibarAction) {
+        match action {
+            OmnibarAction::Navigate(url) => self.navigate(url),
+            OmnibarAction::SwitchTab(idx) => self.switch_tab(idx),
+            OmnibarAction::NewTab => self.new_tab(None),
+            OmnibarAction::Reload => self.reload(),
+            OmnibarAction::CopyUrl => self.copy_url(),
+            OmnibarAction::Bookmark => self.toggle_bookmark(),
+            OmnibarAction::DuplicateTab => self.new_tab(Some(self.active_url())),
+            OmnibarAction::CloseTab => self.close_tab(self.active_tab),
+            OmnibarAction::InstallWebApp => {
+                let _ = install_web_app(&self.active_url(), &self.active_url());
+            }
+        }
+        self.command_bar_open = false;
+        self.command_query.clear();
+    }
+}
+
+const TC_SCRIM: u32 = 0x161618;
+const TC_PANEL_STROKE: u32 = 0x26262b;
+const TC_GLASS_BG: u32 = 0x242429;
+const TC_BORDER: u32 = 0x3e3e46;
+const TC_CARD_FILL: u32 = 0x1f1f24;
+const TC_CARD_STROKE: u32 = 0x2b2b31;
+const TC_TEXT: u32 = 0xffffff;
+const TC_TEXT_DIM: u32 = 0x9a9aa0;
+const TC_TEXT_FAINT: u32 = 0x68686e;
+const TC_ACCENT: u32 = 0x38bdf8;
+
+#[derive(Clone, Debug)]
+pub struct OmnibarCandidate {
+    pub title: String,
+    pub subtitle: String,
+    pub icon: SfSymbol,
+    pub icon_color: u32,
+    pub action: OmnibarAction,
+}
+
+#[derive(Clone, Debug)]
+pub enum OmnibarAction {
+    Navigate(String),
+    SwitchTab(usize),
+    NewTab,
+    Reload,
+    CopyUrl,
+    Bookmark,
+    DuplicateTab,
+    CloseTab,
+    InstallWebApp,
 }
 
 impl Render for StandaloneBrowserWindow {
@@ -1273,65 +1480,7 @@ impl Render for StandaloneBrowserWindow {
             }
         }
 
-        let q = self.command_query.trim();
-        let target_nav = if q.starts_with("http://") || q.starts_with("https://") {
-            q.to_string()
-        } else if !q.is_empty() {
-            format!("https://duckduckgo.com/?q={q}")
-        } else {
-            active_url.clone()
-        };
-
-        let actions = vec![
-            (
-                "Navigate to URL",
-                target_nav.clone(),
-                SfSymbol::Globe,
-                0x60a5fa,
-            ),
-            (
-                "Search DuckDuckGo",
-                format!("Search web for '{}'", if q.is_empty() { "..." } else { q }),
-                SfSymbol::MagnifyingGlass,
-                0x34d399,
-            ),
-            (
-                "Search Docs.rs",
-                format!(
-                    "Search Rust documentation for '{}'",
-                    if q.is_empty() { "..." } else { q }
-                ),
-                SfSymbol::DocOnDoc,
-                0xf59e0b,
-            ),
-            (
-                "Search GitHub",
-                format!(
-                    "Search GitHub repositories for '{}'",
-                    if q.is_empty() { "..." } else { q }
-                ),
-                SfSymbol::DocTextMagnifyingGlass,
-                0xa78bfa,
-            ),
-            (
-                "New Tab",
-                "Open a blank tab in Alpenglow Browser".to_string(),
-                SfSymbol::Plus,
-                0x94a3b8,
-            ),
-            (
-                "Reload Page",
-                "Reload active page in WebKit".to_string(),
-                SfSymbol::ArrowUturnBackward,
-                0x94a3b8,
-            ),
-            (
-                "Copy URL",
-                "Copy active URL to system clipboard".to_string(),
-                SfSymbol::DocOnDoc,
-                0x38bdf8,
-            ),
-        ];
+        let candidates = self.omnibar_candidates();
 
         if (self.editing_url || self.command_bar_open) && self.focus_handle.is_some() {
             if let Some(ref fh) = self.focus_handle {
@@ -1343,7 +1492,7 @@ impl Render for StandaloneBrowserWindow {
             .id("alpenglow-browser-container")
             .key_context("alpenglow_browser")
             .size_full()
-            .bg(rgb(0x0e0e12))
+            .bg(rgb(TC_SCRIM))
             .overflow_hidden()
             .flex()
             .flex_col();
@@ -1467,6 +1616,37 @@ impl Render for StandaloneBrowserWindow {
 
                 // Modifiers (Cmd / Ctrl)
                 if mods.platform || mods.control {
+                    if key == "v" {
+                        if let Some(item) = cx.read_from_clipboard() {
+                            if let Some(text) = item.text() {
+                                if this.command_bar_open {
+                                    this.command_query.push_str(&text);
+                                    cx.notify();
+                                    cx.stop_propagation();
+                                    return;
+                                } else if this.editing_url {
+                                    this.url_input.push_str(&text);
+                                    cx.notify();
+                                    cx.stop_propagation();
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    if key == "backspace" {
+                        if this.command_bar_open {
+                            this.command_query.clear();
+                            this.command_selected = 0;
+                            cx.notify();
+                            cx.stop_propagation();
+                            return;
+                        } else if this.editing_url {
+                            this.url_input.clear();
+                            cx.notify();
+                            cx.stop_propagation();
+                            return;
+                        }
+                    }
                     if key == "t" {
                         this.new_tab(None);
                         cx.notify();
@@ -1571,6 +1751,16 @@ impl Render for StandaloneBrowserWindow {
                     }
                 }
 
+                let typed_char: Option<String> = if let Some(ch) = event.keystroke.key_char.as_deref() {
+                    Some(ch.to_string())
+                } else if key == "space" {
+                    Some(" ".to_string())
+                } else if key.chars().count() == 1 && !key.chars().all(|c| c.is_control()) {
+                    Some(key.to_string())
+                } else {
+                    None
+                };
+
                 if this.editing_url {
                     if key == "enter" {
                         let q = this.url_input.clone();
@@ -1586,27 +1776,33 @@ impl Render for StandaloneBrowserWindow {
                         return;
                     }
                     if !mods.platform && !mods.control && !mods.alt {
-                        if let Some(ch) = event.keystroke.key_char.as_deref() {
-                            if ch.chars().count() == 1 && !ch.chars().all(|c| c.is_control()) {
-                                this.url_input.push_str(ch);
-                                cx.notify();
-                                cx.stop_propagation();
-                                return;
-                            }
+                        if let Some(ch) = typed_char.as_deref() {
+                            this.url_input.push_str(ch);
+                            cx.notify();
+                            cx.stop_propagation();
+                            return;
                         }
                     }
                 }
 
                 if this.command_bar_open {
                     if key == "enter" {
-                        let q = this.command_query.clone();
-                        this.execute_command(&q);
+                        let cands = this.omnibar_candidates();
+                        if !cands.is_empty() {
+                            let sel = this.command_selected.min(cands.len() - 1);
+                            let action = cands[sel].action.clone();
+                            this.execute_omnibar_action(action);
+                        } else {
+                            let q = this.command_query.clone();
+                            this.execute_command(&q);
+                        }
                         cx.notify();
                         cx.stop_propagation();
                         return;
                     }
                     if key == "backspace" {
                         this.command_query.pop();
+                        this.command_selected = 0;
                         cx.notify();
                         cx.stop_propagation();
                         return;
@@ -1618,18 +1814,18 @@ impl Render for StandaloneBrowserWindow {
                         return;
                     }
                     if key == "down" {
-                        this.command_selected = (this.command_selected + 1).min(6);
+                        let max_idx = this.omnibar_candidates().len().saturating_sub(1);
+                        this.command_selected = (this.command_selected + 1).min(max_idx);
                         cx.notify();
                         cx.stop_propagation();
                         return;
                     }
                     if !mods.platform && !mods.control && !mods.alt {
-                        if let Some(ch) = event.keystroke.key_char.as_deref() {
-                            if ch.chars().count() == 1 && !ch.chars().all(|c| c.is_control()) {
-                                this.command_query.push_str(ch);
-                                cx.notify();
-                                cx.stop_propagation();
-                            }
+                        if let Some(ch) = typed_char.as_deref() {
+                            this.command_query.push_str(ch);
+                            this.command_selected = 0;
+                            cx.notify();
+                            cx.stop_propagation();
                         }
                     }
                 }
@@ -1640,9 +1836,9 @@ impl Render for StandaloneBrowserWindow {
                     .w_full()
                     .h(px(38.))
                     .px(px(8.))
-                    .bg(rgb(0x131319))
+                    .bg(rgb(TC_SCRIM))
                     .border_b_1()
-                    .border_color(rgb(0x22222d))
+                    .border_color(rgb(TC_PANEL_STROKE))
                     .flex()
                     .items_center()
                     .justify_between()
@@ -1658,10 +1854,10 @@ impl Render for StandaloneBrowserWindow {
                                     .id("browser-back-button")
                                     .h(px(26.))
                                     .w(px(26.))
-                                    .rounded(px(13.))
-                                    .bg(rgb(0x1c1c26))
+                                    .rounded(px(6.))
+                                    .bg(rgb(TC_CARD_FILL))
                                     .border_1()
-                                    .border_color(rgb(0x2a2a38))
+                                    .border_color(rgb(TC_CARD_STROKE))
                                     .flex()
                                     .items_center()
                                     .justify_center()
@@ -1670,7 +1866,7 @@ impl Render for StandaloneBrowserWindow {
                                         this.go_back();
                                         cx.notify();
                                     }))
-                                    .child(icons::sf_icon(SfSymbol::ChevronLeft, 10.5, 0x94a3b8)),
+                                    .child(icons::sf_icon(SfSymbol::ChevronLeft, 10.5, TC_TEXT_DIM)),
                             )
                             // Nav Forward button
                             .child(
@@ -1678,10 +1874,10 @@ impl Render for StandaloneBrowserWindow {
                                     .id("browser-forward-button")
                                     .h(px(26.))
                                     .w(px(26.))
-                                    .rounded(px(13.))
-                                    .bg(rgb(0x1c1c26))
+                                    .rounded(px(6.))
+                                    .bg(rgb(TC_CARD_FILL))
                                     .border_1()
-                                    .border_color(rgb(0x2a2a38))
+                                    .border_color(rgb(TC_CARD_STROKE))
                                     .flex()
                                     .items_center()
                                     .justify_center()
@@ -1690,7 +1886,7 @@ impl Render for StandaloneBrowserWindow {
                                         this.go_forward();
                                         cx.notify();
                                     }))
-                                    .child(icons::sf_icon(SfSymbol::ChevronRight, 10.5, 0x94a3b8)),
+                                    .child(icons::sf_icon(SfSymbol::ChevronRight, 10.5, TC_TEXT_DIM)),
                             )
                             // Floating Tab Chips
                             .children(self.tabs.iter().enumerate().map(|(idx, tab)| {
@@ -1701,30 +1897,42 @@ impl Render for StandaloneBrowserWindow {
                                         .id(SharedString::from(format!("tab-chip-active-{idx}")))
                                         .h(px(28.))
                                         .px(px(10.))
-                                        .rounded(px(7.))
-                                        .bg(rgb(0x222230))
+                                        .rounded(px(8.))
+                                        .bg(rgb(TC_GLASS_BG))
                                         .border_1()
-                                        .border_color(rgb(0x3e3e54))
+                                        .border_color(rgb(TC_BORDER))
                                         .flex()
                                         .items_center()
                                         .gap(px(7.))
-                                        .child(icons::sf_icon(SfSymbol::LockFill, 10.5, 0x34d399))
+                                        .child(icons::sf_icon(SfSymbol::LockFill, 10.0, 0x34d399))
                                         .when(self.editing_url, |chip| {
-                                            let edit_text = if self.url_input.is_empty() {
-                                                "Type URL or search...".to_string()
-                                            } else {
-                                                format!("{}▍", self.url_input)
-                                            };
                                             chip.child(
                                                 div()
-                                                    .font(font("Geist Mono"))
-                                                    .text_size(px(11.5))
-                                                    .text_color(rgb(if self.url_input.is_empty() {
-                                                        0x64748b
-                                                    } else {
-                                                        0xffffff
-                                                    }))
-                                                    .child(edit_text),
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap(px(2.))
+                                                    .child(
+                                                        div()
+                                                            .font(font("Geist Mono"))
+                                                            .text_size(px(11.5))
+                                                            .text_color(rgb(if self.url_input.is_empty() {
+                                                                TC_TEXT_FAINT
+                                                            } else {
+                                                                TC_TEXT
+                                                            }))
+                                                            .child(if self.url_input.is_empty() {
+                                                                "Search or enter URL...".to_string()
+                                                            } else {
+                                                                self.url_input.clone()
+                                                            }),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .w(px(2.))
+                                                            .h(px(14.))
+                                                            .rounded(px(1.))
+                                                            .bg(rgb(TC_ACCENT)),
+                                                    ),
                                             )
                                         })
                                         .when(!self.editing_url, |chip| {
@@ -1733,7 +1941,7 @@ impl Render for StandaloneBrowserWindow {
                                                     .id("active-tab-url-text")
                                                     .font(font("Geist Mono"))
                                                     .text_size(px(11.5))
-                                                    .text_color(rgb(0xffffff))
+                                                    .text_color(rgb(TC_TEXT))
                                                     .cursor_pointer()
                                                     .on_click(cx.listener(|this, _, _, cx| {
                                                         this.editing_url = true;
@@ -1757,7 +1965,7 @@ impl Render for StandaloneBrowserWindow {
                                                         if is_bookmarked {
                                                             0xf59e0b
                                                         } else {
-                                                            0x64748b
+                                                            TC_TEXT_FAINT
                                                         },
                                                     )),
                                             )
@@ -1773,7 +1981,7 @@ impl Render for StandaloneBrowserWindow {
                                                     .child(icons::sf_icon(
                                                         SfSymbol::ArrowUturnBackward,
                                                         9.5,
-                                                        0x94a3b8,
+                                                        TC_TEXT_DIM,
                                                     )),
                                             )
                                         })
@@ -1784,7 +1992,7 @@ impl Render for StandaloneBrowserWindow {
                                                     "close-active-tab-{idx}"
                                                 )))
                                                 .text_size(px(11.))
-                                                .text_color(rgb(0x64748b))
+                                                .text_color(rgb(TC_TEXT_FAINT))
                                                 .cursor_pointer()
                                                 .on_click(cx.listener(move |this, _, _, cx| {
                                                     this.close_tab(idx);
@@ -1799,9 +2007,9 @@ impl Render for StandaloneBrowserWindow {
                                         .h(px(26.))
                                         .px(px(8.))
                                         .rounded(px(6.))
-                                        .bg(rgb(0x181822))
+                                        .bg(rgb(TC_CARD_FILL))
                                         .border_1()
-                                        .border_color(rgb(0x282836))
+                                        .border_color(rgb(TC_CARD_STROKE))
                                         .flex()
                                         .items_center()
                                         .gap(px(5.))
@@ -1810,18 +2018,18 @@ impl Render for StandaloneBrowserWindow {
                                             this.switch_tab(idx);
                                             cx.notify();
                                         }))
-                                        .child(icons::sf_icon(SfSymbol::Globe, 10.0, 0x64748b))
+                                        .child(icons::sf_icon(SfSymbol::Globe, 10.0, TC_TEXT_FAINT))
                                         .child(
                                             div()
                                                 .text_size(px(11.0))
-                                                .text_color(rgb(0x94a3b8))
+                                                .text_color(rgb(TC_TEXT_DIM))
                                                 .child(tab.title.clone()),
                                         )
                                         .child(
                                             div()
                                                 .id(SharedString::from(format!("close-chip-{idx}")))
                                                 .text_size(px(10.5))
-                                                .text_color(rgb(0x64748b))
+                                                .text_color(rgb(TC_TEXT_FAINT))
                                                 .cursor_pointer()
                                                 .on_click(cx.listener(move |this, _, _, cx| {
                                                     this.close_tab(idx);
@@ -1837,10 +2045,10 @@ impl Render for StandaloneBrowserWindow {
                                     .id("tab-add-chip")
                                     .h(px(26.))
                                     .w(px(26.))
-                                    .rounded(px(13.))
-                                    .bg(rgb(0x1a1a24))
+                                    .rounded(px(6.))
+                                    .bg(rgb(TC_CARD_FILL))
                                     .border_1()
-                                    .border_color(rgb(0x282836))
+                                    .border_color(rgb(TC_CARD_STROKE))
                                     .flex()
                                     .items_center()
                                     .justify_center()
@@ -1849,7 +2057,7 @@ impl Render for StandaloneBrowserWindow {
                                         this.new_tab(None);
                                         cx.notify();
                                     }))
-                                    .child(icons::sf_icon(SfSymbol::Plus, 10.5, 0x94a3b8)),
+                                    .child(icons::sf_icon(SfSymbol::Plus, 10.5, TC_TEXT_DIM)),
                             ),
                     )
                     .child(
@@ -1891,9 +2099,9 @@ impl Render for StandaloneBrowserWindow {
                                     .h(px(24.))
                                     .px(px(6.))
                                     .rounded(px(5.))
-                                    .bg(rgb(0x181822))
+                                    .bg(rgb(TC_CARD_FILL))
                                     .border_1()
-                                    .border_color(rgb(0x282836))
+                                    .border_color(rgb(TC_CARD_STROKE))
                                     .flex()
                                     .items_center()
                                     .gap(px(3.))
@@ -1904,15 +2112,15 @@ impl Render for StandaloneBrowserWindow {
                                     }))
                                     .child(icons::sf_icon(
                                         if self.copied_toast {
-                                            SfSymbol::Checkmark
+                                             SfSymbol::Checkmark
                                         } else {
-                                            SfSymbol::DocOnDoc
+                                             SfSymbol::DocOnDoc
                                         },
                                         10.0,
                                         if self.copied_toast {
-                                            0x34d399
+                                             0x34d399
                                         } else {
-                                            0x94a3b8
+                                             TC_TEXT_DIM
                                         },
                                     )),
                             )
@@ -1923,9 +2131,9 @@ impl Render for StandaloneBrowserWindow {
                                     .h(px(24.))
                                     .px(px(7.))
                                     .rounded(px(5.))
-                                    .bg(rgb(0x1c1c28))
+                                    .bg(rgb(TC_CARD_FILL))
                                     .border_1()
-                                    .border_color(rgb(0x2d2d3e))
+                                    .border_color(rgb(TC_CARD_STROKE))
                                     .flex()
                                     .items_center()
                                     .gap(px(4.))
@@ -1934,12 +2142,12 @@ impl Render for StandaloneBrowserWindow {
                                         this.command_bar_open = !this.command_bar_open;
                                         cx.notify();
                                     }))
-                                    .child(icons::sf_icon(SfSymbol::MagnifyingGlass, 9.5, 0x94a3b8))
+                                    .child(icons::sf_icon(SfSymbol::MagnifyingGlass, 9.5, TC_TEXT_DIM))
                                     .child(
                                         div()
                                             .font(font("Geist Mono"))
                                             .text_size(px(10.5))
-                                            .text_color(rgb(0x64748b))
+                                            .text_color(rgb(TC_TEXT_FAINT))
                                             .child("⌘K"),
                                     ),
                             ),
@@ -1967,18 +2175,18 @@ impl Render for StandaloneBrowserWindow {
                                         .flex_col()
                                         .items_center()
                                         .gap(px(8.))
-                                        .child(icons::sf_icon(SfSymbol::Globe, 28.0, 0x334155))
+                                        .child(icons::sf_icon(SfSymbol::Globe, 28.0, TC_TEXT_FAINT))
                                         .child(
                                             div()
                                                 .font(font("Geist Mono"))
                                                 .text_size(px(13.))
-                                                .text_color(rgb(0x64748b))
+                                                .text_color(rgb(TC_TEXT_DIM))
                                                 .child(self.active_url()),
                                         )
                                         .child(
                                             div()
                                                 .text_size(px(11.))
-                                                .text_color(rgb(0x475569))
+                                                .text_color(rgb(TC_TEXT_FAINT))
                                                 .child("WebKit view paused while searching"),
                                         ),
                                 )
@@ -1986,137 +2194,197 @@ impl Render for StandaloneBrowserWindow {
                     )
                     .when(self.command_bar_open, |parent| {
                         parent.child(
-                            // 3. Command Bar overlay modal responding to browser context
+                            // 3. Floating Omnibar backdrop + modal overlay (dismisses on click off!)
                             div()
                                 .absolute()
-                                .top(px(24.))
-                                .left(px(240.))
-                                .w(px(580.))
-                                .rounded(px(12.))
-                                .bg(rgb(0x151520))
-                                .border_1()
-                                .border_color(rgb(0x2d2d40))
-                                .shadow_lg()
+                                .inset_0()
                                 .flex()
                                 .flex_col()
-                                .overflow_hidden()
+                                .items_center()
+                                .pt(px(40.))
+                                // Backdrop (Click off closes modal)
                                 .child(
                                     div()
-                                        .w_full()
-                                        .h(px(46.))
-                                        .px(px(14.))
-                                        .border_b_1()
-                                        .border_color(rgb(0x222230))
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(10.))
-                                        .child(icons::sf_icon(
-                                            SfSymbol::MagnifyingGlass,
-                                            14.0,
-                                            0x34d399,
-                                        ))
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .font(font("Geist Mono"))
-                                                .text_size(px(14.))
-                                                .text_color(rgb(if self.command_query.is_empty() {
-                                                    0x64748b
-                                                } else {
-                                                    0xffffff
-                                                }))
-                                                .child(if self.command_query.is_empty() {
-                                                    "Search web or enter URL...".to_string()
-                                                } else {
-                                                    self.command_query.clone()
-                                                }),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_size(px(10.5))
-                                                .text_color(rgb(0x64748b))
-                                                .child("↵ to load • esc to close"),
-                                        ),
+                                        .id("omnibar-backdrop")
+                                        .absolute()
+                                        .inset_0()
+                                        .bg(rgba(0x000000a0))
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.command_bar_open = false;
+                                            this.command_query.clear();
+                                            cx.notify();
+                                        })),
                                 )
+                                // Centered Floating Omnibar Panel
                                 .child(
                                     div()
-                                        .w_full()
-                                        .p(px(6.))
+                                        .relative()
+                                        .w(px(680.))
+                                        .max_w(px(680.))
+                                        .rounded(px(14.))
+                                        .bg(rgb(TC_SCRIM))
+                                        .border_1()
+                                        .border_color(rgb(TC_PANEL_STROKE))
+                                        .shadow_lg()
                                         .flex()
                                         .flex_col()
-                                        .gap(px(2.))
-                                        .children(actions.into_iter().enumerate().map(
-                                            |(idx, (title, sub, icon, color))| {
-                                                let is_sel = idx == self.command_selected;
-                                                let target = target_nav.clone();
-                                                let q_str = q.to_string();
-                                                div()
-                                                    .id(SharedString::from(format!(
-                                                        "browser-cmd-row-{idx}"
-                                                    )))
-                                                    .h(px(34.))
-                                                    .px(px(10.))
-                                                    .rounded(px(6.))
-                                                    .bg(rgb(if is_sel {
-                                                        0x222232
-                                                    } else {
-                                                        0x151520
-                                                    }))
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_between()
-                                                    .cursor_pointer()
-                                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                                        match idx {
-                                                            0 => this.execute_command(&target),
-                                                            1 => this.execute_command(&format!(
-                                                                "!ddg {q_str}"
-                                                            )),
-                                                            2 => this.execute_command(&format!(
-                                                                "!rs {q_str}"
-                                                            )),
-                                                            3 => this.execute_command(&format!(
-                                                                "!gh {q_str}"
-                                                            )),
-                                                            4 => this.new_tab(None),
-                                                            5 => this.reload(),
-                                                            6 => this.copy_url(),
-                                                            _ => {
-                                                                let _ = install_web_app(
-                                                                    &this.active_url(),
-                                                                    &this.active_url(),
-                                                                );
-                                                                this.command_bar_open = false;
-                                                            }
-                                                        }
-                                                        cx.notify();
-                                                    }))
-                                                    .child(
+                                        .overflow_hidden()
+                                        // Top search bar
+                                        .child(
+                                            div()
+                                                .w_full()
+                                                .h(px(52.))
+                                                .px(px(16.))
+                                                .border_b_1()
+                                                .border_color(rgb(TC_PANEL_STROKE))
+                                                .flex()
+                                                .items_center()
+                                                .gap(px(12.))
+                                                .child(icons::sf_icon(
+                                                    SfSymbol::MagnifyingGlass,
+                                                    15.0,
+                                                    TC_ACCENT,
+                                                ))
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .flex()
+                                                        .items_center()
+                                                        .gap(px(2.))
+                                                        .child(
+                                                            div()
+                                                                .font(font("Geist Mono"))
+                                                                .text_size(px(14.5))
+                                                                .text_color(rgb(if self.command_query.is_empty() {
+                                                                    TC_TEXT_FAINT
+                                                                } else {
+                                                                    TC_TEXT
+                                                                }))
+                                                                .child(if self.command_query.is_empty() {
+                                                                    "Search web, enter URL, switch tabs, or run actions...".to_string()
+                                                                } else {
+                                                                    self.command_query.clone()
+                                                                }),
+                                                        )
+                                                        // Glowing Cyan Caret!
+                                                        .child(
+                                                            div()
+                                                                .w(px(2.))
+                                                                .h(px(20.))
+                                                                .rounded(px(1.))
+                                                                .bg(rgb(TC_ACCENT)),
+                                                        ),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .font(font("Geist Mono"))
+                                                        .text_size(px(11.0))
+                                                        .text_color(rgb(TC_TEXT_FAINT))
+                                                        .child("↵ select • esc close"),
+                                                ),
+                                        )
+                                        // Candidates list
+                                        .child(
+                                            div()
+                                                .w_full()
+                                                .p(px(8.))
+                                                .flex()
+                                                .flex_col()
+                                                .gap(px(3.))
+                                                .children(candidates.into_iter().enumerate().map(
+                                                    |(idx, cand)| {
+                                                        let is_sel = idx == self.command_selected;
+                                                        let cand_action = cand.action.clone();
                                                         div()
+                                                            .id(SharedString::from(format!(
+                                                                "browser-cmd-row-{idx}"
+                                                            )))
+                                                            .h(px(36.))
+                                                            .px(px(10.))
+                                                            .rounded(px(8.))
+                                                            .bg(rgb(if is_sel {
+                                                                TC_GLASS_BG
+                                                            } else {
+                                                                TC_SCRIM
+                                                            }))
+                                                            .when(is_sel, |row| {
+                                                                row.border_1().border_color(rgb(TC_BORDER))
+                                                            })
                                                             .flex()
                                                             .items_center()
-                                                            .gap(px(9.))
-                                                            .child(icons::sf_icon(
-                                                                icon, 12.0, color,
-                                                            ))
+                                                            .justify_between()
+                                                            .cursor_pointer()
+                                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                                this.execute_omnibar_action(cand_action.clone());
+                                                                cx.notify();
+                                                            }))
                                                             .child(
                                                                 div()
-                                                                    .text_size(px(12.5))
-                                                                    .font_weight(FontWeight::MEDIUM)
-                                                                    .text_color(rgb(0xffffff))
-                                                                    .child(title),
+                                                                    .flex()
+                                                                    .items_center()
+                                                                    .gap(px(10.))
+                                                                    .child(icons::sf_icon(
+                                                                        cand.icon, 12.5, cand.icon_color,
+                                                                    ))
+                                                                    .child(
+                                                                        div()
+                                                                            .text_size(px(12.5))
+                                                                            .font_weight(FontWeight::MEDIUM)
+                                                                            .text_color(rgb(if is_sel {
+                                                                                TC_TEXT
+                                                                            } else {
+                                                                                TC_TEXT_DIM
+                                                                            }))
+                                                                            .child(cand.title),
+                                                                    )
+                                                                    .child(
+                                                                        div()
+                                                                            .font(font("Geist Mono"))
+                                                                            .text_size(px(10.5))
+                                                                            .text_color(rgb(TC_TEXT_FAINT))
+                                                                            .child(cand.subtitle),
+                                                                    ),
                                                             )
-                                                            .child(
-                                                                div()
-                                                                    .font(font("Geist Mono"))
-                                                                    .text_size(px(10.5))
-                                                                    .text_color(rgb(0x64748b))
-                                                                    .child(sub),
-                                                            ),
-                                                    )
-                                            },
-                                        )),
-                                ),
+                                                            .when(is_sel, |row| {
+                                                                row.child(
+                                                                    div()
+                                                                        .font(font("Geist Mono"))
+                                                                        .text_size(px(10.5))
+                                                                        .text_color(rgb(TC_ACCENT))
+                                                                        .child("↵ Enter"),
+                                                                )
+                                                            })
+                                                    },
+                                                )),
+                                        )
+                                        // Bottom Footer
+                                        .child(
+                                            div()
+                                                .w_full()
+                                                .h(px(28.))
+                                                .px(px(12.))
+                                                .bg(rgb(0x131315))
+                                                .border_t_1()
+                                                .border_color(rgb(TC_PANEL_STROKE))
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .child(
+                                                    div()
+                                                        .font(font("Geist Mono"))
+                                                        .text_size(px(10.0))
+                                                        .text_color(rgb(TC_TEXT_FAINT))
+                                                        .child("↑↓ navigate • ↵ select • esc close"),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .font(font("Geist Mono"))
+                                                        .text_size(px(10.0))
+                                                        .text_color(rgb(TC_TEXT_FAINT))
+                                                        .child("Bangs: !g google • !gh github • !rs docs.rs • !yt youtube • !w wiki"),
+                                                ),
+                                        ),
+                                )
                         )
                     }),
             )
@@ -2262,5 +2530,62 @@ mod tests {
             win.active_url(),
             "https://duckduckgo.com/?q=simple search terms"
         );
+    }
+
+    #[test]
+    fn standalone_browser_omnibar_candidates_and_actions() {
+        let mut win = StandaloneBrowserWindow::new(Some("https://example.org".to_string()));
+        win.new_tab(Some("https://docs.rs".to_string()));
+        win.new_tab(Some("https://github.com".to_string()));
+
+        // Empty query candidates: should offer tab actions and quick navigation
+        win.command_query.clear();
+        let cands = win.omnibar_candidates();
+        assert!(!cands.is_empty());
+        assert!(cands.iter().any(|c| c.title == "New Tab"));
+        assert!(cands.iter().any(|c| c.title == "Duplicate Tab"));
+        assert!(cands.iter().any(|c| c.title.starts_with("Switch to Tab")));
+
+        // Search bang !rs
+        win.command_query = "!rs gpui".to_string();
+        let cands = win.omnibar_candidates();
+        assert_eq!(cands[0].title, "Search Docs.rs");
+        match &cands[0].action {
+            OmnibarAction::Navigate(url) => {
+                assert_eq!(url, "https://docs.rs/releases/search?query=gpui");
+            }
+            _ => panic!("Expected Navigate action"),
+        }
+
+        // Direct domain query
+        win.command_query = "alpenglowed.dev".to_string();
+        let cands = win.omnibar_candidates();
+        assert_eq!(cands[0].title, "Go to Website");
+
+        // Tab filter query
+        win.command_query = "example".to_string();
+        let cands = win.omnibar_candidates();
+        assert!(cands
+            .iter()
+            .any(|c| matches!(c.action, OmnibarAction::SwitchTab(_))));
+
+        // Execute omnibar action: NewTab
+        let tabs_before = win.tabs.len();
+        win.execute_omnibar_action(OmnibarAction::NewTab);
+        assert_eq!(win.tabs.len(), tabs_before + 1);
+
+        // Execute omnibar action: SwitchTab(0)
+        win.execute_omnibar_action(OmnibarAction::SwitchTab(0));
+        assert_eq!(win.active_tab, 0);
+
+        // Execute omnibar action: DuplicateTab
+        let tabs_before_dup = win.tabs.len();
+        win.execute_omnibar_action(OmnibarAction::DuplicateTab);
+        assert_eq!(win.tabs.len(), tabs_before_dup + 1);
+
+        // Execute omnibar action: CloseTab
+        let tabs_before_close = win.tabs.len();
+        win.execute_omnibar_action(OmnibarAction::CloseTab);
+        assert_eq!(win.tabs.len(), tabs_before_close - 1);
     }
 }

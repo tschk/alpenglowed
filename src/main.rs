@@ -19,6 +19,8 @@ mod role;
 mod runner;
 mod session;
 #[allow(dead_code)]
+mod status_item;
+#[allow(dead_code)]
 mod terminal;
 
 use crepuscularity_core::context::{TemplateContext, TemplateValue};
@@ -2806,13 +2808,26 @@ impl LauncherWindow {
             .child(
                 div()
                     .flex_1()
-                    .text_size(px(20.))
-                    .text_color(rgb(if desktop.query.is_empty() {
-                        TC_TEXT_TERTIARY
-                    } else {
-                        TC_TEXT_PRIMARY
-                    }))
-                    .child(bar.0),
+                    .flex()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_size(px(20.))
+                            .text_color(rgb(if desktop.query.is_empty() {
+                                TC_TEXT_TERTIARY
+                            } else {
+                                TC_TEXT_PRIMARY
+                            }))
+                            .child(bar.0),
+                    )
+                    .child(
+                        div()
+                            .ml(px(3.))
+                            .w(px(2.))
+                            .h(px(22.))
+                            .rounded(px(1.))
+                            .bg(rgb(0x38bdf8)),
+                    ),
             )
     }
 
@@ -3571,8 +3586,30 @@ impl Render for LauncherWindow {
         }))
         .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
             let key = event.keystroke.key.as_str();
+            let mods = event.keystroke.modifiers;
+
+            // Paste from clipboard (Cmd+V or Ctrl+V)
+            if (mods.platform || mods.control) && key == "v" {
+                if let Some(item) = cx.read_from_clipboard() {
+                    if let Some(text) = item.text() {
+                        this.append(&text, cx);
+                        cx.stop_propagation();
+                        return;
+                    }
+                }
+            }
+
+            // Clear query (Cmd+Backspace)
+            if mods.platform && key == "backspace" {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.set_query(String::new(), cx);
+                });
+                cx.stop_propagation();
+                return;
+            }
+
             if key == "backspace" {
-                if event.keystroke.modifiers.platform {
+                if mods.alt {
                     this.delete_word(cx);
                 } else {
                     this.backspace(cx);
@@ -3580,12 +3617,12 @@ impl Render for LauncherWindow {
                 cx.stop_propagation();
                 return;
             }
-            if key == "up" || key == "left" {
+            if key == "up" {
                 this.select_previous(cx);
                 cx.stop_propagation();
                 return;
             }
-            if key == "down" || key == "right" {
+            if key == "down" {
                 this.select_next(cx);
                 cx.stop_propagation();
                 return;
@@ -3596,7 +3633,7 @@ impl Render for LauncherWindow {
                 return;
             }
             if key == "tab" {
-                if event.keystroke.modifiers.shift {
+                if mods.shift {
                     this.desktop.update(cx, |desktop, cx| {
                         let next = desktop.active_category.next();
                         desktop.set_category(next, cx);
@@ -3618,13 +3655,21 @@ impl Render for LauncherWindow {
                     return;
                 }
             }
-            let mods = event.keystroke.modifiers;
+
+            let typed = if let Some(ch) = event.keystroke.key_char.as_deref() {
+                Some(ch.to_string())
+            } else if key == "space" {
+                Some(" ".to_string())
+            } else if key.chars().count() == 1 && !key.chars().all(|c| c.is_control()) {
+                Some(key.to_string())
+            } else {
+                None
+            };
+
             if !mods.platform && !mods.control && !mods.alt {
-                if let Some(ch) = event.keystroke.key_char.as_deref() {
-                    if ch.chars().count() == 1 && !ch.chars().all(|c| c.is_control()) {
-                        this.append(ch, cx);
-                        cx.stop_propagation();
-                    }
+                if let Some(ch) = typed {
+                    this.append(&ch, cx);
+                    cx.stop_propagation();
                 }
             }
         }))
@@ -4036,6 +4081,27 @@ fn main() {
                 cx.new(|_| DesktopModel::new(desktop_options, _compositor_rx, _compositor_tx));
             #[cfg(not(feature = "compositor"))]
             let desktop = cx.new(|_| DesktopModel::new(desktop_options));
+
+            status_item::setup_status_item();
+
+            let desktop_menu = desktop.clone();
+            let async_cx = cx.to_async();
+            cx.foreground_executor()
+                .spawn(async move {
+                    loop {
+                        async_cx
+                            .background_executor()
+                            .timer(std::time::Duration::from_millis(60))
+                            .await;
+                        if status_item::poll_menu_clicked() {
+                            let desktop = desktop_menu.clone();
+                            let _ = async_cx.update(|cx| {
+                                focus_or_open_launcher(&desktop, cx);
+                            });
+                        }
+                    }
+                })
+                .detach();
 
             let installer = installer_paths();
             if let Some((source, target)) = installer {
