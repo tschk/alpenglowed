@@ -553,47 +553,11 @@ pub mod macos_webview {
             let set_policy: extern "C" fn(*mut c_void, *mut c_void, isize) -> bool =
                 std::mem::transmute(objc_msgSend as *const ());
             set_policy(app, sel_registerName(c"setActivationPolicy:".as_ptr()), 0);
-
-            let activate: extern "C" fn(*mut c_void, *mut c_void, bool) =
-                std::mem::transmute(objc_msgSend as *const ());
-            activate(
-                app,
-                sel_registerName(c"activateIgnoringOtherApps:".as_ptr()),
-                true,
-            );
-        }
-    }
-
-    pub fn ensure_window_active_and_key() {
-        unsafe {
-            let ns_app_cls = objc_getClass(c"NSApplication".as_ptr());
-            if ns_app_cls.is_null() {
-                return;
-            }
-            let shared_app: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
-                std::mem::transmute(objc_msgSend as *const ());
-            let app = shared_app(ns_app_cls, sel_registerName(c"sharedApplication".as_ptr()));
-            if app.is_null() {
-                return;
-            }
-            let key_window: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
-                std::mem::transmute(objc_msgSend as *const ());
-            let win = key_window(app, sel_registerName(c"keyWindow".as_ptr()));
-            if !win.is_null() {
-                let make_key: extern "C" fn(*mut c_void, *mut c_void, *mut c_void) =
-                    std::mem::transmute(objc_msgSend as *const ());
-                make_key(
-                    win,
-                    sel_registerName(c"makeKeyAndOrderFront:".as_ptr()),
-                    std::ptr::null_mut(),
-                );
-            }
         }
     }
 
     pub fn attach_or_navigate(url: &str, x: f64, y: f64, width: f64, height: f64) {
         unsafe {
-            ensure_regular_activation_policy();
             let ns_app_cls = objc_getClass(c"NSApplication".as_ptr());
             if ns_app_cls.is_null() {
                 return;
@@ -652,14 +616,6 @@ pub mod macos_webview {
             if win.is_null() {
                 return;
             }
-
-            let make_key: extern "C" fn(*mut c_void, *mut c_void, *mut c_void) =
-                std::mem::transmute(objc_msgSend as *const ());
-            make_key(
-                win,
-                sel_registerName(c"makeKeyAndOrderFront:".as_ptr()),
-                std::ptr::null_mut(),
-            );
 
             let content_view_fn: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
                 std::mem::transmute(objc_msgSend as *const ());
@@ -925,11 +881,6 @@ pub mod macos_webview {
 pub fn ensure_regular_activation_policy() {
     #[cfg(target_os = "macos")]
     macos_webview::ensure_regular_activation_policy();
-}
-
-pub fn ensure_window_active_and_key() {
-    #[cfg(target_os = "macos")]
-    macos_webview::ensure_window_active_and_key();
 }
 
 pub fn detach_native_webview() {
@@ -2193,6 +2144,8 @@ pub fn open_browser_window(initial_url: Option<String>, cx: &mut App) {
             width: px(520.),
             height: px(340.),
         }),
+        kind: crepuscularity_gpui::WindowKind::Normal,
+        is_movable: true,
         is_resizable: true,
         window_background: WindowBackgroundAppearance::Opaque,
         window_decorations: Some(WindowDecorations::Client),
@@ -2201,7 +2154,6 @@ pub fn open_browser_window(initial_url: Option<String>, cx: &mut App) {
     let _ = cx.open_window(options, move |window, cx| {
         let view = cx.new(|cx| StandaloneBrowserWindow::with_context(initial_url, window, cx));
         window.activate_window();
-        ensure_window_active_and_key();
         view
     });
 }

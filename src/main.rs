@@ -24,8 +24,9 @@ mod terminal;
 use crepuscularity_core::context::{TemplateContext, TemplateValue};
 use crepuscularity_gpui::prelude::*;
 use crepuscularity_gpui::{
-    actions, font, size, AnyWindowHandle, Div, EventEmitter, Font, KeyBinding, KeyDownEvent,
-    WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowOptions,
+    actions, font, size, AnyWindowHandle, Div, EventEmitter, FocusHandle, Font, KeyBinding,
+    KeyDownEvent, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind,
+    WindowOptions,
 };
 use crepuscularity_web::render_component_file_to_html;
 use layout::LayoutState;
@@ -2328,16 +2329,39 @@ fn html_tag_texts(html: &str, tags: &[&str]) -> Vec<String> {
 
 struct LauncherWindow {
     desktop: Entity<DesktopModel>,
+    has_been_active: bool,
+    focus_handle: Option<FocusHandle>,
 }
 
 impl LauncherWindow {
-    fn new(desktop: Entity<DesktopModel>, cx: &mut Context<Self>) -> Self {
+    fn new(desktop: Entity<DesktopModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+        window.focus(&focus_handle);
+
         cx.subscribe(&desktop, |_, _, _: &DesktopEvent, cx| {
             cx.notify();
         })
         .detach();
 
-        Self { desktop }
+        let desktop_clone = desktop.clone();
+        cx.observe_window_activation(window, move |this, window, cx| {
+            if window.is_window_active() {
+                this.has_been_active = true;
+            } else if this.has_been_active {
+                desktop_clone.update(cx, |desktop, cx| {
+                    desktop.launcher = None;
+                    desktop.changed(cx);
+                });
+                window.remove_window();
+            }
+        })
+        .detach();
+
+        Self {
+            desktop,
+            has_been_active: false,
+            focus_handle: Some(focus_handle),
+        }
     }
 
     fn backspace(&mut self, cx: &mut Context<Self>) {
@@ -3208,443 +3232,452 @@ impl Render for LauncherWindow {
             .map(|(i, n)| Self::render_toast(&n.notification, desktop_entity.clone(), i))
             .collect();
 
-        div()
-            .size_full()
-            .font(ui_font())
-            .key_context("alpenglowed")
-            .on_action(cx.listener(|_, _: &Quit, _, cx| {
-                cx.quit();
-            }))
-            .on_action(cx.listener(|this, _: &FocusBar, _, cx| {
-                focus_or_open_launcher(&this.desktop, cx);
-            }))
-            .on_action(cx.listener(|this, _: &Confirm, _, cx| {
-                this.confirm(cx);
-            }))
-            .on_action(cx.listener(|this, _: &ToggleActionsMenu, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.show_actions = !desktop.show_actions;
-                    if desktop.show_actions {
-                        desktop.show_app_menu = false;
-                    }
+        let mut root = div().size_full().font(ui_font()).key_context("alpenglowed");
+        if let Some(ref fh) = self.focus_handle {
+            root = root.track_focus(fh);
+        }
+
+        root.on_action(cx.listener(|_, _: &Quit, _, cx| {
+            cx.quit();
+        }))
+        .on_action(cx.listener(|this, _: &FocusBar, _, cx| {
+            focus_or_open_launcher(&this.desktop, cx);
+        }))
+        .on_action(cx.listener(|this, _: &Confirm, _, cx| {
+            this.confirm(cx);
+        }))
+        .on_action(cx.listener(|this, _: &ToggleActionsMenu, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.show_actions = !desktop.show_actions;
+                if desktop.show_actions {
+                    desktop.show_app_menu = false;
+                }
+                desktop.selected_action = 0;
+                desktop.changed(cx);
+            });
+        }))
+        .on_action(cx.listener(|this, _: &ClearQueryAction, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.set_query(String::new(), cx);
+            });
+        }))
+        .on_action(cx.listener(|this, _: &ToggleSettingsWindow, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(PluginAction::ToggleSettings, cx);
+            });
+        }))
+        .on_action(cx.listener(|this, _: &ToggleStatusBarAction, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.toggle_status_bar(cx);
+            });
+        }))
+        .on_action(cx.listener(|this, _: &CycleWindowModeAction, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(PluginAction::CycleWindowMode, cx);
+            });
+        }))
+        .on_action(cx.listener(|this, _: &ToggleTerminalPane, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(PluginAction::ToggleTerminal, cx);
+            });
+        }))
+        .on_action(cx.listener(|this, _: &SplitRow, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::SplitRow,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &SplitColumn, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::SplitColumn,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &FlipAxis, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::FlipAxis,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &ResetLayout, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::Reset,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &NudgeLeft, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::NudgeLeft,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &NudgeRight, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::NudgeRight,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &NudgeUp, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::NudgeUp,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &NudgeDown, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::NudgeDown,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &ExpandWindow, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::ExpandWindow,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &ContractWindow, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::ContractWindow,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &GrowPane, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::GrowFocused,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &ShrinkPane, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::ShrinkFocused,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &FocusNextPane, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::FocusNext,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &FocusPreviousPane, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::FocusPrevious,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &FocusFirstPane, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::FocusFirst,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &FocusLastPane, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::FocusLast,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &BalancePanesAction, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::BalancePanes,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &CenterFocusedAction, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::CenterFocused,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &MoveWindowLeft, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::MoveLeft,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &MoveWindowRight, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::MoveRight,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &MoveWindowUp, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::MoveUp,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &MoveWindowDown, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::MoveDown,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &ClosePane, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::CloseFocused,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &ToggleFloatPane, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::ToggleFloat,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &SelectResult1, _, cx| {
+            this.select_and_confirm(0, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SelectResult2, _, cx| {
+            this.select_and_confirm(1, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SelectResult3, _, cx| {
+            this.select_and_confirm(2, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SelectResult4, _, cx| {
+            this.select_and_confirm(3, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SelectResult5, _, cx| {
+            this.select_and_confirm(4, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SelectResult6, _, cx| {
+            this.select_and_confirm(5, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SelectResult7, _, cx| {
+            this.select_and_confirm(6, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SelectResult8, _, cx| {
+            this.select_and_confirm(7, cx);
+        }))
+        .on_action(cx.listener(|this, _: &DefocusBar, window, cx| {
+            let mut should_close = false;
+            this.desktop.update(cx, |desktop, cx| {
+                if desktop.show_actions || desktop.show_app_menu {
+                    desktop.show_actions = false;
+                    desktop.show_app_menu = false;
                     desktop.selected_action = 0;
                     desktop.changed(cx);
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ClearQueryAction, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
+                } else if !desktop.query.is_empty() {
                     desktop.set_query(String::new(), cx);
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ToggleSettingsWindow, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(PluginAction::ToggleSettings, cx);
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ToggleStatusBarAction, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.toggle_status_bar(cx);
-                });
-            }))
-            .on_action(cx.listener(|this, _: &CycleWindowModeAction, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(PluginAction::CycleWindowMode, cx);
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ToggleTerminalPane, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(PluginAction::ToggleTerminal, cx);
-                });
-            }))
-            .on_action(cx.listener(|this, _: &SplitRow, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::SplitRow,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &SplitColumn, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::SplitColumn,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &FlipAxis, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::FlipAxis,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ResetLayout, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::Reset,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &NudgeLeft, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::NudgeLeft,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &NudgeRight, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::NudgeRight,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &NudgeUp, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::NudgeUp,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &NudgeDown, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::NudgeDown,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ExpandWindow, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::ExpandWindow,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ContractWindow, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::ContractWindow,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &GrowPane, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::GrowFocused,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ShrinkPane, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::ShrinkFocused,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &FocusNextPane, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::FocusNext,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &FocusPreviousPane, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::FocusPrevious,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &FocusFirstPane, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::FocusFirst,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &FocusLastPane, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::FocusLast,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &BalancePanesAction, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::BalancePanes,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &CenterFocusedAction, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::CenterFocused,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &MoveWindowLeft, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::MoveLeft,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &MoveWindowRight, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::MoveRight,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &MoveWindowUp, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::MoveUp,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &MoveWindowDown, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::MoveDown,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ClosePane, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::CloseFocused,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &ToggleFloatPane, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.apply(
-                        PluginAction::Layout {
-                            action: layout::LayoutAction::ToggleFloat,
-                        },
-                        cx,
-                    );
-                });
-            }))
-            .on_action(cx.listener(|this, _: &SelectResult1, _, cx| {
-                this.select_and_confirm(0, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SelectResult2, _, cx| {
-                this.select_and_confirm(1, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SelectResult3, _, cx| {
-                this.select_and_confirm(2, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SelectResult4, _, cx| {
-                this.select_and_confirm(3, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SelectResult5, _, cx| {
-                this.select_and_confirm(4, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SelectResult6, _, cx| {
-                this.select_and_confirm(5, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SelectResult7, _, cx| {
-                this.select_and_confirm(6, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SelectResult8, _, cx| {
-                this.select_and_confirm(7, cx);
-            }))
-            .on_action(cx.listener(|this, _: &DefocusBar, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    if desktop.show_actions || desktop.show_app_menu {
-                        desktop.show_actions = false;
-                        desktop.show_app_menu = false;
-                        desktop.selected_action = 0;
-                        desktop.changed(cx);
-                    } else if !desktop.query.is_empty() {
-                        desktop.set_query(String::new(), cx);
-                    } else if desktop.view_mode.in_submenu() {
-                        desktop.set_view_mode(ViewMode::Main, cx);
-                    } else if desktop.active_category != BarCategory::All {
-                        desktop.set_category(BarCategory::All, cx);
-                    }
-                });
-            }))
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                let key = event.keystroke.key.as_str();
-                if key == "backspace" {
-                    if event.keystroke.modifiers.platform {
-                        this.delete_word(cx);
-                    } else {
-                        this.backspace(cx);
-                    }
+                } else if desktop.view_mode.in_submenu() {
+                    desktop.set_view_mode(ViewMode::Main, cx);
+                } else if desktop.active_category != BarCategory::All {
+                    desktop.set_category(BarCategory::All, cx);
+                } else {
+                    desktop.launcher = None;
+                    desktop.changed(cx);
+                    should_close = true;
+                }
+            });
+            if should_close {
+                window.remove_window();
+            }
+        }))
+        .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+            let key = event.keystroke.key.as_str();
+            if key == "backspace" {
+                if event.keystroke.modifiers.platform {
+                    this.delete_word(cx);
+                } else {
+                    this.backspace(cx);
+                }
+                cx.stop_propagation();
+                return;
+            }
+            if key == "up" || key == "left" {
+                this.select_previous(cx);
+                cx.stop_propagation();
+                return;
+            }
+            if key == "down" || key == "right" {
+                this.select_next(cx);
+                cx.stop_propagation();
+                return;
+            }
+            if key == "enter" {
+                this.confirm(cx);
+                cx.stop_propagation();
+                return;
+            }
+            if key == "tab" {
+                if event.keystroke.modifiers.shift {
+                    this.desktop.update(cx, |desktop, cx| {
+                        let next = desktop.active_category.next();
+                        desktop.set_category(next, cx);
+                    });
                     cx.stop_propagation();
                     return;
                 }
-                if key == "up" || key == "left" {
-                    this.select_previous(cx);
+                let title = this
+                    .desktop
+                    .read(cx)
+                    .pills
+                    .get(this.desktop.read(cx).selected_pill)
+                    .map(|p| p.title.clone());
+                if let Some(title) = title {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.set_query(title, cx);
+                    });
                     cx.stop_propagation();
                     return;
                 }
-                if key == "down" || key == "right" {
-                    this.select_next(cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                if key == "enter" {
-                    this.confirm(cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                if key == "tab" {
-                    if event.keystroke.modifiers.shift {
-                        this.desktop.update(cx, |desktop, cx| {
-                            let next = desktop.active_category.next();
-                            desktop.set_category(next, cx);
-                        });
+            }
+            let mods = event.keystroke.modifiers;
+            if !mods.platform && !mods.control && !mods.alt {
+                if let Some(ch) = event.keystroke.key_char.as_deref() {
+                    if ch.chars().count() == 1 && !ch.chars().all(|c| c.is_control()) {
+                        this.append(ch, cx);
                         cx.stop_propagation();
-                        return;
-                    }
-                    let title = this
-                        .desktop
-                        .read(cx)
-                        .pills
-                        .get(this.desktop.read(cx).selected_pill)
-                        .map(|p| p.title.clone());
-                    if let Some(title) = title {
-                        this.desktop.update(cx, |desktop, cx| {
-                            desktop.set_query(title, cx);
-                        });
-                        cx.stop_propagation();
-                        return;
                     }
                 }
-                let mods = event.keystroke.modifiers;
-                if !mods.platform && !mods.control && !mods.alt {
-                    if let Some(ch) = event.keystroke.key_char.as_deref() {
-                        if ch.chars().count() == 1 && !ch.chars().all(|c| c.is_control()) {
-                            this.append(ch, cx);
-                            cx.stop_propagation();
-                        }
-                    }
-                }
-            }))
-            .child(
-                div()
-                    .size_full()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .when(show_status, |col| {
-                        col.child(self.render_status_strip(self.desktop.read(cx)))
-                    })
-                    .child(
-                        div()
-                            .relative()
-                            .w(px(750.))
-                            .h(px(475.))
-                            .rounded(px(26.))
-                            .bg(rgb(TC_SCRIM))
-                            .border_1()
-                            .border_color(rgb(TC_PANEL_STROKE))
-                            .overflow_hidden()
-                            .flex()
-                            .flex_col()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .w_full()
-                                    .flex_1()
-                                    .pt(px(10.))
-                                    .overflow_hidden()
-                                    .flex()
-                                    .flex_col()
-                                    .child(self.render_bar(cx))
-                                    .child(self.render_results(cx)),
-                            )
-                            .child(self.render_footer(self.desktop.read(cx)))
-                            .when(show_popover, |panel| {
-                                panel.child(self.render_actions_overlay(self.desktop.read(cx)))
-                            }),
-                    )
-                    .when(!active_notifs.is_empty(), |col| {
-                        col.child(
+            }
+        }))
+        .child(
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .when(show_status, |col| {
+                    col.child(self.render_status_strip(self.desktop.read(cx)))
+                })
+                .child(
+                    div()
+                        .relative()
+                        .w(px(750.))
+                        .h(px(475.))
+                        .rounded(px(26.))
+                        .bg(rgb(TC_SCRIM))
+                        .border_1()
+                        .border_color(rgb(TC_PANEL_STROKE))
+                        .overflow_hidden()
+                        .flex()
+                        .flex_col()
+                        .justify_between()
+                        .child(
                             div()
-                                .pt(px(6.))
+                                .w_full()
+                                .flex_1()
+                                .pt(px(10.))
+                                .overflow_hidden()
                                 .flex()
                                 .flex_col()
-                                .gap(px(4.))
-                                .children(active_notifs),
+                                .child(self.render_bar(cx))
+                                .child(self.render_results(cx)),
                         )
-                    }),
-            )
+                        .child(self.render_footer(self.desktop.read(cx)))
+                        .when(show_popover, |panel| {
+                            panel.child(self.render_actions_overlay(self.desktop.read(cx)))
+                        }),
+                )
+                .when(!active_notifs.is_empty(), |col| {
+                    col.child(
+                        div()
+                            .pt(px(6.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.))
+                            .children(active_notifs),
+                    )
+                }),
+        )
     }
 }
 
@@ -3680,7 +3713,7 @@ fn open_launcher_window(desktop: &Entity<DesktopModel>, cx: &mut App) -> AnyWind
     let desktop_entity = desktop.clone();
     let handle = cx
         .open_window(launcher_window_options(cx), move |window, cx| {
-            let view = cx.new(|cx| LauncherWindow::new(desktop_entity, cx));
+            let view = cx.new(|cx| LauncherWindow::new(desktop_entity, window, cx));
             window.activate_window();
             view
         })
@@ -3707,12 +3740,25 @@ fn focus_or_open_launcher(desktop: &Entity<DesktopModel>, cx: &mut App) {
         return;
     };
 
-    if handle
-        .update(cx, |_, window, _| {
+    let mut closed = false;
+    let update_result = handle.update(cx, |_, window, _| {
+        if window.is_window_active() {
+            window.remove_window();
+            closed = true;
+        } else {
             window.activate_window();
-        })
-        .is_ok()
-    {
+        }
+    });
+
+    if closed {
+        desktop.update(cx, |desktop, cx| {
+            desktop.launcher = None;
+            desktop.changed(cx);
+        });
+        return;
+    }
+
+    if update_result.is_ok() {
         return;
     }
 
