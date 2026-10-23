@@ -1,26 +1,37 @@
 extern crate crepuscularity_gpui as gpui;
 
+#[allow(dead_code)]
+mod browser;
+#[allow(dead_code)]
+mod components;
 #[cfg(feature = "compositor")]
 mod compositor;
 mod config;
 mod de;
+#[allow(dead_code)]
+mod icons;
+#[allow(dead_code)]
 mod layout;
 mod notifications;
+#[allow(dead_code)]
 mod plugin;
 mod role;
 mod runner;
 mod session;
+#[allow(dead_code)]
+mod status_item;
+#[allow(dead_code)]
 mod terminal;
 
 use crepuscularity_core::context::{TemplateContext, TemplateValue};
 use crepuscularity_gpui::prelude::*;
 use crepuscularity_gpui::{
-    actions, font, size, AnyWindowHandle, Div, EventEmitter, Font, KeyBinding, KeyDownEvent,
-    Modifiers, Pixels, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind,
+    actions, font, size, AnyWindowHandle, Div, EventEmitter, FocusHandle, Font, KeyBinding,
+    KeyDownEvent, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind,
     WindowOptions,
 };
 use crepuscularity_web::render_component_file_to_html;
-use layout::{Axis, LayoutChildView, LayoutState, LayoutView, LayoutWindowView};
+use layout::LayoutState;
 use plugin::{PluginAction, WindowTarget};
 use runner::{Runner, WindowMode};
 use std::borrow::Cow;
@@ -34,16 +45,26 @@ fn ui_font() -> Font {
     font("Geist")
 }
 
-const ACCENT: u32 = 0x33ccff;
-const ACCENT_DIM: u32 = 0x123142;
-const SURFACE: u32 = 0x080b10;
-const SURFACE_2: u32 = 0x0d1118;
-const SURFACE_3: u32 = 0x111722;
-const BORDER: u32 = 0x23313d;
-const BORDER_SOFT: u32 = 0x18222c;
-const TEXT: u32 = 0xe6e9ef;
-const TEXT_DIM: u32 = 0x9aa3b2;
-const TEXT_FAINT: u32 = 0x6b7384;
+const SURFACE: u32 = 0x161618;
+const SURFACE_2: u32 = 0x1e1e22;
+const SURFACE_3: u32 = 0x28282d;
+const BORDER: u32 = 0x38383f;
+const BORDER_SOFT: u32 = 0x26262b;
+const TEXT: u32 = 0xffffff;
+const TEXT_DIM: u32 = 0x9a9aa0;
+const TEXT_FAINT: u32 = 0x68686e;
+
+// Palette Theme Tokens (white alpha ramp over dark scrim)
+const TC_SCRIM: u32 = 0x161618;
+const TC_PANEL_STROKE: u32 = 0x26262b;
+const TC_GLASS_BG: u32 = 0x242429; // controlSurface / glass capsule
+const TC_BORDER: u32 = 0x3e3e46; // white 0.20 outline border
+const TC_CARD_FILL: u32 = 0x1f1f24; // white 0.05 surface fill
+const TC_CARD_STROKE: u32 = 0x2b2b31; // white 0.10 separator / hairline
+const TC_ICON_SURFACE: u32 = 0x28282f; // white 0.09 flat symbol tile
+const TC_TEXT_PRIMARY: u32 = 0xffffff; // white 1.00
+const TC_TEXT_SECONDARY: u32 = 0x9a9aa0; // white 0.60
+const TC_TEXT_TERTIARY: u32 = 0x68686e; // white 0.40
 use std::process::Command;
 
 const SHELL_CREPUS: &str = include_str!("views/shell.crepus");
@@ -55,6 +76,7 @@ actions!(
         FocusBar,
         DefocusBar,
         Confirm,
+        ToggleActionsMenu,
         SplitRow,
         SplitColumn,
         FlipAxis,
@@ -95,6 +117,487 @@ actions!(
     ]
 );
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewMode {
+    Main,
+    WindowControls,
+    Browser,
+    Terminal,
+    ClipboardHistory,
+    FileSearch,
+}
+
+impl ViewMode {
+    pub fn in_submenu(self) -> bool {
+        !matches!(self, Self::Main)
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Main => "Launcher",
+            Self::WindowControls => "Window Management",
+            Self::Browser => "Quicklinks",
+            Self::Terminal => "Terminal",
+            Self::ClipboardHistory => "Clipboard History",
+            Self::FileSearch => "Search Files",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RowOffsets {
+    pub has_terminal: bool,
+    pub has_macro: bool,
+    pub has_url: bool,
+    pub has_calc: bool,
+    pub has_win: bool,
+    pub has_help: bool,
+    pub command_offset: usize,
+}
+
+impl RowOffsets {
+    pub fn compute(query: &str, view_mode: ViewMode, extras: bool) -> Self {
+        let trimmed = query.trim();
+        if !matches!(view_mode, ViewMode::Main) {
+            return Self::default();
+        }
+        let has_terminal = trimmed.starts_with('>') || trimmed.starts_with("! ");
+        if has_terminal {
+            return Self {
+                has_terminal: true,
+                has_macro: false,
+                has_url: false,
+                has_calc: false,
+                has_win: false,
+                has_help: false,
+                command_offset: 1,
+            };
+        }
+        let has_macro = plugin::resolve_text_macro(trimmed).is_some();
+        let has_url = !has_macro && extras && plugin::parse_browser_command(trimmed).is_some();
+        let has_calc = plugin::evaluate_calculator(trimmed).is_some();
+        let lower = trimmed.to_lowercase();
+        let has_win = !trimmed.is_empty()
+            && (lower.contains("niri")
+                || lower.contains("room")
+                || lower.contains("column")
+                || lower.contains("strip")
+                || lower.contains("mode")
+                || lower.contains("window")
+                || lower.contains("tile")
+                || lower.contains("float"));
+        let has_help = plugin::help_answer_for(trimmed).is_some();
+        let command_offset = usize::from(has_macro)
+            + usize::from(has_url)
+            + usize::from(has_calc)
+            + usize::from(has_win)
+            + usize::from(has_help);
+        Self {
+            has_terminal: false,
+            has_macro,
+            has_url,
+            has_calc,
+            has_win,
+            has_help,
+            command_offset,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct QueryHistory {
+    entries: Vec<String>,
+    cursor: Option<usize>,
+    saved_prefix: String,
+}
+
+impl QueryHistory {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn record(&mut self, query: &str) {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        self.entries.retain(|q| q != trimmed);
+        self.entries.insert(0, trimmed.to_string());
+        if self.entries.len() > 64 {
+            self.entries.truncate(64);
+        }
+        self.cursor = None;
+    }
+
+    pub fn reset_cursor(&mut self) {
+        self.cursor = None;
+    }
+
+    pub fn navigate_up(&mut self, current_query: &str) -> Option<String> {
+        let start = match self.cursor {
+            None => {
+                self.saved_prefix = current_query.to_string();
+                0
+            }
+            Some(idx) => idx + 1,
+        };
+        let prefix = self.saved_prefix.as_str();
+        for (idx, entry) in self.entries.iter().enumerate().skip(start) {
+            if prefix.is_empty() || entry.starts_with(prefix) {
+                self.cursor = Some(idx);
+                return Some(entry.clone());
+            }
+        }
+        None
+    }
+
+    pub fn navigate_down(&mut self) -> Option<String> {
+        let current = self.cursor?;
+        if current == 0 {
+            self.cursor = None;
+            return Some(self.saved_prefix.clone());
+        }
+        let prefix = self.saved_prefix.as_str();
+        for idx in (0..current).rev() {
+            if let Some(entry) = self.entries.get(idx) {
+                if prefix.is_empty() || entry.starts_with(prefix) {
+                    self.cursor = Some(idx);
+                    return Some(entry.clone());
+                }
+            }
+        }
+        self.cursor = None;
+        Some(self.saved_prefix.clone())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ItemAction {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub shortcut: &'static str,
+    pub keycaps: Vec<&'static str>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoverBadge {
+    Terminal,
+    Url,
+    Calc,
+    Window,
+    Help,
+    Submenu,
+    Command,
+}
+
+impl RoverBadge {
+    pub fn label(self) -> Option<&'static str> {
+        match self {
+            Self::Terminal => Some("$"),
+            Self::Url => Some("URL"),
+            Self::Calc => Some("="),
+            Self::Window => Some("WIN"),
+            Self::Help => Some("?"),
+            Self::Submenu => Some("›"),
+            Self::Command => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RoverPillAction {
+    Plugin(PluginAction),
+    EnterSubmenu(ViewMode),
+    Browser(plugin::BrowserCommand),
+    RunInlineTerminal(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoverPill {
+    pub badge: RoverBadge,
+    pub title: String,
+    pub subtitle: String,
+    pub section: &'static str,
+    pub kind_label: &'static str,
+    pub icon_glyph: &'static str,
+    pub icon_bg: u32,
+    pub running: bool,
+    pub keycaps: Vec<&'static str>,
+    pub action: RoverPillAction,
+}
+
+impl RoverPill {
+    pub fn primary_verb(&self) -> &'static str {
+        match self.kind_label {
+            "Application" => "Open Application",
+            "Snippet" => "Paste Snippet",
+            "Quicklink" => "Open in Browser",
+            "Calculator" => "Copy Answer",
+            _ => "Open Command",
+        }
+    }
+}
+
+fn clean_display_title(raw: &str) -> String {
+    let trimmed = raw
+        .strip_prefix("Window: ")
+        .or_else(|| raw.strip_prefix("Niri: "))
+        .or_else(|| raw.strip_prefix("Room: "))
+        .or_else(|| raw.strip_prefix("Quicklink: "))
+        .or_else(|| raw.strip_prefix("Snippet: "))
+        .unwrap_or(raw);
+    match trimmed {
+        "Switch / Cycle Layout" => "Switch Room".to_string(),
+        "Niri strip windows" => "Column Strip Layout".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn classify_plugin_row(
+    title: &str,
+    action: &PluginAction,
+    active_mode: WindowMode,
+) -> (
+    &'static str,
+    &'static str,
+    &'static str,
+    u32,
+    bool,
+    Vec<&'static str>,
+) {
+    match action {
+        PluginAction::Layout { action: act } => match act {
+            layout::LayoutAction::CycleRoomLayout => (
+                "Favorites",
+                "Window",
+                "⊞",
+                TC_ICON_SURFACE,
+                false,
+                vec!["Super", "Space"],
+            ),
+            layout::LayoutAction::EnterRoomFocus
+            | layout::LayoutAction::EnterRoomStack
+            | layout::LayoutAction::EnterRoomColumns
+            | layout::LayoutAction::EnterRoomGrid => (
+                "Commands",
+                "Window",
+                "⊞",
+                TC_ICON_SURFACE,
+                false,
+                Vec::new(),
+            ),
+            layout::LayoutAction::CycleColumnWidth => (
+                "Favorites",
+                "Window",
+                "↔",
+                TC_ICON_SURFACE,
+                false,
+                vec!["Super", "R"],
+            ),
+            layout::LayoutAction::FocusColumnLeft => (
+                "Commands",
+                "Window",
+                "←",
+                TC_ICON_SURFACE,
+                false,
+                vec!["Super", "H"],
+            ),
+            layout::LayoutAction::FocusColumnRight => (
+                "Commands",
+                "Window",
+                "→",
+                TC_ICON_SURFACE,
+                false,
+                vec!["Super", "L"],
+            ),
+            layout::LayoutAction::SnapLeftHalf => (
+                "Favorites",
+                "Window",
+                "◧",
+                TC_ICON_SURFACE,
+                false,
+                vec!["Ctrl", "Alt", "←"],
+            ),
+            layout::LayoutAction::SnapRightHalf => (
+                "Favorites",
+                "Window",
+                "◨",
+                TC_ICON_SURFACE,
+                false,
+                vec!["Ctrl", "Alt", "→"],
+            ),
+            layout::LayoutAction::SnapTopHalf => (
+                "Commands",
+                "Window",
+                "⬒",
+                TC_ICON_SURFACE,
+                false,
+                vec!["Ctrl", "Alt", "↑"],
+            ),
+            layout::LayoutAction::SnapBottomHalf => (
+                "Commands",
+                "Window",
+                "⬓",
+                TC_ICON_SURFACE,
+                false,
+                vec!["Ctrl", "Alt", "↓"],
+            ),
+            layout::LayoutAction::Maximize => (
+                "Favorites",
+                "Window",
+                "⤢",
+                TC_ICON_SURFACE,
+                false,
+                vec!["Ctrl", "Alt", "↵"],
+            ),
+            layout::LayoutAction::AlmostMaximize => (
+                "Commands",
+                "Window",
+                "▣",
+                TC_ICON_SURFACE,
+                false,
+                Vec::new(),
+            ),
+            layout::LayoutAction::ReasonableSize => (
+                "Commands",
+                "Window",
+                "⊡",
+                TC_ICON_SURFACE,
+                false,
+                Vec::new(),
+            ),
+            layout::LayoutAction::Restore => (
+                "Commands",
+                "Window",
+                "↺",
+                TC_ICON_SURFACE,
+                false,
+                vec!["Ctrl", "Alt", "⌫"],
+            ),
+            layout::LayoutAction::CenterFocused => (
+                "Commands",
+                "Window",
+                "⌖",
+                TC_ICON_SURFACE,
+                false,
+                vec!["Ctrl", "Alt", "C"],
+            ),
+            _ => (
+                "Commands",
+                "Window",
+                "⊞",
+                TC_ICON_SURFACE,
+                false,
+                Vec::new(),
+            ),
+        },
+        PluginAction::SetWindowMode { mode } => {
+            let is_active = *mode == active_mode;
+            (
+                "Commands",
+                "Window",
+                "▥",
+                TC_ICON_SURFACE,
+                is_active,
+                Vec::new(),
+            )
+        }
+        PluginAction::CycleWindowMode => (
+            "Commands",
+            "Window",
+            "↻",
+            TC_ICON_SURFACE,
+            false,
+            Vec::new(),
+        ),
+        PluginAction::FocusWindow { .. } => {
+            ("Commands", "Window", "▣", TC_ICON_SURFACE, true, Vec::new())
+        }
+        PluginAction::Desktop { action: de_act } => match de_act {
+            de::DesktopAction::Terminal => (
+                "Applications",
+                "Application",
+                ">_",
+                0x1f2937,
+                true,
+                Vec::new(),
+            ),
+            de::DesktopAction::Files => (
+                "Applications",
+                "Application",
+                "📁",
+                0x2563eb,
+                false,
+                Vec::new(),
+            ),
+            de::DesktopAction::Apps => (
+                "Applications",
+                "Application",
+                "✦",
+                0x7c3aed,
+                true,
+                Vec::new(),
+            ),
+            _ => (
+                "Commands",
+                "Command",
+                "⚙",
+                TC_ICON_SURFACE,
+                false,
+                Vec::new(),
+            ),
+        },
+        PluginAction::Launch { .. } => (
+            "Applications",
+            "Application",
+            "◆",
+            0x3b82f6,
+            true,
+            Vec::new(),
+        ),
+        PluginAction::Shell { .. } => {
+            if title.starts_with('=') {
+                ("Results", "Calculator", "=", 0xf59e0b, false, Vec::new())
+            } else if title.starts_with("Snippet:") {
+                (
+                    "Snippets",
+                    "Snippet",
+                    "{}",
+                    TC_ICON_SURFACE,
+                    false,
+                    Vec::new(),
+                )
+            } else if title.starts_with("Quicklink:") || title.starts_with("Search ") {
+                (
+                    "Quicklinks",
+                    "Quicklink",
+                    "🔗",
+                    TC_ICON_SURFACE,
+                    false,
+                    Vec::new(),
+                )
+            } else {
+                (
+                    "Commands",
+                    "Command",
+                    ">_",
+                    TC_ICON_SURFACE,
+                    false,
+                    Vec::new(),
+                )
+            }
+        }
+        _ => (
+            "Commands",
+            "Command",
+            "⌘",
+            TC_ICON_SURFACE,
+            false,
+            Vec::new(),
+        ),
+    }
+}
+
 #[derive(Clone)]
 struct UiOptions {
     status_bar: bool,
@@ -104,6 +607,50 @@ struct UiOptions {
     mode: WindowMode,
     demo_layout: bool,
     role: role::SessionRole,
+    initial_view_mode: ViewMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BarCategory {
+    All,
+    Windows,
+    Modes,
+    System,
+    Clipboard,
+    Notes,
+    Terminal,
+}
+
+impl BarCategory {
+    fn all() -> &'static [Self] {
+        &[
+            Self::All,
+            Self::Windows,
+            Self::Modes,
+            Self::System,
+            Self::Clipboard,
+            Self::Notes,
+            Self::Terminal,
+        ]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Windows => "Windows",
+            Self::Modes => "Modes",
+            Self::System => "System",
+            Self::Clipboard => "Clipboard",
+            Self::Notes => "Notes",
+            Self::Terminal => "Terminal",
+        }
+    }
+
+    fn next(self) -> Self {
+        let all = Self::all();
+        let idx = all.iter().position(|c| *c == self).unwrap_or(0);
+        all[(idx + 1) % all.len()]
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -119,13 +666,24 @@ struct DesktopModel {
     external_polybar: bool,
     last_action: String,
     runner: Runner,
+    #[allow(dead_code)]
     session_control: bool,
     launcher: Option<AnyWindowHandle>,
-    settings: Option<AnyWindowHandle>,
+    active_category: BarCategory,
+    view_mode: ViewMode,
+    offsets: RowOffsets,
+    pills: Vec<RoverPill>,
+    selected_pill: usize,
+    show_actions: bool,
+    show_app_menu: bool,
+    selected_action: usize,
+    history: QueryHistory,
+    browser: plugin::BrowserTransportState,
+    browser_page: browser::InternalBrowserPage,
+    browser_engine: browser::BrowserEngineStatus,
     notifications: notifications::NotificationState,
     terminal: Option<terminal::TerminalConsole>,
     terminal_open: bool,
-    terminal_input: String,
     role: role::SessionRole,
     #[cfg(feature = "compositor")]
     compositor_events: Option<std::sync::mpsc::Receiver<compositor::CompositorEvent>>,
@@ -155,6 +713,14 @@ impl DesktopModel {
     ) -> Self {
         let mut notifications = notifications::NotificationState::new();
         notifications.start();
+        let initial_category = if options.open_settings {
+            BarCategory::System
+        } else {
+            BarCategory::All
+        };
+        let mut browser = plugin::BrowserTransportState::new();
+        let initial_url = "https://docs.rs".to_string();
+        let _ = browser.execute(plugin::BrowserCommand::Navigate(initial_url.clone()));
         let mut desktop = Self {
             query: options.initial_query,
             mode: options.mode,
@@ -164,6 +730,7 @@ impl DesktopModel {
                 } else {
                     LayoutState::new()
                 };
+                layout.set_workarea(1440.0, 900.0);
                 layout.set_window_mode(&options.mode);
                 if options.demo_layout && matches!(options.mode, WindowMode::Tiling) {
                     layout.set_window_floating(4, true);
@@ -172,21 +739,45 @@ impl DesktopModel {
             },
             status_bar: options.status_bar,
             external_polybar: options.external_polybar,
-            last_action: "Ready: desktop active".to_string(),
+            last_action: "Ready: Alpenglow Wayland Desktop".to_string(),
             runner: Runner::with_role(options.role),
             session_control: std::env::var_os("ALPENGLOW_SESSION_CONTROL").is_some(),
             role: options.role,
             launcher: None,
-            settings: None,
+            active_category: initial_category,
+            view_mode: options.initial_view_mode,
+            offsets: RowOffsets::default(),
+            pills: Vec::new(),
+            selected_pill: 0,
+            show_actions: matches!(
+                std::env::var("ALPENGLOWED_SHOW_ACTIONS").as_deref(),
+                Ok("1" | "true")
+            ),
+            show_app_menu: matches!(
+                std::env::var("ALPENGLOWED_SHOW_APP_MENU").as_deref(),
+                Ok("1" | "true")
+            ),
+            selected_action: 0,
+            history: QueryHistory::new(),
+            browser,
+            browser_page: browser::load_internal_page(&initial_url),
+            browser_engine: browser::detect_browser_engine(),
             notifications,
             terminal: None,
-            terminal_open: false,
-            terminal_input: String::new(),
+            terminal_open: matches!(options.initial_view_mode, ViewMode::Terminal),
             #[cfg(feature = "compositor")]
             compositor_events: compositor_rx,
             #[cfg(feature = "compositor")]
             compositor_surfaces: std::collections::HashMap::new(),
         };
+        if desktop.terminal_open {
+            desktop.terminal = terminal::TerminalConsole::spawn();
+            if let Some(ref term) = desktop.terminal {
+                if term.blocks().is_empty() {
+                    term.seed_demo_blocks();
+                }
+            }
+        }
         desktop.runner.query = desktop.query.clone();
         desktop.refresh_runner();
         desktop
@@ -194,7 +785,80 @@ impl DesktopModel {
 
     fn set_query(&mut self, query: String, cx: &mut Context<Self>) {
         self.query = query.clone();
-        self.runner.query = query;
+        self.history.reset_cursor();
+        self.runner.query = match self.view_mode {
+            ViewMode::ClipboardHistory if query.trim().is_empty() => "clipboard".to_string(),
+            ViewMode::FileSearch if !query.trim().starts_with('/') => format!("/{}", query.trim()),
+            _ => query,
+        };
+        self.refresh_runner();
+        self.changed(cx);
+    }
+
+    fn set_view_mode(&mut self, mode: ViewMode, cx: &mut Context<Self>) {
+        self.view_mode = mode;
+        self.show_actions = false;
+        self.show_app_menu = false;
+        self.selected_action = 0;
+        self.active_category = match mode {
+            ViewMode::Main => BarCategory::All,
+            ViewMode::WindowControls => BarCategory::Windows,
+            ViewMode::Browser => BarCategory::All,
+            ViewMode::Terminal => BarCategory::Terminal,
+            ViewMode::ClipboardHistory => BarCategory::Clipboard,
+            ViewMode::FileSearch => BarCategory::All,
+        };
+        self.terminal_open = matches!(mode, ViewMode::Terminal);
+        if self.terminal_open && self.terminal.is_none() {
+            self.terminal = terminal::TerminalConsole::spawn();
+            if let Some(ref term) = self.terminal {
+                if term.blocks().is_empty() {
+                    term.seed_demo_blocks();
+                }
+            }
+        }
+        if matches!(mode, ViewMode::Browser) {
+            self.browser_page = browser::load_internal_page(self.browser.active_url());
+        } else {
+            browser::detach_native_webview();
+        }
+        self.query.clear();
+        self.runner.query = match mode {
+            ViewMode::ClipboardHistory => "clipboard".to_string(),
+            ViewMode::FileSearch => "/".to_string(),
+            _ => String::new(),
+        };
+        self.refresh_runner();
+        self.changed(cx);
+    }
+
+    fn set_category(&mut self, category: BarCategory, cx: &mut Context<Self>) {
+        self.active_category = category;
+        self.view_mode = match category {
+            BarCategory::Windows => ViewMode::WindowControls,
+            BarCategory::Terminal => ViewMode::Terminal,
+            BarCategory::Clipboard => ViewMode::ClipboardHistory,
+            _ => ViewMode::Main,
+        };
+        self.terminal_open = matches!(category, BarCategory::Terminal);
+        if self.terminal_open && self.terminal.is_none() {
+            self.terminal = terminal::TerminalConsole::spawn();
+            if let Some(ref term) = self.terminal {
+                if term.blocks().is_empty() {
+                    term.seed_demo_blocks();
+                }
+            }
+        }
+        let preset_query = match category {
+            BarCategory::Clipboard => Some("clipboard".to_string()),
+            BarCategory::Notes => Some("note".to_string()),
+            _ => None,
+        };
+        if let Some(q) = preset_query {
+            self.query = q.clone();
+            self.runner.query = q;
+        }
+        self.last_action = format!("Category: {}", category.label());
         self.refresh_runner();
         self.changed(cx);
     }
@@ -226,6 +890,654 @@ impl DesktopModel {
     fn refresh_runner(&mut self) {
         let windows = self.focus_targets();
         self.runner.update_with_windows(&windows);
+        self.rebuild_pills();
+    }
+
+    fn rebuild_pills(&mut self) {
+        let trimmed = self.query.trim();
+        self.offsets = RowOffsets::compute(trimmed, self.view_mode, self.role.extras());
+        let mut pills = Vec::new();
+        let is_filtering = !trimmed.is_empty();
+
+        if matches!(self.view_mode, ViewMode::WindowControls) && trimmed.is_empty() {
+            let win_rows: &[(&str, &str, &str, Vec<&str>, layout::LayoutAction)] = &[
+                (
+                    "Left Half",
+                    "Favorites",
+                    "◧",
+                    vec!["Ctrl", "Alt", "←"],
+                    layout::LayoutAction::SnapLeftHalf,
+                ),
+                (
+                    "Right Half",
+                    "Favorites",
+                    "◨",
+                    vec!["Ctrl", "Alt", "→"],
+                    layout::LayoutAction::SnapRightHalf,
+                ),
+                (
+                    "Maximize",
+                    "Favorites",
+                    "⤢",
+                    vec!["Ctrl", "Alt", "↵"],
+                    layout::LayoutAction::Maximize,
+                ),
+                (
+                    "Center",
+                    "Window Management",
+                    "⌖",
+                    vec!["Ctrl", "Alt", "C"],
+                    layout::LayoutAction::CenterFocused,
+                ),
+                (
+                    "Restore Window",
+                    "Window Management",
+                    "↺",
+                    vec!["Ctrl", "Alt", "⌫"],
+                    layout::LayoutAction::Restore,
+                ),
+                (
+                    "Switch Room",
+                    "Window Management",
+                    "⊞",
+                    vec!["Super", "Space"],
+                    layout::LayoutAction::CycleRoomLayout,
+                ),
+                (
+                    "Cycle Column Width",
+                    "Window Management",
+                    "↔",
+                    vec!["Super", "R"],
+                    layout::LayoutAction::CycleColumnWidth,
+                ),
+                (
+                    "Focus Left Column",
+                    "Window Management",
+                    "←",
+                    vec!["Super", "H"],
+                    layout::LayoutAction::FocusColumnLeft,
+                ),
+            ];
+            for (title, sec, glyph, keys, act) in win_rows {
+                pills.push(RoverPill {
+                    badge: RoverBadge::Command,
+                    title: (*title).to_string(),
+                    subtitle: String::new(),
+                    section: sec,
+                    kind_label: "Window",
+                    icon_glyph: glyph,
+                    icon_bg: TC_ICON_SURFACE,
+                    running: false,
+                    keycaps: keys.clone(),
+                    action: RoverPillAction::Plugin(PluginAction::Layout {
+                        action: act.clone(),
+                    }),
+                });
+            }
+            self.pills = pills;
+            self.selected_pill = 0;
+            return;
+        }
+
+        if matches!(self.view_mode, ViewMode::Browser) && trimmed.is_empty() {
+            let bang_rows: &[(&str, &str, &str)] = &[
+                ("Search DuckDuckGo", "!ddg", "https://duckduckgo.com"),
+                ("Search GitHub", "!gh", "https://github.com"),
+                ("Search Rust Docs", "!rs", "https://docs.rs"),
+                ("Search Crates", "!crates", "https://crates.io"),
+                ("Search Wikipedia", "!wiki", "https://en.wikipedia.org"),
+                ("Search YouTube", "!yt", "https://www.youtube.com"),
+                ("Search Arch Wiki", "!arch", "https://wiki.archlinux.org"),
+            ];
+            for (title, bang, url) in bang_rows {
+                pills.push(RoverPill {
+                    badge: RoverBadge::Url,
+                    title: (*title).to_string(),
+                    subtitle: (*bang).to_string(),
+                    section: "Quicklinks",
+                    kind_label: "Quicklink",
+                    icon_glyph: "🔗",
+                    icon_bg: TC_ICON_SURFACE,
+                    running: false,
+                    keycaps: Vec::new(),
+                    action: RoverPillAction::Browser(plugin::BrowserCommand::Navigate(
+                        (*url).to_string(),
+                    )),
+                });
+            }
+            for m in plugin::TEXT_MACROS.iter().take(4) {
+                let expanded = plugin::expand_macro_template(m.template, "");
+                let preview = expanded.replace('\n', " ");
+                let copy_cmd = format!("printf %s {}", plugin::shell_single_quote(&expanded));
+                pills.push(RoverPill {
+                    badge: RoverBadge::Command,
+                    title: m.name.to_string(),
+                    subtitle: format!("{}  {preview}", m.bang),
+                    section: "Snippets",
+                    kind_label: "Snippet",
+                    icon_glyph: "{}",
+                    icon_bg: TC_ICON_SURFACE,
+                    running: false,
+                    keycaps: Vec::new(),
+                    action: RoverPillAction::Plugin(PluginAction::Shell { command: copy_cmd }),
+                });
+            }
+            self.pills = pills;
+            self.selected_pill = 0;
+            return;
+        }
+
+        if self.offsets.has_terminal {
+            let cmd = trimmed
+                .strip_prefix('>')
+                .or_else(|| trimmed.strip_prefix('!'))
+                .map(str::trim)
+                .unwrap_or("");
+            let display_cmd = if cmd.is_empty() {
+                "Run Shell Command".to_string()
+            } else {
+                cmd.to_string()
+            };
+            pills.push(RoverPill {
+                badge: RoverBadge::Terminal,
+                title: display_cmd,
+                subtitle: String::new(),
+                section: "Results",
+                kind_label: "Command",
+                icon_glyph: ">_",
+                icon_bg: TC_ICON_SURFACE,
+                running: false,
+                keycaps: Vec::new(),
+                action: RoverPillAction::RunInlineTerminal(cmd.to_string()),
+            });
+            self.pills = pills;
+            self.selected_pill = 0;
+            return;
+        }
+
+        if self.offsets.has_macro {
+            if let Some((name, bang, expanded)) = plugin::resolve_text_macro(trimmed) {
+                let preview = expanded.replace('\n', " ");
+                let copy_cmd = format!("printf %s {}", plugin::shell_single_quote(&expanded));
+                pills.push(RoverPill {
+                    badge: RoverBadge::Command,
+                    title: name,
+                    subtitle: format!("{bang}  {preview}"),
+                    section: "Snippets",
+                    kind_label: "Snippet",
+                    icon_glyph: "{}",
+                    icon_bg: TC_ICON_SURFACE,
+                    running: false,
+                    keycaps: Vec::new(),
+                    action: RoverPillAction::Plugin(PluginAction::Shell { command: copy_cmd }),
+                });
+            }
+        } else if trimmed.starts_with('!') || trimmed.starts_with(';') {
+            let prefix = trimmed.trim_start_matches(['!', ';']).to_lowercase();
+            for m in plugin::TEXT_MACROS {
+                let key = m.bang.trim_start_matches('!');
+                if prefix.is_empty()
+                    || key.starts_with(&prefix)
+                    || m.name.to_lowercase().contains(&prefix)
+                {
+                    let expanded = plugin::expand_macro_template(m.template, "");
+                    let preview = expanded.replace('\n', " ");
+                    let copy_cmd = format!("printf %s {}", plugin::shell_single_quote(&expanded));
+                    pills.push(RoverPill {
+                        badge: RoverBadge::Command,
+                        title: m.name.to_string(),
+                        subtitle: format!("{}  {preview}", m.bang),
+                        section: "Snippets",
+                        kind_label: "Snippet",
+                        icon_glyph: "{}",
+                        icon_bg: TC_ICON_SURFACE,
+                        running: false,
+                        keycaps: Vec::new(),
+                        action: RoverPillAction::Plugin(PluginAction::Shell { command: copy_cmd }),
+                    });
+                }
+            }
+            let bang_rows: &[(&str, &str, &str)] = &[
+                ("Search Google", "!g", "https://www.google.com"),
+                ("Search DuckDuckGo", "!ddg", "https://duckduckgo.com"),
+                ("Search GitHub", "!gh", "https://github.com"),
+                ("Search Rust Docs", "!rs", "https://docs.rs"),
+                ("Search Crates", "!crates", "https://crates.io"),
+                ("Search Wikipedia", "!wiki", "https://en.wikipedia.org"),
+                ("Search YouTube", "!yt", "https://www.youtube.com"),
+                ("Search Arch Wiki", "!arch", "https://wiki.archlinux.org"),
+            ];
+            for (title, bang, url) in bang_rows {
+                let key = bang.trim_start_matches('!');
+                if prefix.is_empty() || key.starts_with(&prefix) {
+                    pills.push(RoverPill {
+                        badge: RoverBadge::Url,
+                        title: (*title).to_string(),
+                        subtitle: (*bang).to_string(),
+                        section: "Quicklinks",
+                        kind_label: "Quicklink",
+                        icon_glyph: "🔗",
+                        icon_bg: TC_ICON_SURFACE,
+                        running: false,
+                        keycaps: Vec::new(),
+                        action: RoverPillAction::Browser(plugin::BrowserCommand::Navigate(
+                            (*url).to_string(),
+                        )),
+                    });
+                }
+            }
+            if !pills.is_empty() && !self.offsets.has_url {
+                self.pills = pills;
+                self.selected_pill = 0;
+                return;
+            }
+        }
+
+        if self.offsets.has_url {
+            if let Some(cmd) = plugin::parse_browser_command(trimmed) {
+                let (title, subtitle) = match &cmd {
+                    plugin::BrowserCommand::Navigate(url) => {
+                        ("Open in Browser".to_string(), url.clone())
+                    }
+                    plugin::BrowserCommand::Search { engine_name, query } => {
+                        (format!("Search {engine_name}"), query.clone())
+                    }
+                    _ => ("Open in Browser".to_string(), String::new()),
+                };
+                pills.push(RoverPill {
+                    badge: RoverBadge::Url,
+                    title,
+                    subtitle,
+                    section: "Quicklinks",
+                    kind_label: "Quicklink",
+                    icon_glyph: "🔗",
+                    icon_bg: TC_ICON_SURFACE,
+                    running: false,
+                    keycaps: Vec::new(),
+                    action: RoverPillAction::Browser(cmd),
+                });
+            }
+        }
+
+        if self.offsets.has_calc {
+            if let Some(eval) = plugin::evaluate_calculator(trimmed) {
+                let copy_cmd = format!("printf %s {}", plugin::shell_single_quote(&eval));
+                pills.push(RoverPill {
+                    badge: RoverBadge::Calc,
+                    title: eval,
+                    subtitle: trimmed.to_string(),
+                    section: "Calculator",
+                    kind_label: "Calculator",
+                    icon_glyph: "=",
+                    icon_bg: TC_ICON_SURFACE,
+                    running: false,
+                    keycaps: Vec::new(),
+                    action: RoverPillAction::Plugin(PluginAction::Shell { command: copy_cmd }),
+                });
+            }
+        }
+
+        if self.offsets.has_win {
+            pills.push(RoverPill {
+                badge: RoverBadge::Window,
+                title: "Window Management".to_string(),
+                subtitle: String::new(),
+                section: "Results",
+                kind_label: "Command",
+                icon_glyph: "⊞",
+                icon_bg: TC_ICON_SURFACE,
+                running: false,
+                keycaps: vec!["Super", "W"],
+                action: RoverPillAction::EnterSubmenu(ViewMode::WindowControls),
+            });
+        }
+
+        if self.offsets.has_help {
+            if let Some((answer, subtitle)) = plugin::help_answer_for(trimmed) {
+                pills.push(RoverPill {
+                    badge: RoverBadge::Help,
+                    title: answer,
+                    subtitle,
+                    section: "Results",
+                    kind_label: "Command",
+                    icon_glyph: "?",
+                    icon_bg: TC_ICON_SURFACE,
+                    running: false,
+                    keycaps: Vec::new(),
+                    action: RoverPillAction::Plugin(PluginAction::None),
+                });
+            }
+        }
+
+        if matches!(self.view_mode, ViewMode::Main) && trimmed.is_empty() {
+            pills.push(RoverPill {
+                badge: RoverBadge::Command,
+                title: "Left Half".to_string(),
+                subtitle: String::new(),
+                section: "Favorites",
+                kind_label: "Window",
+                icon_glyph: "◧",
+                icon_bg: TC_ICON_SURFACE,
+                running: false,
+                keycaps: vec!["Ctrl", "Alt", "←"],
+                action: RoverPillAction::Plugin(PluginAction::Layout {
+                    action: layout::LayoutAction::SnapLeftHalf,
+                }),
+            });
+            pills.push(RoverPill {
+                badge: RoverBadge::Command,
+                title: "Right Half".to_string(),
+                subtitle: String::new(),
+                section: "Favorites",
+                kind_label: "Window",
+                icon_glyph: "◨",
+                icon_bg: TC_ICON_SURFACE,
+                running: false,
+                keycaps: vec!["Ctrl", "Alt", "→"],
+                action: RoverPillAction::Plugin(PluginAction::Layout {
+                    action: layout::LayoutAction::SnapRightHalf,
+                }),
+            });
+            pills.push(RoverPill {
+                badge: RoverBadge::Command,
+                title: "Maximize".to_string(),
+                subtitle: String::new(),
+                section: "Favorites",
+                kind_label: "Window",
+                icon_glyph: "⤢",
+                icon_bg: TC_ICON_SURFACE,
+                running: false,
+                keycaps: vec!["Ctrl", "Alt", "↵"],
+                action: RoverPillAction::Plugin(PluginAction::Layout {
+                    action: layout::LayoutAction::Maximize,
+                }),
+            });
+            pills.push(RoverPill {
+                badge: RoverBadge::Command,
+                title: "Switch Room".to_string(),
+                subtitle: String::new(),
+                section: "Favorites",
+                kind_label: "Window",
+                icon_glyph: "⊞",
+                icon_bg: TC_ICON_SURFACE,
+                running: false,
+                keycaps: vec!["Super", "Space"],
+                action: RoverPillAction::Plugin(PluginAction::Layout {
+                    action: layout::LayoutAction::CycleRoomLayout,
+                }),
+            });
+            pills.push(RoverPill {
+                badge: RoverBadge::Submenu,
+                title: "Clipboard History".to_string(),
+                subtitle: String::new(),
+                section: "Suggestions",
+                kind_label: "Command",
+                icon_glyph: "📋",
+                icon_bg: TC_ICON_SURFACE,
+                running: false,
+                keycaps: vec!["Super", "V"],
+                action: RoverPillAction::EnterSubmenu(ViewMode::ClipboardHistory),
+            });
+            if self.role.extras() {
+                pills.push(RoverPill {
+                    badge: RoverBadge::Submenu,
+                    title: "Search Quicklinks".to_string(),
+                    subtitle: String::new(),
+                    section: "Suggestions",
+                    kind_label: "Command",
+                    icon_glyph: "🔗",
+                    icon_bg: TC_ICON_SURFACE,
+                    running: false,
+                    keycaps: vec!["Super", "B"],
+                    action: RoverPillAction::EnterSubmenu(ViewMode::Browser),
+                });
+            }
+            pills.push(RoverPill {
+                badge: RoverBadge::Submenu,
+                title: "Terminal".to_string(),
+                subtitle: String::new(),
+                section: "Suggestions",
+                kind_label: "Application",
+                icon_glyph: ">_",
+                icon_bg: 0x1f2937,
+                running: true,
+                keycaps: vec!["Super", "J"],
+                action: RoverPillAction::EnterSubmenu(ViewMode::Terminal),
+            });
+            pills.push(RoverPill {
+                badge: RoverBadge::Submenu,
+                title: "Search Files".to_string(),
+                subtitle: String::new(),
+                section: "Suggestions",
+                kind_label: "Command",
+                icon_glyph: "📁",
+                icon_bg: TC_ICON_SURFACE,
+                running: false,
+                keycaps: vec!["Super", "F"],
+                action: RoverPillAction::EnterSubmenu(ViewMode::FileSearch),
+            });
+            self.pills = pills;
+            self.selected_pill = 0;
+            return;
+        }
+
+        for result in self.runner.results.iter().take(8) {
+            let (sec, kind_label, icon_glyph, icon_bg, running, keycaps) =
+                classify_plugin_row(&result.title, &result.action, self.mode);
+            let clean_title = clean_display_title(&result.title);
+            let show_sub = if result.plugin_id == "snippets"
+                || result.plugin_id == "quicklinks"
+                || result.plugin_id == "dictionary"
+            {
+                result.subtitle.clone()
+            } else {
+                String::new()
+            };
+            pills.push(RoverPill {
+                badge: RoverBadge::Command,
+                title: clean_title,
+                subtitle: show_sub,
+                section: if is_filtering { "Results" } else { sec },
+                kind_label: if kind_label == "Window Management" || kind_label == "Room" {
+                    "Window"
+                } else {
+                    kind_label
+                },
+                icon_glyph,
+                icon_bg,
+                running,
+                keycaps,
+                action: RoverPillAction::Plugin(result.action.clone()),
+            });
+        }
+
+        if self.selected_pill >= pills.len() {
+            self.selected_pill = 0;
+        }
+        self.pills = pills;
+    }
+
+    fn live_hint(&self) -> String {
+        let trimmed = self.query.trim();
+        if let Some(pill) = self.pills.get(self.selected_pill) {
+            return pill.title.clone();
+        }
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+        self.mode.label().to_string()
+    }
+
+    pub fn actions_for_selected(&self) -> Vec<ItemAction> {
+        if self.show_app_menu {
+            return vec![
+                ItemAction {
+                    id: "open-windows",
+                    label: "Window Management",
+                    shortcut: "Super+W",
+                    keycaps: vec!["Super", "W"],
+                },
+                ItemAction {
+                    id: "room-cycle",
+                    label: "Switch Room",
+                    shortcut: "Super+Space",
+                    keycaps: vec!["Super", "Space"],
+                },
+                ItemAction {
+                    id: "open-browser",
+                    label: "Search Quicklinks",
+                    shortcut: "Super+B",
+                    keycaps: vec!["Super", "B"],
+                },
+                ItemAction {
+                    id: "open-terminal",
+                    label: "Open Terminal",
+                    shortcut: "Super+J",
+                    keycaps: vec!["Super", "J"],
+                },
+            ];
+        }
+
+        vec![
+            ItemAction {
+                id: "execute",
+                label: "Open",
+                shortcut: "↵",
+                keycaps: vec!["↵"],
+            },
+            ItemAction {
+                id: "room-cycle",
+                label: "Switch Room",
+                shortcut: "Super+Space",
+                keycaps: vec!["Super", "Space"],
+            },
+            ItemAction {
+                id: "niri-cycle-width",
+                label: "Cycle Column Width",
+                shortcut: "Super+R",
+                keycaps: vec!["Super", "R"],
+            },
+            ItemAction {
+                id: "toggle-float",
+                label: "Toggle Floating",
+                shortcut: "Super+V",
+                keycaps: vec!["Super", "V"],
+            },
+            ItemAction {
+                id: "open-terminal",
+                label: "Open Terminal",
+                shortcut: "Super+J",
+                keycaps: vec!["Super", "J"],
+            },
+        ]
+    }
+
+    fn execute_item_action(&mut self, action_id: &str, cx: &mut Context<Self>) {
+        self.show_actions = false;
+        self.show_app_menu = false;
+        self.selected_action = 0;
+        match action_id {
+            "room-cycle" => self.apply(
+                PluginAction::Layout {
+                    action: layout::LayoutAction::CycleRoomLayout,
+                },
+                cx,
+            ),
+            "mode-niri" => self.apply(
+                PluginAction::SetWindowMode {
+                    mode: WindowMode::NiriStrip,
+                },
+                cx,
+            ),
+            "mode-floating" => self.apply(
+                PluginAction::SetWindowMode {
+                    mode: WindowMode::Floating,
+                },
+                cx,
+            ),
+            "niri-cycle-width" => self.apply(
+                PluginAction::Layout {
+                    action: layout::LayoutAction::CycleColumnWidth,
+                },
+                cx,
+            ),
+            "niri-consume" => self.apply(
+                PluginAction::Layout {
+                    action: layout::LayoutAction::ConsumeWindowIntoColumn,
+                },
+                cx,
+            ),
+            "niri-expel" => self.apply(
+                PluginAction::Layout {
+                    action: layout::LayoutAction::ExpelWindowFromColumn,
+                },
+                cx,
+            ),
+            "toggle-float" => self.apply(
+                PluginAction::Layout {
+                    action: layout::LayoutAction::ToggleFloat,
+                },
+                cx,
+            ),
+            "open-windows" => self.set_view_mode(ViewMode::WindowControls, cx),
+            "open-browser" => self.set_view_mode(ViewMode::Browser, cx),
+            "open-terminal" => self.set_view_mode(ViewMode::Terminal, cx),
+            "browser-new-tab" => {
+                self.browser.execute(plugin::BrowserCommand::NewTab);
+                self.set_view_mode(ViewMode::Browser, cx);
+            }
+            "browser-bookmark" => {
+                self.browser.execute(plugin::BrowserCommand::AddBookmark);
+                self.last_action = format!("Bookmarked {}", self.browser.active_url());
+                self.changed(cx);
+            }
+            "terminal-clear" => self.apply(PluginAction::TerminalClear, cx),
+            "run-background" => {
+                if let Some(RoverPill {
+                    action: RoverPillAction::RunInlineTerminal(cmd),
+                    ..
+                }) = self.pills.get(self.selected_pill).cloned()
+                {
+                    if !cmd.is_empty() {
+                        self.apply(PluginAction::Shell { command: cmd }, cx);
+                    }
+                }
+            }
+            _ => {
+                if let Some(pill) = self.pills.get(self.selected_pill).cloned() {
+                    self.execute_pill(pill, cx);
+                }
+            }
+        }
+    }
+
+    fn execute_pill(&mut self, pill: RoverPill, cx: &mut Context<Self>) {
+        if !self.query.trim().is_empty() {
+            self.history.record(&self.query);
+        }
+        self.runner.record_recent(&pill.title);
+        match pill.action {
+            RoverPillAction::EnterSubmenu(mode) => {
+                self.set_view_mode(mode, cx);
+            }
+            RoverPillAction::Browser(cmd) => {
+                let _ = self.browser.execute(cmd);
+                let active_url = self.browser.active_url().to_string();
+                self.browser_page = browser::load_internal_page(&active_url);
+                self.last_action = format!("Browser: {active_url}");
+                self.set_view_mode(ViewMode::Browser, cx);
+            }
+            RoverPillAction::RunInlineTerminal(cmd) => {
+                self.set_view_mode(ViewMode::Terminal, cx);
+                if !cmd.is_empty() {
+                    self.terminal_write(&cmd);
+                    self.changed(cx);
+                }
+            }
+            RoverPillAction::Plugin(action) => {
+                self.apply(action, cx);
+            }
+        }
     }
 
     fn apply(&mut self, action: PluginAction, cx: &mut Context<Self>) {
@@ -234,6 +1546,7 @@ impl DesktopModel {
                 self.layout.focus_window(id);
                 let focused = self.layout.focused_title().to_string();
                 self.set_action_log("Focus window", focused);
+                let _ = session::dispatch(&session::SessionRequest::FocusWindow { id });
             }
             PluginAction::SetWindowMode { mode } => {
                 self.mode = mode;
@@ -246,11 +1559,14 @@ impl DesktopModel {
                 self.mode = self.mode.next();
                 self.layout.set_window_mode(&self.mode);
                 self.set_last_action("Window mode", self.mode.label());
-                let _ =
-                    session::dispatch(&session::SessionRequest::SetWindowMode { mode: self.mode });
+                let _ = session::dispatch(&session::SessionRequest::CycleWindowMode);
             }
             PluginAction::Layout { action } => {
-                self.layout.apply(&action);
+                if let Some(parsed) = layout::LayoutAction::from_label(action.label()) {
+                    self.layout.apply(&parsed);
+                } else {
+                    self.layout.apply(&action);
+                }
                 self.set_last_action(action.title(), self.layout.summary());
                 let _ = session::dispatch(&session::SessionRequest::Layout { action });
             }
@@ -274,25 +1590,23 @@ impl DesktopModel {
                 );
             }
             PluginAction::ToggleSettings => {
-                if let Some(handle) = self.settings {
-                    let _ = handle.update(cx, |_, window, _| window.remove_window());
-                    self.settings = None;
-                    self.set_last_action("Settings", "closed");
+                if self.active_category == BarCategory::System {
+                    self.active_category = BarCategory::All;
+                    self.set_last_action("Settings", "inline view closed");
                 } else {
-                    open_or_focus_settings(&cx.entity(), cx);
-                    self.set_last_action("Settings", "opened");
+                    self.active_category = BarCategory::System;
+                    self.set_last_action("Settings", "inline view opened");
                 }
+                focus_or_open_launcher(&cx.entity(), cx);
             }
             PluginAction::OpenSettings => {
-                open_or_focus_settings(&cx.entity(), cx);
-                self.set_last_action("Settings", "opened");
+                self.active_category = BarCategory::System;
+                self.set_last_action("Settings", "inline view opened");
+                focus_or_open_launcher(&cx.entity(), cx);
             }
             PluginAction::CloseSettings => {
-                if let Some(handle) = self.settings {
-                    let _ = handle.update(cx, |_, window, _| window.remove_window());
-                    self.settings = None;
-                }
-                self.set_last_action("Settings", "closed");
+                self.active_category = BarCategory::All;
+                self.set_last_action("Settings", "inline view closed");
             }
             PluginAction::FactoryReset => {
                 crate::config::Config::factory_reset();
@@ -390,7 +1704,6 @@ impl DesktopModel {
                     title,
                     app_id: _,
                 } => {
-                    // Create a new layout pane for this surface
                     let window_id = self.layout.split_next(title.clone());
                     self.compositor_surfaces.insert(id, window_id);
                     self.last_action = format!("Compositor: {title} connected");
@@ -402,7 +1715,9 @@ impl DesktopModel {
                 }
                 compositor::CompositorEvent::Closed { id } => {
                     if let Some(window_id) = self.compositor_surfaces.remove(&id) {
-                        self.layout.set_window_floating(window_id, true);
+                        if !self.layout.remove_window_by_id(window_id) {
+                            self.layout.set_window_floating(window_id, true);
+                        }
                         self.last_action = format!("Compositor: surface {id} closed");
                     }
                 }
@@ -417,16 +1732,23 @@ impl DesktopModel {
 
     fn toggle_terminal(&mut self, cx: &mut Context<Self>) {
         self.terminal_open = !self.terminal_open;
-        if self.terminal_open && self.terminal.is_none() {
-            self.terminal = terminal::TerminalConsole::spawn();
+        if self.terminal_open {
+            self.active_category = BarCategory::Terminal;
+            if self.terminal.is_none() {
+                self.terminal = terminal::TerminalConsole::spawn();
+            }
             if self.terminal.is_some() {
-                self.last_action = "Terminal: opened".to_string();
+                self.last_action = "Terminal: opened in bar".to_string();
             } else {
                 self.last_action = "Terminal: spawn failed".to_string();
                 self.terminal_open = false;
+                self.active_category = BarCategory::All;
             }
-        } else if !self.terminal_open {
+        } else {
             self.terminal = None;
+            if self.active_category == BarCategory::Terminal {
+                self.active_category = BarCategory::All;
+            }
             self.last_action = "Terminal: closed".to_string();
         }
         self.changed(cx);
@@ -438,6 +1760,9 @@ impl DesktopModel {
             if trimmed == "exit" || trimmed == "quit" {
                 self.terminal = None;
                 self.terminal_open = false;
+                if self.active_category == BarCategory::Terminal {
+                    self.active_category = BarCategory::All;
+                }
                 self.last_action = "Terminal: closed".to_string();
             } else {
                 term.write(&trimmed);
@@ -445,10 +1770,6 @@ impl DesktopModel {
             }
         }
     }
-}
-
-struct DesktopWindow {
-    desktop: Entity<DesktopModel>,
 }
 
 struct InstallerWindow {
@@ -481,6 +1802,8 @@ fn copy_install_image(source: &PathBuf, target: &PathBuf) -> std::io::Result<u64
     std::fs::File::open(source).and_then(|mut input| {
         std::fs::OpenOptions::new()
             .write(true)
+            .create(true)
+            .truncate(true)
             .open(target)
             .and_then(|mut output| std::io::copy(&mut input, &mut output))
     })
@@ -624,291 +1947,6 @@ fn installer_field(label: &'static str, value: String) -> Div {
         .child(div().text_size(px(14.)).text_color(rgb(TEXT)).child(value))
 }
 
-impl DesktopWindow {
-    fn new(desktop: Entity<DesktopModel>, cx: &mut Context<Self>) -> Self {
-        cx.subscribe(&desktop, |_, _, _: &DesktopEvent, cx| {
-            cx.notify();
-        })
-        .detach();
-        Self { desktop }
-    }
-
-    fn render_layout(desktop: &Entity<DesktopModel>, view: &LayoutView) -> Div {
-        match view {
-            LayoutView::Window(window) => Self::render_window(desktop, window, None),
-            LayoutView::Container(container) => {
-                let mut node = div()
-                    .size_full()
-                    .flex()
-                    .gap(px(12.))
-                    .when(matches!(container.axis, Axis::Column), |div| div.flex_col());
-                for child in &container.children {
-                    node = node.child(Self::render_child(desktop, child));
-                }
-                node
-            }
-        }
-    }
-
-    fn render_child(desktop: &Entity<DesktopModel>, child: &LayoutChildView) -> Div {
-        let mut slot = div().min_w(px(0.)).min_h(px(0.)).child(match &child.node {
-            LayoutView::Window(window) => Self::render_window(desktop, window, Some(child.grow)),
-            _ => Self::render_layout(desktop, &child.node),
-        });
-        slot.style().flex_grow = Some(child.grow.max(0.1));
-        slot.style().flex_shrink = Some(1.);
-        slot
-    }
-
-    fn render_window(
-        desktop: &Entity<DesktopModel>,
-        window: &LayoutWindowView,
-        _grow: Option<f32>,
-    ) -> Div {
-        let border = if window.focused { ACCENT } else { BORDER };
-        let lines = Self::pane_lines(window);
-        let window_id = window.id;
-        let desktop = desktop.clone();
-        let panel = div()
-            .id(SharedString::from(format!("pane-{window_id}")))
-            .size_full()
-            .rounded(px(10.))
-            .bg(rgb(SURFACE_2))
-            .border_1()
-            .border_color(rgb(border))
-            .p(px(16.))
-            .flex()
-            .flex_col()
-            .gap(px(8.))
-            .cursor_pointer()
-            .on_click(move |_, _, cx| {
-                desktop.update(cx, |desktop, cx| {
-                    desktop.layout.focus_window(window_id);
-                    desktop.changed(cx);
-                });
-            })
-            .child(
-                div()
-                    .text_size(px(11.))
-                    .text_color(rgb(TEXT_DIM))
-                    .when(window.detail != "Ready", |label| {
-                        label.child(window.detail.clone())
-                    }),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .bg(rgb(SURFACE_3))
-                    .rounded(px(8.))
-                    .p(px(10.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
-                    .when(!lines.is_empty(), |panel| {
-                        panel.children(lines.into_iter().map(Self::window_line))
-                    }),
-            );
-
-        div().size_full().child(panel)
-    }
-
-    fn window_line(text: String) -> Div {
-        div()
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .child(
-                div()
-                    .text_size(px(11.))
-                    .text_color(rgb(TEXT_FAINT))
-                    .child("~"),
-            )
-            .child(div().text_size(px(12.)).text_color(rgb(TEXT)).child(text))
-    }
-
-    fn pane_lines(window: &LayoutWindowView) -> Vec<String> {
-        if window.detail.trim().is_empty() || window.detail == "Ready" {
-            Vec::new()
-        } else {
-            vec![window.detail.clone()]
-        }
-    }
-
-    fn render_floating_window(
-        desktop: &Entity<DesktopModel>,
-        window: &LayoutWindowView,
-        _index: usize,
-    ) -> Div {
-        div()
-            .absolute()
-            .top(px(window.y))
-            .left(px(window.x))
-            .w(px(window.width))
-            .h(px(window.height))
-            .child(
-                div()
-                    .size_full()
-                    .rounded(px(12.))
-                    .bg(rgb(SURFACE_2))
-                    .p(px(4.))
-                    .child(Self::render_window(desktop, window, None)),
-            )
-    }
-
-    fn render_floating_layer(desktop: &Entity<DesktopModel>, windows: &[LayoutWindowView]) -> Div {
-        let mut layer = div()
-            .absolute()
-            .top(px(0.))
-            .left(px(0.))
-            .right(px(0.))
-            .bottom(px(0.));
-        for (index, window) in windows.iter().enumerate() {
-            layer = layer.child(Self::render_floating_window(desktop, window, index));
-        }
-        layer
-    }
-
-    fn render_workspace(
-        desktop: &Entity<DesktopModel>,
-        layout: &LayoutView,
-        mode: &WindowMode,
-        cx: &App,
-    ) -> Div {
-        if matches!(mode, WindowMode::Monocle) {
-            if let Some(window) = desktop.read(cx).layout.focused_window() {
-                return div()
-                    .size_full()
-                    .child(Self::render_window(desktop, &window, None));
-            }
-        }
-        let tiled = layout.tiled();
-        let floating = layout.floating_windows();
-        let mut root = div().size_full();
-        if let Some(tiled) = tiled {
-            root = root.child(Self::render_layout(desktop, &tiled));
-        }
-        if !floating.is_empty() {
-            root = root.child(Self::render_floating_layer(desktop, &floating));
-        }
-        root
-    }
-
-    fn render_status_bar(desktop: &DesktopModel) -> Div {
-        let metrics = TopBarMetrics::detect(desktop);
-        let focused = desktop.layout.focused_title().to_string();
-        let detail = desktop.layout.summary();
-        let header = shell_top_bar_title_component(&focused, &detail);
-        let skinny = desktop.role.skinny();
-        let mut pills = Vec::new();
-        if !skinny {
-            pills.push(("mode".to_string(), desktop.mode.label().to_string()));
-            pills.push(("layout".to_string(), desktop.layout.summary()));
-        }
-        pills.push(("time".to_string(), metrics.clock));
-        pills.push(("date".to_string(), metrics.date));
-        if desktop.role.extras() {
-            pills.push(("temp".to_string(), metrics.temp));
-        }
-        pills.push(("power".to_string(), metrics.battery));
-        if !skinny {
-            pills.push(("wifi".to_string(), metrics.wifi));
-        }
-        pills.push(("cpu".to_string(), metrics.load));
-        pills.push(("mem".to_string(), metrics.memory));
-        if !skinny {
-            pills.push(("wl".to_string(), metrics.backend));
-        }
-        let bar_width = if skinny { px(720.) } else { px(1120.) };
-
-        div()
-            .absolute()
-            .top(px(16.))
-            .left(px(0.))
-            .right(px(0.))
-            .flex()
-            .justify_center()
-            .child(
-                div()
-                    .w(bar_width)
-                    .rounded(px(12.))
-                    .bg(rgb(SURFACE_2))
-                    .border_1()
-                    .border_color(rgb(BORDER))
-                    .px(px(18.))
-                    .py(px(12.))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(3.))
-                            .child(
-                                div()
-                                    .text_size(px(14.))
-                                    .text_color(rgb(TEXT))
-                                    .child(header.0),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(rgb(TEXT_DIM))
-                                    .child(header.1),
-                            ),
-                    )
-                    .child(
-                        div().flex().gap(px(8.)).children(
-                            pills
-                                .into_iter()
-                                .map(|(label, value)| Self::status_pill(label, value)),
-                        ),
-                    ),
-            )
-    }
-
-    fn status_pill(label: String, value: String) -> Div {
-        let metric = shell_top_bar_metric_component(&label, &value);
-        div()
-            .h(px(32.))
-            .px(px(12.))
-            .rounded(px(16.))
-            .bg(rgb(SURFACE_3))
-            .border_1()
-            .border_color(rgb(BORDER_SOFT))
-            .flex()
-            .items_center()
-            .gap(px(6.))
-            .child(
-                div()
-                    .text_size(px(10.))
-                    .text_color(rgb(TEXT_FAINT))
-                    .child(metric.0),
-            )
-            .child(
-                div()
-                    .text_size(px(11.))
-                    .text_color(rgb(TEXT))
-                    .child(metric.1),
-            )
-    }
-
-    fn status_value_pill(value: String) -> Div {
-        div()
-            .h(px(32.))
-            .px(px(12.))
-            .rounded(px(16.))
-            .bg(rgb(SURFACE_3))
-            .border_1()
-            .border_color(rgb(BORDER_SOFT))
-            .flex()
-            .items_center()
-            .text_size(px(11.))
-            .text_color(rgb(TEXT))
-            .child(value)
-    }
-}
-
 fn shell_text_component(component: &str, props: &[(&str, &str)]) -> String {
     let mut ctx = TemplateContext::new();
     for (key, value) in props {
@@ -919,6 +1957,7 @@ fn shell_text_component(component: &str, props: &[(&str, &str)]) -> String {
         .unwrap_or_default()
 }
 
+#[allow(dead_code)]
 fn shell_header_component(component: &str) -> (String, String) {
     render_component_file_to_html(SHELL_CREPUS, component, &TemplateContext::new())
         .map(|html| {
@@ -941,6 +1980,7 @@ fn shell_header_component(component: &str) -> (String, String) {
         })
 }
 
+#[allow(dead_code)]
 fn shell_list_component(component: &str) -> Vec<String> {
     render_component_file_to_html(SHELL_CREPUS, component, &TemplateContext::new())
         .map(|html| html_list_items(&html))
@@ -980,6 +2020,7 @@ fn shell_bar_component(query: &str, meta: &str) -> (String, String) {
         .unwrap_or_else(|_| (query.to_string(), meta.to_string()))
 }
 
+#[allow(dead_code)]
 fn shell_section_header_component(title: &str, detail: &str) -> (String, String) {
     let mut ctx = TemplateContext::new();
     ctx.set("title", TemplateValue::Str(title.to_string()));
@@ -1025,6 +2066,7 @@ fn shell_top_bar_metric_component(label: &str, value: &str) -> (String, String) 
         .unwrap_or_else(|_| (label.to_string(), value.to_string()))
 }
 
+#[allow(dead_code)]
 fn shell_status_row_component(mode: &str, layout: &str, focused: &str) -> Vec<String> {
     let mut ctx = TemplateContext::new();
     ctx.set("mode", TemplateValue::Str(mode.to_string()));
@@ -1035,6 +2077,7 @@ fn shell_status_row_component(mode: &str, layout: &str, focused: &str) -> Vec<St
         .unwrap_or_else(|_| vec![mode.to_string(), layout.to_string(), focused.to_string()])
 }
 
+#[derive(Clone)]
 struct TopBarMetrics {
     clock: String,
     date: String,
@@ -1048,7 +2091,22 @@ struct TopBarMetrics {
 
 impl TopBarMetrics {
     fn detect(desktop: &DesktopModel) -> Self {
-        Self {
+        use std::sync::{Mutex, OnceLock};
+        use std::time::{Duration, Instant};
+
+        static METRICS_CACHE: OnceLock<Mutex<Option<(Instant, TopBarMetrics)>>> = OnceLock::new();
+        let cache = METRICS_CACHE.get_or_init(|| Mutex::new(None));
+        if let Ok(guard) = cache.lock() {
+            if let Some((when, ref cached)) = *guard {
+                if when.elapsed() < Duration::from_secs(2) {
+                    let mut out = cached.clone();
+                    out.backend = top_bar_backend(desktop);
+                    return out;
+                }
+            }
+        }
+
+        let fresh = Self {
             clock: date_value("+%H:%M").unwrap_or_else(|| "--:--".to_string()),
             date: date_value("+%a %b %e").unwrap_or_else(|| "date unavailable".to_string()),
             battery: battery_value().unwrap_or_else(|| "battery unavailable".to_string()),
@@ -1065,7 +2123,11 @@ impl TopBarMetrics {
             load: cpu_value().unwrap_or_else(|| "cpu unavailable".to_string()),
             memory: memory_value().unwrap_or_else(|| "memory unavailable".to_string()),
             backend: top_bar_backend(desktop),
+        };
+        if let Ok(mut guard) = cache.lock() {
+            *guard = Some((Instant::now(), fresh.clone()));
         }
+        fresh
     }
 }
 
@@ -1166,7 +2228,6 @@ fn cpu_value() -> Option<String> {
     if total == 0 {
         return None;
     }
-    // ponytail: since-boot avg, not delta between samples
     Some(format!("{}%", ((total - idle) * 100) / total))
 }
 
@@ -1207,6 +2268,7 @@ fn polybar_backend(state: &de::DesktopState) -> String {
     format!("{backend} {display}")
 }
 
+#[allow(dead_code)]
 fn html_list_items(html: &str) -> Vec<String> {
     let mut lines = Vec::new();
     let mut cursor = 0;
@@ -1269,20 +2331,52 @@ fn html_tag_texts(html: &str, tags: &[&str]) -> Vec<String> {
 
 struct LauncherWindow {
     desktop: Entity<DesktopModel>,
+    has_been_active: bool,
+    focus_handle: Option<FocusHandle>,
 }
 
 impl LauncherWindow {
-    fn new(desktop: Entity<DesktopModel>, cx: &mut Context<Self>) -> Self {
+    fn new(desktop: Entity<DesktopModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+        window.focus(&focus_handle);
+
         cx.subscribe(&desktop, |_, _, _: &DesktopEvent, cx| {
             cx.notify();
         })
         .detach();
 
-        Self { desktop }
+        let desktop_clone = desktop.clone();
+        cx.observe_window_activation(window, move |this, window, cx| {
+            if window.is_window_active() {
+                this.has_been_active = true;
+            } else if this.has_been_active {
+                desktop_clone.update(cx, |desktop, cx| {
+                    desktop.launcher = None;
+                    desktop.changed(cx);
+                });
+                window.remove_window();
+            }
+        })
+        .detach();
+
+        Self {
+            desktop,
+            has_been_active: false,
+            focus_handle: Some(focus_handle),
+        }
     }
 
     fn backspace(&mut self, cx: &mut Context<Self>) {
-        let query = self.desktop.read(cx).query.clone();
+        let (query, in_sub) = {
+            let d = self.desktop.read(cx);
+            (d.query.clone(), d.view_mode.in_submenu())
+        };
+        if query.is_empty() && in_sub {
+            self.desktop.update(cx, |desktop, cx| {
+                desktop.set_view_mode(ViewMode::Main, cx);
+            });
+            return;
+        }
         let mut next = query;
         next.pop();
         self.desktop.update(cx, |desktop, cx| {
@@ -1300,6 +2394,60 @@ impl LauncherWindow {
     }
 
     fn confirm(&mut self, cx: &mut Context<Self>) {
+        if self.desktop.read(cx).show_actions {
+            let action_id = {
+                let d = self.desktop.read(cx);
+                let actions = d.actions_for_selected();
+                actions.get(d.selected_action).map(|a| a.id)
+            };
+            if let Some(action_id) = action_id {
+                self.desktop.update(cx, |desktop, cx| {
+                    desktop.execute_item_action(action_id, cx);
+                });
+            }
+            return;
+        }
+        if self.desktop.read(cx).view_mode == ViewMode::Terminal {
+            let line = self.desktop.read(cx).query.clone();
+            if !line.trim().is_empty() {
+                self.desktop.update(cx, |desktop, cx| {
+                    desktop.history.record(&line);
+                    desktop.set_query(String::new(), cx);
+                    desktop.apply(PluginAction::TerminalWrite { line }, cx);
+                });
+            }
+            return;
+        }
+        if self.desktop.read(cx).view_mode == ViewMode::Browser {
+            let query = self.desktop.read(cx).query.clone();
+            if !query.trim().is_empty() {
+                let cmd = plugin::parse_browser_command(&query).unwrap_or_else(|| {
+                    plugin::BrowserCommand::Search {
+                        engine_name: "duckduckgo".to_string(),
+                        query: query.trim().to_string(),
+                    }
+                });
+                self.desktop.update(cx, |desktop, cx| {
+                    desktop.history.record(&query);
+                    desktop.set_query(String::new(), cx);
+                    let _ = desktop.browser.execute(cmd);
+                    let active_url = desktop.browser.active_url().to_string();
+                    desktop.browser_page = browser::load_internal_page(&active_url);
+                    desktop.changed(cx);
+                });
+                return;
+            }
+        }
+        let selected_pill = {
+            let d = self.desktop.read(cx);
+            d.pills.get(d.selected_pill).cloned()
+        };
+        if let Some(pill) = selected_pill {
+            self.desktop.update(cx, |desktop, cx| {
+                desktop.execute_pill(pill, cx);
+            });
+            return;
+        }
         let action = self.desktop.read(cx).runner.confirm();
         if let Some(action) = action {
             if !matches!(action, PluginAction::None) {
@@ -1315,18 +2463,19 @@ impl LauncherWindow {
                     }
                     desktop.apply(action, cx);
                 });
-                if let Some(handle) = self.desktop.read(cx).launcher {
-                    let _ = handle.update(cx, |_, window, _| window.remove_window());
-                }
-                self.desktop.update(cx, |desktop, cx| {
-                    desktop.launcher = None;
-                    desktop.changed(cx);
-                });
             }
         }
     }
 
     fn select_and_confirm(&mut self, index: usize, cx: &mut Context<Self>) {
+        let pill = self.desktop.read(cx).pills.get(index).cloned();
+        if let Some(pill) = pill {
+            self.desktop.update(cx, |desktop, cx| {
+                desktop.selected_pill = index;
+                desktop.execute_pill(pill, cx);
+            });
+            return;
+        }
         let count = self.desktop.read(cx).runner.results.len();
         if count == 0 || index >= count {
             return;
@@ -1354,6 +2503,25 @@ impl LauncherWindow {
 
     fn select_next(&mut self, cx: &mut Context<Self>) {
         self.desktop.update(cx, |desktop, cx| {
+            if desktop.show_actions {
+                let len = desktop.actions_for_selected().len();
+                if len > 0 {
+                    desktop.selected_action = (desktop.selected_action + 1) % len;
+                }
+                desktop.changed(cx);
+                return;
+            }
+            if let Some(next_q) = desktop.history.navigate_down() {
+                desktop.query = next_q.clone();
+                desktop.runner.query = next_q;
+                desktop.refresh_runner();
+                desktop.changed(cx);
+                return;
+            }
+            let len = desktop.pills.len();
+            if len > 0 {
+                desktop.selected_pill = (desktop.selected_pill + 1) % len;
+            }
             desktop.runner.select_next();
             desktop.changed(cx);
         });
@@ -1361,346 +2529,113 @@ impl LauncherWindow {
 
     fn select_previous(&mut self, cx: &mut Context<Self>) {
         self.desktop.update(cx, |desktop, cx| {
+            if desktop.show_actions {
+                let len = desktop.actions_for_selected().len();
+                if len > 0 {
+                    desktop.selected_action = if desktop.selected_action == 0 {
+                        len - 1
+                    } else {
+                        desktop.selected_action - 1
+                    };
+                }
+                desktop.changed(cx);
+                return;
+            }
+            if desktop.selected_pill == 0 {
+                let current_q = desktop.query.clone();
+                if let Some(prev_q) = desktop.history.navigate_up(&current_q) {
+                    desktop.query = prev_q.clone();
+                    desktop.runner.query = prev_q;
+                    desktop.refresh_runner();
+                    desktop.changed(cx);
+                    return;
+                }
+            }
+            let len = desktop.pills.len();
+            if len > 0 {
+                desktop.selected_pill = if desktop.selected_pill == 0 {
+                    len - 1
+                } else {
+                    desktop.selected_pill - 1
+                };
+            }
             desktop.runner.select_previous();
             desktop.changed(cx);
         });
     }
 
-    fn render_bar(&self, cx: &App) -> impl IntoElement {
-        let desktop = self.desktop.read(cx);
-        let show_results = !desktop.query.trim().is_empty();
-        let selection = desktop.runner.selection_label();
-        let subtitle = if desktop.query.trim().is_empty() {
-            shell_text_component(
-                "LauncherEmpty",
-                &[("message", "type to search desktop actions")],
-            )
-        } else {
-            desktop
-                .runner
-                .selected_result()
-                .map(|result| format!("{} via {}", result.subtitle, result.plugin_id))
-                .unwrap_or_else(|| "no match".to_string())
-        };
-        let meta = shell_text_component(
-            "LauncherMeta",
-            &[("selection", &selection), ("subtitle", &subtitle)],
-        );
-        let query = if desktop.query.is_empty() {
-            " ".to_string()
-        } else {
-            desktop.query.clone()
-        };
-        let bar = shell_bar_component(&query, &meta);
-
+    fn status_pill(label: String, value: String) -> Div {
+        let metric = shell_top_bar_metric_component(&label, &value);
         div()
-            .w(px(680.))
-            .h(px(48.))
-            .when(show_results, |bar| bar.rounded_t(px(6.)))
-            .when(!show_results, |bar| bar.rounded(px(6.)))
-            .bg(rgb(SURFACE_2))
+            .h(px(26.))
+            .px(px(10.))
+            .rounded(px(13.))
+            .bg(rgb(SURFACE_3))
             .border_1()
-            .border_color(rgb(BORDER))
-            .px(px(18.))
+            .border_color(rgb(BORDER_SOFT))
             .flex()
             .items_center()
-            .gap(px(12.))
+            .gap(px(5.))
             .child(
                 div()
-                    .flex_1()
-                    .text_size(px(16.))
-                    .text_color(rgb(TEXT))
-                    .child(bar.0),
+                    .text_size(px(10.))
+                    .text_color(rgb(TEXT_FAINT))
+                    .child(metric.0),
             )
             .child(
                 div()
                     .text_size(px(11.))
-                    .text_color(rgb(TEXT_DIM))
-                    .child(bar.1),
+                    .text_color(rgb(TEXT))
+                    .child(metric.1),
             )
     }
 
-    fn render_results(&self, cx: &App) -> impl IntoElement {
-        let desktop = self.desktop.read(cx);
-
-        if desktop.query.trim().is_empty() {
-            return div();
+    fn render_status_strip(&self, desktop: &DesktopModel) -> Div {
+        let metrics = TopBarMetrics::detect(desktop);
+        let focused = desktop.layout.focused_title().to_string();
+        let detail = desktop.layout.summary();
+        let header = shell_top_bar_title_component(&focused, &detail);
+        let skinny = desktop.role.skinny();
+        let mut pills = Vec::new();
+        pills.push(("mode".to_string(), desktop.mode.label().to_string()));
+        if !skinny {
+            pills.push(("layout".to_string(), desktop.layout.summary()));
         }
-
-        if desktop.runner.results.is_empty() {
-            return div()
-                .w(px(680.))
-                .rounded_b(px(6.))
-                .bg(rgb(SURFACE_2))
-                .border_1()
-                .border_color(rgb(BORDER))
-                .border_t_0()
-                .px(px(18.))
-                .py(px(12.))
-                .text_size(px(12.))
-                .text_color(rgb(TEXT_DIM))
-                .child(shell_text_component(
-                    "LauncherNoResults",
-                    &[("message", "No results")],
-                ));
+        pills.push(("time".to_string(), metrics.clock));
+        pills.push(("date".to_string(), metrics.date));
+        if desktop.role.extras() && !metrics.temp.is_empty() {
+            pills.push(("temp".to_string(), metrics.temp));
+        }
+        pills.push(("power".to_string(), metrics.battery));
+        if !skinny {
+            pills.push(("wifi".to_string(), metrics.wifi));
+        }
+        pills.push(("cpu".to_string(), metrics.load));
+        pills.push(("mem".to_string(), metrics.memory));
+        if !skinny {
+            pills.push(("wl".to_string(), metrics.backend));
         }
 
         div()
-            .w(px(680.))
-            .rounded_b(px(6.))
-            .bg(rgb(SURFACE_2))
+            .w(px(760.))
+            .rounded_t(px(8.))
+            .bg(rgb(SURFACE))
             .border_1()
             .border_color(rgb(BORDER))
-            .border_t_0()
-            .p(px(6.))
-            .gap(px(2.))
-            .children(
-                desktop
-                    .runner
-                    .results
-                    .iter()
-                    .enumerate()
-                    .map(|(index, result)| {
-                        let selected = index == desktop.runner.selected;
-                        let desktop = self.desktop.clone();
-                        let detail = format!("{} via {}", result.subtitle, result.plugin_id);
-                        let row = shell_row_component(
-                            if selected { ">" } else { "$" },
-                            &result.title,
-                            &detail,
-                        );
-                        div()
-                            .id(SharedString::from(format!("launcher-result-{index}")))
-                            .rounded(px(4.))
-                            .bg(if selected {
-                                rgb(ACCENT_DIM)
-                            } else {
-                                rgb(SURFACE_2)
-                            })
-                            .px(px(12.))
-                            .py(px(8.))
-                            .flex()
-                            .items_center()
-                            .gap(px(12.))
-                            .cursor_pointer()
-                            .on_click(move |_, _, cx| {
-                                desktop.update(cx, |desktop, cx| {
-                                    desktop.runner.select(index);
-                                    desktop.changed(cx);
-                                });
-                                let action = desktop.read(cx).runner.confirm();
-                                if let Some(action) = action {
-                                    if !matches!(action, PluginAction::None) {
-                                        desktop.update(cx, |desktop, cx| {
-                                            desktop.apply(action, cx);
-                                        });
-                                        if let Some(handle) = desktop.read(cx).launcher {
-                                            let _ = handle
-                                                .update(cx, |_, window, _| window.remove_window());
-                                        }
-                                        desktop.update(cx, |desktop, cx| {
-                                            desktop.launcher = None;
-                                            desktop.changed(cx);
-                                        });
-                                    }
-                                }
-                            })
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(if selected {
-                                        rgb(ACCENT)
-                                    } else {
-                                        rgb(TEXT_FAINT)
-                                    })
-                                    .child(row.0),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .text_size(px(13.))
-                                    .text_color(if selected { rgb(TEXT) } else { rgb(TEXT_DIM) })
-                                    .child(row.1),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(rgb(TEXT_FAINT))
-                                    .child(row.2),
-                            )
-                    }),
-            )
-    }
-}
-
-struct SettingsWindow {
-    desktop: Entity<DesktopModel>,
-    section: SettingsSection,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SettingsSection {
-    Windows,
-    System,
-    Interface,
-    Session,
-}
-
-impl SettingsSection {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Windows => "Windows",
-            Self::System => "System",
-            Self::Interface => "Interface",
-            Self::Session => "Session",
-        }
-    }
-
-    fn detail(self) -> &'static str {
-        match self {
-            Self::Windows => "layout and pane flow",
-            Self::System => "desktop and os actions",
-            Self::Interface => "launcher and chrome",
-            Self::Session => "state and shortcuts",
-        }
-    }
-
-    fn from_env() -> Self {
-        let value = std::env::args()
-            .find_map(|arg| arg.strip_prefix("--settings-section=").map(str::to_string))
-            .or_else(|| std::env::var("ALPENGLOWED_SETTINGS_SECTION").ok());
-        match value.as_deref() {
-            Some("system") => Self::System,
-            Some("interface") => Self::Interface,
-            Some("session") => Self::Session,
-            _ => Self::Windows,
-        }
-    }
-}
-
-impl SettingsWindow {
-    fn new(desktop: Entity<DesktopModel>, cx: &mut Context<Self>) -> Self {
-        cx.subscribe(&desktop, |_, _, _: &DesktopEvent, cx| {
-            cx.notify();
-        })
-        .detach();
-
-        Self {
-            desktop,
-            section: SettingsSection::from_env(),
-        }
-    }
-
-    fn mode_button(&self, label: &'static str, mode: WindowMode, active: bool) -> impl IntoElement {
-        let desktop = self.desktop.clone();
-        self.chip_button(
-            SharedString::from(format!("mode-{label}")),
-            label,
-            active,
-            move |desktop, cx| {
-                desktop.update(cx, |desktop, cx| {
-                    desktop.apply(PluginAction::SetWindowMode { mode }, cx);
-                });
-            },
-            desktop,
-        )
-    }
-
-    fn action_button(
-        &self,
-        label: &'static str,
-        on_click: impl Fn(&Entity<DesktopModel>, &mut App) + 'static,
-    ) -> impl IntoElement {
-        let desktop = self.desktop.clone();
-        self.chip_button(
-            SharedString::from(format!("settings-{label}")),
-            label,
-            false,
-            on_click,
-            desktop,
-        )
-    }
-
-    fn chip_button(
-        &self,
-        id: SharedString,
-        label: &'static str,
-        active: bool,
-        on_click: impl Fn(&Entity<DesktopModel>, &mut App) + 'static,
-        desktop: Entity<DesktopModel>,
-    ) -> impl IntoElement {
-        div()
-            .id(id)
-            .px(px(12.))
+            .border_b_0()
+            .px(px(16.))
             .py(px(8.))
-            .rounded(px(4.))
-            .bg(rgb(if active { ACCENT } else { SURFACE_3 }))
-            .border_1()
-            .border_color(rgb(if active { ACCENT } else { BORDER }))
-            .text_size(px(12.))
-            .text_color(rgb(if active { SURFACE } else { TEXT }))
-            .cursor_pointer()
-            .child(label)
-            .on_click(move |_, _, cx| on_click(&desktop, cx))
-    }
-
-    fn desktop_action_button(
-        &self,
-        label: &'static str,
-        action: de::DesktopAction,
-    ) -> impl IntoElement {
-        self.action_button(label, move |desktop, cx| {
-            desktop.update(cx, |desktop, cx| {
-                desktop.apply(
-                    PluginAction::Desktop {
-                        action: action.clone(),
-                    },
-                    cx,
-                );
-            });
-        })
-    }
-
-    fn layout_action_button(
-        &self,
-        label: &'static str,
-        action: layout::LayoutAction,
-    ) -> impl IntoElement {
-        self.action_button(label, move |desktop, cx| {
-            desktop.update(cx, |desktop, cx| {
-                desktop.apply(
-                    PluginAction::Layout {
-                        action: action.clone(),
-                    },
-                    cx,
-                );
-            });
-        })
-    }
-
-    fn section_card(
-        &self,
-        title: &'static str,
-        detail: impl Into<String>,
-        content: impl IntoElement,
-    ) -> Div {
-        let detail = detail.into();
-        let header = shell_section_header_component(title, &detail);
-        div()
             .flex()
-            .flex_col()
-            .gap(px(10.))
-            .border_t_1()
-            .border_color(rgb(BORDER_SOFT))
-            .pt(px(14.))
+            .items_center()
+            .justify_between()
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap(px(3.))
+                    .items_center()
+                    .gap(px(8.))
                     .child(
                         div()
-                            .text_size(px(13.))
+                            .text_size(px(12.))
                             .text_color(rgb(TEXT))
                             .child(header.0),
                     )
@@ -1711,804 +2646,544 @@ impl SettingsWindow {
                             .child(header.1),
                     ),
             )
-            .child(content)
-    }
-
-    fn nav_button(&self, cx: &Context<Self>, section: SettingsSection) -> impl IntoElement {
-        let active = self.section == section;
-        div()
-            .id(SharedString::from(format!(
-                "settings-nav-{}",
-                section.label()
-            )))
-            .px(px(10.))
-            .py(px(9.))
-            .rounded(px(4.))
-            .bg(rgb(if active { ACCENT_DIM } else { SURFACE }))
-            .border_1()
-            .border_color(rgb(if active { ACCENT } else { BORDER_SOFT }))
-            .cursor_pointer()
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap(px(2.))
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(rgb(if active { TEXT } else { TEXT_DIM }))
-                            .child(section.label()),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(10.))
-                            .text_color(rgb(if active { TEXT_DIM } else { TEXT_FAINT }))
-                            .child(section.detail()),
-                    ),
+                    .flex_wrap()
+                    .gap(px(6.))
+                    .children(pills.into_iter().map(|(l, v)| Self::status_pill(l, v))),
             )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.section = section;
-                cx.notify();
-            }))
     }
-}
 
-impl Render for SettingsWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn section_header_row(label: &'static str, is_first: bool) -> Div {
+        components::section_header(label, is_first)
+    }
+
+    fn render_bar(&self, cx: &App) -> impl IntoElement {
         let desktop = self.desktop.read(cx);
-        let tiling = desktop.mode == WindowMode::Tiling;
-        let floating = desktop.mode == WindowMode::Floating;
-        let monocle = desktop.mode == WindowMode::Monocle;
-        let stack = desktop.mode == WindowMode::Stack;
-        let center = desktop.mode == WindowMode::Center;
-        let grid = desktop.mode == WindowMode::Grid;
-        let status_bar = if desktop.status_bar {
-            "enabled"
-        } else {
-            "disabled"
-        };
-        let layout_summary = desktop.layout.summary();
-        let layout_axis = desktop.layout.axis();
-        let focused = desktop.layout.focused_title().to_string();
-        let focused_detail = desktop
-            .layout
-            .view()
-            .focused_detail()
-            .unwrap_or_else(|| "Ready".to_string());
-        let session_status = if desktop.session_control {
-            "Connected to compositor"
-        } else {
-            "Running local fallbacks"
-        };
-        let last_action = desktop.last_action.clone();
-        let settings_header = shell_header_component("SettingsHeader");
-        let status_row =
-            shell_status_row_component(desktop.mode.label(), &layout_summary, &focused);
-        let shortcuts = shell_list_component("SettingsShortcuts");
-        div().size_full().font(ui_font()).bg(rgb(SURFACE)).key_context("alpenglowed")
-            .on_action(cx.listener(|this, _: &FocusBar, _, cx| {
-                focus_or_open_launcher(&this.desktop, cx);
-            }))
-            .on_action(cx.listener(|this, _: &ToggleSettingsWindow, window, cx| {
-                let id = window.window_handle().window_id();
-                this.desktop.update(cx, move |desktop, cx| {
-                    if desktop.settings.is_some_and(|handle| handle.window_id() == id) {
-                        desktop.settings = None;
-                        desktop.changed(cx);
-                    }
-                });
-                window.remove_window();
-            }))
-            .on_action(cx.listener(|this, _: &ToggleStatusBarAction, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.toggle_status_bar(cx);
-                });
-            }))
-            .child(
-            div().size_full().bg(rgb(SURFACE)).p(px(18.)).child(
-                div()
-                    .size_full()
-                    .rounded(px(6.))
-                    .bg(rgb(SURFACE_2))
-                    .border_1()
-                    .border_color(rgb(BORDER))
-                    .p(px(18.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(16.))
-                    .child(
-                        div()
-                            .flex()
-                            .justify_between()
-                            .items_start()
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(5.))
-                                    .child(
-                                        div()
-                                            .text_size(px(17.))
-                                            .text_color(rgb(TEXT))
-                                            .child(settings_header.0),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(11.))
-                                            .text_color(rgb(TEXT_DIM))
-                                            .child(settings_header.1),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap(px(8.))
-                                    .children(
-                                        status_row
-                                            .into_iter()
-                                            .map(DesktopWindow::status_value_pill),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap(px(24.))
-                            .child(
-                                div()
-                                    .w(px(160.))
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(4.))
-                                    .child(self.nav_button(cx, SettingsSection::Windows))
-                                    .child(self.nav_button(cx, SettingsSection::System))
-                                    .child(self.nav_button(cx, SettingsSection::Interface))
-                                    .child(self.nav_button(cx, SettingsSection::Session)),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(18.))
-                                    .when(self.section == SettingsSection::Windows, |panel| {
-                                        panel.child(
-                                            self.section_card(
-                                                "Modes",
-                                                format!("root {layout_axis} • detail {focused_detail}"),
-                                                div()
-                                                    .flex()
-                                                    .flex_wrap()
-                                                    .gap(px(8.))
-                                                    .child(self.mode_button(
-                                                        "Tile windows",
-                                                        WindowMode::Tiling,
-                                                        tiling,
-                                                    ))
-                                                    .child(self.mode_button(
-                                                        "Float windows",
-                                                        WindowMode::Floating,
-                                                        floating,
-                                                    ))
-                                                    .child(self.mode_button(
-                                                        "Monocle",
-                                                        WindowMode::Monocle,
-                                                        monocle,
-                                                    ))
-                                                    .child(self.mode_button(
-                                                        "Stack",
-                                                        WindowMode::Stack,
-                                                        stack,
-                                                    ))
-                                                    .child(self.mode_button(
-                                                        "Center",
-                                                        WindowMode::Center,
-                                                        center,
-                                                    ))
-                                                    .child(self.mode_button(
-                                                        "Grid",
-                                                        WindowMode::Grid,
-                                                        grid,
-                                                    ))
-                                                    .child(self.action_button(
-                                                        "Cycle mode",
-                                                        |desktop, cx| {
-                                                            desktop.update(cx, |desktop, cx| {
-                                                                desktop.apply(
-                                                                    PluginAction::CycleWindowMode,
-                                                                    cx,
-                                                                );
-                                                            });
-                                                        },
-                                                    ))
-                                                    .child(self.layout_action_button(
-                                                        "Split row",
-                                                        layout::LayoutAction::SplitRow,
-                                                    ))
-                                                    .child(self.layout_action_button(
-                                                        "Split column",
-                                                        layout::LayoutAction::SplitColumn,
-                                                    ))
-                                                    .child(self.layout_action_button(
-                                                        "Flip layout axis",
-                                                        layout::LayoutAction::FlipAxis,
-                                                    ))
-                                            ),
-                                        )
-                                        .child(
-                                            self.section_card(
-                                                "Flow",
-                                                "focus and grouping",
-                                                div()
-                                                    .flex()
-                                                    .flex_wrap()
-                                                    .gap(px(8.))
-                                                    .child(self.layout_action_button(
-                                                        "Focus next",
-                                                        layout::LayoutAction::FocusNext,
-                                                    ))
-                                                    .child(self.layout_action_button(
-                                                        "Focus previous",
-                                                        layout::LayoutAction::FocusPrevious,
-                                                    ))
-                                                    .child(self.layout_action_button(
-                                                        "Focus first",
-                                                        layout::LayoutAction::FocusFirst,
-                                                    ))
-                                                    .child(self.layout_action_button(
-                                                        "Focus last",
-                                                        layout::LayoutAction::FocusLast,
-                                                    ))
-                                                    .child(self.layout_action_button(
-                                                        "Toggle float",
-                                                        layout::LayoutAction::ToggleFloat,
-                                                    ))
-                                                    .child(self.layout_action_button(
-                                                        "Close focused",
-                                                        layout::LayoutAction::CloseFocused,
-                                                    ))
-                                                    .child(self.layout_action_button(
-                                                        "Center focused",
-                                                        layout::LayoutAction::CenterFocused,
-                                                    )),
-                                            ),
-                                        )
-                                        .child(
-                                            self.section_card(
-                                                "Move",
-                                                "position, swap, and reset",
-                                                div()
-                                                    .flex()
-                                                    .flex_wrap()
-                                                    .gap(px(8.))
-                                                    .child(self.layout_action_button(
-                                                        "Reset layout",
-                                                        layout::LayoutAction::Reset,
-                                                    ))
-                                                    .child(self.layout_action_button(
-                                                        "Move left",
-                                                        layout::LayoutAction::MoveLeft,
-                                                    ))
-                                                    .child(self.layout_action_button(
-                                                        "Move right",
-                                                        layout::LayoutAction::MoveRight,
-                                                    ))
-                                                    .child(self.layout_action_button(
-                                                        "Move up",
-                                                        layout::LayoutAction::MoveUp,
-                                                    ))
-                                                    .child(self.layout_action_button(
-                                                        "Move down",
-                                                        layout::LayoutAction::MoveDown,
-                                                    ))
-                                                    .child(self.layout_action_button(
-                                                        "Nudge left",
-                                                        layout::LayoutAction::NudgeLeft,
-                                                    ))
-                                                    .child(self.layout_action_button(
-                                                        "Nudge right",
-                                                        layout::LayoutAction::NudgeRight,
-                                                    ))
-                                                    .child(self.layout_action_button(
-                                                        "Nudge up",
-                                                        layout::LayoutAction::NudgeUp,
-                                                    ))
-                                                    .child(self.layout_action_button(
-                                                        "Nudge down",
-                                                        layout::LayoutAction::NudgeDown,
-                                                    ))
-                                            ),
-                                        )
-                                        .child(
-                                            self.section_card(
-                                                "Resize",
-                                                "grow, contract, rebalance",
-                                                div()
-                                                    .flex()
-                                                    .flex_wrap()
-                                                    .gap(px(8.))
-                                                    .child(self.layout_action_button(
-                                                        "Expand window",
-                                                        layout::LayoutAction::ExpandWindow,
-                                                    ))
-                                                    .child(self.layout_action_button(
-                                                        "Contract window",
-                                                        layout::LayoutAction::ContractWindow,
-                                                    ))
-                                                    .child(self.layout_action_button(
-                                                        "Grow focused",
-                                                        layout::LayoutAction::GrowFocused,
-                                                    ))
-                                                    .child(self.layout_action_button(
-                                                        "Shrink focused",
-                                                        layout::LayoutAction::ShrinkFocused,
-                                                    ))
-                                                    .child(self.layout_action_button(
-                                                        "Balance panes",
-                                                        layout::LayoutAction::BalancePanes,
-                                                    )),
-                                            ),
-                                        )
-                                    })
-                                    .when(self.section == SettingsSection::System, |panel| {
-                                        panel.child(
-                                            self.section_card(
-                                                "Access",
-                                                "launcher and workspace tools",
-                                                div()
-                                                    .flex()
-                                                    .flex_wrap()
-                                                    .gap(px(8.))
-                                                    .child(self.desktop_action_button(
-                                                        "Apps",
-                                                        de::DesktopAction::Apps,
-                                                    ))
-                                                    .child(self.desktop_action_button(
-                                                        "Terminal",
-                                                        de::DesktopAction::Terminal,
-                                                    ))
-                                                    .child(self.desktop_action_button(
-                                                        "Files",
-                                                        de::DesktopAction::Files,
-                                                    )),
-                                            ),
-                                        )
-                                        .child(
-                                            self.section_card(
-                                                "Network",
-                                                "wireless controls",
-                                                div()
-                                                    .flex()
-                                                    .flex_wrap()
-                                                    .gap(px(8.))
-                                                    .child(self.desktop_action_button(
-                                                        "Wi-Fi",
-                                                        de::DesktopAction::Wifi,
-                                                    ))
-                                                    .child(self.desktop_action_button(
-                                                        "Wi-Fi on",
-                                                        de::DesktopAction::WifiOn,
-                                                    ))
-                                                    .child(self.desktop_action_button(
-                                                        "Wi-Fi off",
-                                                        de::DesktopAction::WifiOff,
-                                                    )),
-                                            ),
-                                        )
-                                        .child(
-                                            self.section_card(
-                                                "Audio",
-                                                "device and volume controls",
-                                                div()
-                                                    .flex()
-                                                    .flex_wrap()
-                                                    .gap(px(8.))
-                                                    .child(self.desktop_action_button(
-                                                        "Audio",
-                                                        de::DesktopAction::Audio,
-                                                    ))
-                                                    .child(self.desktop_action_button(
-                                                        "Mute",
-                                                        de::DesktopAction::AudioMute,
-                                                    ))
-                                                    .child(self.desktop_action_button(
-                                                        "Volume up",
-                                                        de::DesktopAction::AudioUp,
-                                                    ))
-                                                    .child(self.desktop_action_button(
-                                                        "Volume down",
-                                                        de::DesktopAction::AudioDown,
-                                                    )),
-                                            ),
-                                        )
-                                        .child(
-                                            self.section_card(
-                                                "Display",
-                                                "monitors and overlays",
-                                                div()
-                                                    .flex()
-                                                    .flex_wrap()
-                                                    .gap(px(8.))
-                                                    .child(self.desktop_action_button(
-                                                        "Display",
-                                                        de::DesktopAction::Display,
-                                                    ))
-                                                    .child(self.desktop_action_button(
-                                                        "Notifications",
-                                                        de::DesktopAction::Notifications,
-                                                    ))
-                                                    .child(self.desktop_action_button(
-                                                        "Processes",
-                                                        de::DesktopAction::Processes,
-                                                    )),
-                                            ),
-                                        )
-                                        .child(
-                                            self.section_card(
-                                                "Capture",
-                                                "clipboard and screenshots",
-                                                div()
-                                                    .flex()
-                                                    .flex_wrap()
-                                                    .gap(px(8.))
-                                                    .child(self.desktop_action_button(
-                                                        "Screenshot",
-                                                        de::DesktopAction::Screenshot,
-                                                    ))
-                                                    .child(self.desktop_action_button(
-                                                        "Clipboard",
-                                                        de::DesktopAction::Clipboard,
-                                                    )),
-                                            ),
-                                        )
-                                        .child(
-                                            self.section_card(
-                                                "Session",
-                                                "lock and power controls",
-                                                div()
-                                                    .flex()
-                                                    .flex_wrap()
-                                                    .gap(px(8.))
-                                                    .child(self.desktop_action_button(
-                                                        "Lock",
-                                                        de::DesktopAction::Lock,
-                                                    ))
-                                                    .child(self.desktop_action_button(
-                                                        "Logout",
-                                                        de::DesktopAction::Logout,
-                                                    ))
-                                                    .child(self.desktop_action_button(
-                                                        "Suspend",
-                                                        de::DesktopAction::Suspend,
-                                                    ))
-                                                    .child(self.desktop_action_button(
-                                                        "Hibernate",
-                                                        de::DesktopAction::Hibernate,
-                                                    ))
-                                                    .child(self.desktop_action_button(
-                                                        "Reboot",
-                                                        de::DesktopAction::Reboot,
-                                                    ))
-                                                    .child(self.desktop_action_button(
-                                                        "Shutdown",
-                                                        de::DesktopAction::Shutdown,
-                                                    )),
-                                            ),
-                                        )
-                                    })
-                                    .when(self.section == SettingsSection::Interface, |panel| {
-                                        panel.child(
-                                            self.section_card(
-                                                "Interface",
-                                                format!("status bar {status_bar}"),
-                                                div()
-                                                    .flex()
-                                                    .flex_wrap()
-                                                    .gap(px(8.))
-                                                    .child(self.action_button(
-                                                        "Toggle status bar",
-                                                        |desktop, cx| {
-                                                            desktop.update(cx, |desktop, cx| {
-                                                                desktop.toggle_status_bar(cx)
-                                                            });
-                                                        },
-                                                    ))
-                                                    .child(self.action_button(
-                                                        "Focus launcher",
-                                                        |desktop, cx| {
-                                                            focus_or_open_launcher(desktop, cx);
-                                                        },
-                                                    ))
-                                                    .child(self.action_button(
-                                                        "Open settings",
-                                                        |desktop, cx| {
-                                                            open_or_focus_settings(desktop, cx);
-                                                        },
-                                                    ))
-                                                    .child(self.action_button(
-                                                        "Clear query",
-                                                        |desktop, cx| {
-                                                            desktop.update(cx, |desktop, cx| {
-                                                                desktop.set_query(String::new(), cx);
-                                                            });
-                                                        },
-                                                    )),
-                                            ),
-                                        )
-                                    })
-                                    .when(self.section == SettingsSection::Session, |panel| {
-                                        panel.child(
-                                            self.section_card(
-                                                "Session",
-                                                session_status,
-                                                div()
-                                                    .flex()
-                                                    .flex_col()
-                                                    .gap(px(8.))
-                                                    .child(
-                                                        div()
-                                                            .text_size(px(11.))
-                                                            .text_color(rgb(TEXT_DIM))
-                                                            .child(format!("Focused pane: {focused}")),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .text_size(px(11.))
-                                                            .text_color(rgb(TEXT_DIM))
-                                                            .child(format!(
-                                                                "Mode: {}",
-                                                                desktop.mode.label()
-                                                            )),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .text_size(px(11.))
-                                                            .text_color(rgb(TEXT_DIM))
-                                                            .child(format!(
-                                                                "Layout axis: {layout_axis}"
-                                                            )),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .text_size(px(11.))
-                                                            .text_color(rgb(TEXT_DIM))
-                                                            .child(format!(
-                                                                "Last action: {last_action}"
-                                                            )),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .text_size(px(11.))
-                                                            .text_color(rgb(TEXT_DIM))
-                                                            .child(
-                                                                "Desktop actions show session dispatch or local fallback command",
-                                                            ),
-                                                    ),
-                                            ),
-                                        )
-                                        .child(
-                                            self.section_card(
-                                                "Shortcuts",
-                                                "keyboard-first shell actions",
-                                                div()
-                                                    .flex()
-                                                    .flex_col()
-                                                    .gap(px(6.))
-                                                    .children(shortcuts.into_iter().map(|line| {
-                                                        div()
-                                                            .text_size(px(11.))
-                                                            .text_color(rgb(TEXT_FAINT))
-                                                            .child(line)
-                                                    })),
-                                            ),
-                                        )
-                                    }),
-                            ),
-                    ),
-            ),
-        )
-    }
-}
+        let in_submenu = desktop.view_mode.in_submenu();
+        let back_entity = self.desktop.clone();
 
-impl Render for LauncherWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if desktop.view_mode == ViewMode::Terminal {
+            let cwd = desktop
+                .terminal
+                .as_ref()
+                .map(|t| t.current_cwd())
+                .unwrap_or_else(|| "~".to_string());
+            let branch = desktop
+                .terminal
+                .as_ref()
+                .and_then(|t| t.current_git_branch());
+            return terminal::render_terminal_starship_header(
+                &cwd,
+                branch.as_deref(),
+                &desktop.query,
+                in_submenu,
+                move |_, cx| {
+                    back_entity.update(cx, |d, cx| {
+                        d.set_view_mode(ViewMode::Main, cx);
+                    });
+                },
+            );
+        }
+
+        if desktop.view_mode == ViewMode::Browser {
+            let url_display = if !desktop.query.is_empty() {
+                desktop.query.clone()
+            } else {
+                desktop.browser_page.url.clone()
+            };
+            return div()
+                .w_full()
+                .h(px(components::Theme::HEADER_HEIGHT))
+                .px(px(16.))
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .child(
+                    div()
+                        .id("browser-back-btn")
+                        .cursor_pointer()
+                        .on_click(move |_, _, cx| {
+                            back_entity.update(cx, |d, cx| {
+                                d.set_view_mode(ViewMode::Main, cx);
+                            });
+                        })
+                        .child(icons::sf_icon(
+                            icons::SfSymbol::ChevronLeft,
+                            15.0,
+                            TC_TEXT_SECONDARY,
+                        )),
+                )
+                .child(icons::sf_icon(icons::SfSymbol::LockFill, 13.0, 0x34d399))
+                .child(
+                    div()
+                        .flex_1()
+                        .font(font("Geist Mono"))
+                        .text_size(px(15.))
+                        .text_color(rgb(if desktop.query.is_empty() {
+                            TC_TEXT_PRIMARY
+                        } else {
+                            0x60a5fa
+                        }))
+                        .child(url_display),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(TC_TEXT_TERTIARY))
+                        .child("↵ to load"),
+                );
+        }
+
+        let selection = desktop.runner.selection_label();
+        let subtitle = if desktop.query.trim().is_empty() {
+            shell_text_component(
+                "LauncherEmpty",
+                &[("message", "Search for apps and commands...")],
+            )
+        } else {
+            desktop.live_hint()
+        };
+        let meta = shell_text_component(
+            "LauncherMeta",
+            &[("selection", &selection), ("subtitle", &subtitle)],
+        );
+        let placeholder = match desktop.view_mode {
+            ViewMode::Main => "Search for apps and commands...",
+            ViewMode::WindowControls => "Search windows and layout commands...",
+            ViewMode::Browser => "Enter URL or search bang (!g, !gh, !yt, !wiki, !rs)...",
+            ViewMode::Terminal => "Type a command... (↵ to run)",
+            ViewMode::ClipboardHistory => "Search clipboard history...",
+            ViewMode::FileSearch => "Search files (/path)...",
+        };
+        let query = if desktop.query.is_empty() {
+            placeholder.to_string()
+        } else {
+            desktop.query.clone()
+        };
+        let bar = shell_bar_component(&query, &meta);
+
         div()
-            .size_full()
-            .font(ui_font())
-            .key_context("alpenglowed")
-            .on_action(cx.listener(|this, _: &Confirm, _, cx| {
-                this.confirm(cx);
-            }))
-            .on_action(cx.listener(|this, _: &ClearQueryAction, _, cx| {
-                this.desktop.update(cx, |desktop, cx| {
-                    desktop.set_query(String::new(), cx);
-                });
-            }))
-            .on_action(cx.listener(|this, _: &SelectResult1, _, cx| {
-                this.select_and_confirm(0, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SelectResult2, _, cx| {
-                this.select_and_confirm(1, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SelectResult3, _, cx| {
-                this.select_and_confirm(2, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SelectResult4, _, cx| {
-                this.select_and_confirm(3, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SelectResult5, _, cx| {
-                this.select_and_confirm(4, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SelectResult6, _, cx| {
-                this.select_and_confirm(5, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SelectResult7, _, cx| {
-                this.select_and_confirm(6, cx);
-            }))
-            .on_action(cx.listener(|this, _: &SelectResult8, _, cx| {
-                this.select_and_confirm(7, cx);
-            }))
-            .on_action(cx.listener(|this, _: &DefocusBar, window, cx| {
-                let id = window.window_handle().window_id();
-                this.desktop.update(cx, move |desktop, cx| {
-                    if desktop
-                        .launcher
-                        .is_some_and(|handle| handle.window_id() == id)
-                    {
-                        desktop.launcher = None;
-                        desktop.changed(cx);
-                    }
-                });
-                window.remove_window();
-            }))
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                let key = event.keystroke.key.as_str();
-                if key == "backspace" {
-                    if event.keystroke.modifiers.platform {
-                        this.delete_word(cx);
-                    } else {
-                        this.backspace(cx);
-                    }
-                    cx.stop_propagation();
-                    return;
-                }
-                if key == "up" {
-                    this.select_previous(cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                if key == "down" {
-                    this.select_next(cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                if key == "enter" {
-                    this.confirm(cx);
-                    cx.stop_propagation();
-                    return;
-                }
-                if key == "tab" {
-                    let title = this
-                        .desktop
-                        .read(cx)
-                        .runner
-                        .selected_result()
-                        .map(|r| r.title.clone());
-                    if let Some(title) = title {
-                        this.desktop.update(cx, |desktop, cx| {
-                            desktop.set_query(title, cx);
-                        });
-                        cx.stop_propagation();
-                        return;
-                    }
-                }
-                if event.keystroke.modifiers == Modifiers::default() {
-                    if let Some(ch) = event.keystroke.key_char.as_deref() {
-                        if ch.chars().count() == 1 && !ch.chars().all(|c| c.is_control()) {
-                            this.append(ch, cx);
-                            cx.stop_propagation();
-                        }
-                    }
-                }
-            }))
-            .child(
+            .w_full()
+            .h(px(components::Theme::HEADER_HEIGHT))
+            .px(px(16.))
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .child(if in_submenu {
                 div()
-                    .size_full()
+                    .id("rover-submenu-back")
+                    .w(px(22.))
+                    .h(px(22.))
+                    .rounded(px(6.))
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(
-                        div()
-                            .w(px(680.))
-                            .flex()
-                            .flex_col()
-                            .gap(px(0.))
-                            .child(self.render_bar(cx))
-                            .child(self.render_results(cx)),
-                    ),
-            )
-    }
-}
-
-impl DesktopWindow {
-    fn render_terminal_panel(desktop: &DesktopModel) -> Div {
-        let lines = desktop
-            .terminal
-            .as_ref()
-            .map(|t| t.output())
-            .unwrap_or_default();
-        div()
-            .absolute()
-            .bottom(px(0.))
-            .left(px(0.))
-            .right(px(0.))
-            .h(px(240.))
-            .bg(rgb(0x0a0e14))
-            .border_t_1()
-            .border_color(rgb(BORDER))
-            .p(px(12.))
-            .flex()
-            .flex_col()
+                    .cursor_pointer()
+                    .on_click(move |_, _, cx| {
+                        back_entity.update(cx, |d, cx| {
+                            d.set_view_mode(ViewMode::Main, cx);
+                        });
+                    })
+                    .child(icons::sf_icon(
+                        icons::SfSymbol::ChevronLeft,
+                        15.0,
+                        TC_TEXT_SECONDARY,
+                    ))
+            } else {
+                div()
+                    .id("tinycast-search-icon")
+                    .w(px(22.))
+                    .h(px(22.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icons::sf_icon(
+                        icons::SfSymbol::MagnifyingGlass,
+                        15.0,
+                        TC_TEXT_SECONDARY,
+                    ))
+            })
             .child(
                 div()
+                    .flex_1()
                     .flex()
-                    .justify_between()
-                    .mb(px(6.))
+                    .items_center()
                     .child(
                         div()
-                            .text_size(px(11.))
-                            .text_color(rgb(0x88ff88))
-                            .child("$ terminal"),
+                            .text_size(px(20.))
+                            .text_color(rgb(if desktop.query.is_empty() {
+                                TC_TEXT_TERTIARY
+                            } else {
+                                TC_TEXT_PRIMARY
+                            }))
+                            .child(bar.0),
                     )
                     .child(
                         div()
-                            .text_size(px(11.))
-                            .text_color(rgb(TEXT_FAINT))
-                            .child("type directly, Ctrl-C to interrupt, 'exit' to close"),
+                            .ml(px(3.))
+                            .w(px(2.))
+                            .h(px(22.))
+                            .rounded(px(1.))
+                            .bg(rgb(0x38bdf8)),
                     ),
             )
-            .child(
-                div().flex_1().flex().flex_col().gap(px(2.)).children(
-                    lines
-                        .iter()
-                        .rev()
-                        .take(40)
-                        .rev()
-                        .map(|line| Self::render_terminal_line(line)),
+    }
+
+    fn render_terminal_inline(&self, desktop: &DesktopModel) -> Div {
+        terminal::render_warp_terminal(desktop.terminal.as_ref(), 4)
+    }
+
+    fn render_browser_inline(&self, desktop: &DesktopModel) -> Div {
+        let q = desktop.query.trim();
+        let target_url = if q.starts_with("http://") || q.starts_with("https://") {
+            q.to_string()
+        } else if !q.is_empty() {
+            format!("https://duckduckgo.com/?q={}", q)
+        } else {
+            desktop.browser_page.url.clone()
+        };
+
+        let actions = vec![
+            (
+                "Open in Alpenglow Browser",
+                format!("Navigate to {target_url}"),
+                icons::SfSymbol::Globe,
+                0x60a5fa,
+                vec!["↵"],
+            ),
+            (
+                "Search DuckDuckGo",
+                format!("Search web for '{}'", if q.is_empty() { "..." } else { q }),
+                icons::SfSymbol::MagnifyingGlass,
+                0x34d399,
+                vec!["!ddg"],
+            ),
+            (
+                "Search GitHub",
+                format!(
+                    "Search code repositories for '{}'",
+                    if q.is_empty() { "..." } else { q }
                 ),
+                icons::SfSymbol::DocTextMagnifyingGlass,
+                0xa78bfa,
+                vec!["!gh"],
+            ),
+            (
+                "Search Docs.rs",
+                format!(
+                    "Search Rust documentation for '{}'",
+                    if q.is_empty() { "..." } else { q }
+                ),
+                icons::SfSymbol::DocOnDoc,
+                0xf59e0b,
+                vec!["!rs"],
+            ),
+            (
+                "New Tab",
+                "Open a blank tab in Alpenglow Browser".to_string(),
+                icons::SfSymbol::Plus,
+                0x94a3b8,
+                vec!["⌘T"],
+            ),
+            (
+                "Reload Active Page",
+                "Reload current web page".to_string(),
+                icons::SfSymbol::ArrowUturnBackward,
+                0x94a3b8,
+                vec!["⌘R"],
+            ),
+        ];
+
+        let engine_badge = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .px(px(8.))
+            .py(px(4.))
+            .mb(px(2.))
+            .rounded(px(6.))
+            .bg(rgb(components::Theme::BAR_SURFACE))
+            .border_1()
+            .border_color(rgb(components::Theme::CARD_BORDER))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(icons::sf_icon(icons::SfSymbol::Globe, 12., 0x60a5fa))
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(rgb(0x94a3b8))
+                            .child("Alpenglow Browser Engine"),
+                    ),
             )
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap(px(4.))
-                    .px(px(4.))
-                    .py(px(6.))
-                    .bg(rgb(0x11151a))
-                    .rounded(px(6.))
+                    .child(div().w(px(6.)).h(px(6.)).rounded(px(3.)).bg(rgb(0x34d399)))
                     .child(
                         div()
-                            .text_size(px(12.))
-                            .text_color(rgb(0x88ff88))
-                            .child("$"),
+                            .text_size(px(10.))
+                            .font_family("Geist Mono")
+                            .text_color(rgb(0xe2e8f0))
+                            .child(desktop.browser_engine.engine_name.clone()),
+                    ),
+            );
+
+        div()
+            .w_full()
+            .px(px(8.))
+            .pt(px(4.))
+            .pb(px(8.))
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .child(engine_badge)
+            .children(actions.into_iter().enumerate().map(
+                |(idx, (title, sub, icon, color, keys))| {
+                    let selected = idx == desktop.selected_pill.min(5);
+                    let desktop_entity = self.desktop.clone();
+                    let target = target_url.clone();
+                    components::list_row(
+                        SharedString::from(format!("browser-action-{idx}")),
+                        selected,
+                        icon,
+                        color,
+                        false,
+                        title,
+                        Some(SharedString::from(sub.clone())),
+                        &keys,
+                        "Browser",
                     )
+                    .on_click(move |_, _, cx| {
+                        let target_clone = target.clone();
+                        desktop_entity.update(cx, |d, cx| {
+                            browser::open_browser_window(Some(target_clone), cx);
+                            d.changed(cx);
+                        });
+                    })
+                },
+            ))
+    }
+
+    fn render_results(&self, cx: &App) -> impl IntoElement {
+        let desktop = self.desktop.read(cx);
+
+        if desktop.view_mode == ViewMode::Terminal {
+            return self.render_terminal_inline(desktop);
+        }
+
+        if desktop.view_mode == ViewMode::Browser {
+            return self.render_browser_inline(desktop);
+        }
+
+        if desktop.pills.is_empty() {
+            return div()
+                .w_full()
+                .px(px(16.))
+                .py(px(16.))
+                .text_size(px(13.))
+                .text_color(rgb(TC_TEXT_SECONDARY))
+                .child(shell_text_component(
+                    "LauncherNoResults",
+                    &[("message", "No matching applications or commands")],
+                ));
+        }
+
+        let mut list = div()
+            .w_full()
+            .px(px(8.))
+            .pt(px(4.))
+            .pb(px(8.))
+            .flex()
+            .flex_col()
+            .gap(px(0.));
+
+        let mut current_section: Option<&'static str> = None;
+        for (index, pill) in desktop.pills.iter().enumerate().take(8) {
+            if current_section != Some(pill.section) {
+                let is_first = current_section.is_none();
+                current_section = Some(pill.section);
+                list = list.child(Self::section_header_row(pill.section, is_first));
+            }
+
+            let selected = index == desktop.selected_pill;
+            let desktop_entity = self.desktop.clone();
+            let pill_clone = pill.clone();
+            let row = shell_row_component(
+                pill.badge.label().unwrap_or(""),
+                &pill.title,
+                &pill.subtitle,
+            );
+            let inline_preview = (!pill.subtitle.is_empty()
+                && matches!(pill.kind_label, "Snippet" | "Quicklink" | "Calculator"))
+            .then(|| SharedString::from(pill.subtitle.clone()));
+
+            let row_el = components::list_row(
+                SharedString::from(format!("rover-pill-{index}")),
+                selected,
+                icons::SfSymbol::from_glyph(pill.icon_glyph),
+                pill.icon_bg,
+                pill.running,
+                row.1,
+                inline_preview,
+                &pill.keycaps,
+                pill.kind_label,
+            )
+            .on_click(move |_, _, cx| {
+                let p = pill_clone.clone();
+                desktop_entity.update(cx, |desktop, cx| {
+                    desktop.selected_pill = index;
+                    desktop.execute_pill(p, cx);
+                });
+            });
+
+            list = list.child(row_el);
+        }
+
+        list
+    }
+
+    fn render_actions_overlay(&self, desktop: &DesktopModel) -> Div {
+        let actions = desktop.actions_for_selected();
+        let selected_action = desktop.selected_action;
+        let is_app_menu = desktop.show_app_menu && !desktop.show_actions;
+
+        div()
+            .absolute()
+            .bottom(px(52.))
+            .left(px(0.))
+            .right(px(0.))
+            .px(px(8.))
+            .pb(px(4.))
+            .flex()
+            .when(!is_app_menu, |row| row.justify_end())
+            .when(is_app_menu, |row| row.justify_start())
+            .child(
+                div()
+                    .w(px(272.))
+                    .rounded(px(18.))
+                    .bg(rgb(components::Theme::POPOVER_BG))
+                    .border_1()
+                    .border_color(rgb(TC_BORDER))
+                    .p(px(6.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .children(actions.into_iter().enumerate().map(|(idx, act)| {
+                        let is_sel = idx == selected_action;
+                        let entity = self.desktop.clone();
+                        let action_id = act.id;
+                        components::popover_row(
+                            SharedString::from(format!("rover-item-action-{idx}")),
+                            act.label,
+                            is_sel,
+                            &act.keycaps,
+                        )
+                        .on_click(move |_, _, cx| {
+                            entity.update(cx, |d, cx| {
+                                d.execute_item_action(action_id, cx);
+                            });
+                        })
+                    }))
+                    .child(div().my(px(4.)).h(px(1.)).w_full().bg(rgb(TC_CARD_STROKE)))
                     .child(
                         div()
-                            .flex_1()
-                            .text_size(px(12.))
-                            .text_color(rgb(TEXT))
-                            .child(desktop.terminal_input.clone()),
-                    )
-                    .child(div().w(px(6.)).h(px(14.)).bg(rgb(0x88ff88))),
+                            .h(px(26.))
+                            .px(px(10.))
+                            .flex()
+                            .items_center()
+                            .text_size(px(12.5))
+                            .text_color(rgb(TC_TEXT_TERTIARY))
+                            .child("Search for actions..."),
+                    ),
             )
     }
 
-    fn render_terminal_line(line: &str) -> Div {
+    fn render_footer(&self, desktop: &DesktopModel) -> Div {
+        let primary_label = desktop
+            .pills
+            .get(desktop.selected_pill)
+            .map(RoverPill::primary_verb)
+            .unwrap_or("Open");
+        let app_menu_entity = self.desktop.clone();
+        let primary_entity = self.desktop.clone();
+        let actions_entity = self.desktop.clone();
+
         div()
-            .text_size(px(12.))
-            .text_color(rgb(0xc0c0c0))
-            .font(ui_font())
-            .child(line.to_string())
+            .w_full()
+            .h(px(components::Theme::BOTTOM_BAR_HEIGHT))
+            .px(px(8.))
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(
+                components::circle_icon_button(
+                    "tinycast-app-menu-btn",
+                    icons::SfSymbol::Equal,
+                    desktop.show_app_menu,
+                )
+                .on_click(move |_, _, cx| {
+                    app_menu_entity.update(cx, |d, cx| {
+                        d.show_app_menu = !d.show_app_menu;
+                        if d.show_app_menu {
+                            d.show_actions = false;
+                        }
+                        d.selected_action = 0;
+                        d.changed(cx);
+                    });
+                }),
+            )
+            .child(
+                div()
+                    .h(px(36.))
+                    .rounded(px(18.))
+                    .bg(rgb(TC_GLASS_BG))
+                    .p(px(4.))
+                    .flex()
+                    .items_center()
+                    .gap(px(2.))
+                    .child(
+                        components::bar_button(
+                            "tinycast-primary-action-btn",
+                            primary_label,
+                            false,
+                            true,
+                            &["↵"],
+                        )
+                        .on_click(move |_, _, cx| {
+                            primary_entity.update(cx, |d, cx| {
+                                if let Some(pill) = d.pills.get(d.selected_pill).cloned() {
+                                    d.execute_pill(pill, cx);
+                                }
+                            });
+                        }),
+                    )
+                    .child(
+                        components::bar_button(
+                            "rover-footer-actions-btn",
+                            "Actions",
+                            desktop.show_actions,
+                            false,
+                            &["Super", "K"],
+                        )
+                        .on_click(move |_, _, cx| {
+                            actions_entity.update(cx, |d, cx| {
+                                d.show_actions = !d.show_actions;
+                                if d.show_actions {
+                                    d.show_app_menu = false;
+                                }
+                                d.selected_action = 0;
+                                d.changed(cx);
+                            });
+                        }),
+                    ),
+            )
     }
 
     fn render_toast(
@@ -2523,357 +3198,531 @@ impl DesktopWindow {
         };
         div()
             .id(SharedString::from(format!("toast-{index}")))
-            .w(px(320.))
-            .rounded(px(10.))
-            .bg(rgb(SURFACE_2))
+            .w(px(750.))
+            .rounded(px(12.))
+            .bg(rgb(TC_CARD_FILL))
             .border_1()
             .border_color(rgb(border))
-            .p(px(12.))
+            .px(px(12.))
+            .py(px(6.))
             .flex()
-            .flex_col()
-            .gap(px(4.))
+            .items_center()
+            .justify_between()
             .cursor_pointer()
             .on_click(move |_, _, cx| {
                 desktop.update(cx, |d, _| d.notifications.dismiss(index));
             })
             .child(
                 div()
-                    .text_size(px(13.))
-                    .text_color(rgb(TEXT))
-                    .child(notif.title.clone()),
+                    .text_size(px(12.))
+                    .text_color(rgb(TC_TEXT_PRIMARY))
+                    .child(format!("{}: {}", notif.title, notif.body)),
             )
             .child(
                 div()
-                    .text_size(px(11.))
-                    .text_color(rgb(TEXT_DIM))
-                    .child(notif.body.clone()),
+                    .text_size(px(10.))
+                    .text_color(rgb(TC_TEXT_TERTIARY))
+                    .child("dismiss"),
             )
     }
 }
 
-impl Render for DesktopWindow {
+impl Render for LauncherWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.desktop.update(cx, |desktop, _| {
             desktop.notifications.poll();
             #[cfg(feature = "compositor")]
             desktop.poll_compositor();
         });
+
         let desktop_entity = self.desktop.clone();
         let desktop = self.desktop.read(cx);
-        let layout = desktop.layout.view();
-        let status = desktop.status_bar && !desktop.external_polybar;
-        let top_inset = if status {
-            72.
-        } else if desktop.external_polybar {
-            54.
-        } else {
-            24.
-        };
+        let show_status = desktop.status_bar && !desktop.external_polybar;
+        let show_popover = desktop.show_actions || desktop.show_app_menu;
+        let active_notifs: Vec<_> = desktop
+            .notifications
+            .active
+            .iter()
+            .enumerate()
+            .map(|(i, n)| Self::render_toast(&n.notification, desktop_entity.clone(), i))
+            .collect();
 
-        let mut root =
+        let mut root = div().size_full().font(ui_font()).key_context("alpenglowed");
+        if let Some(ref fh) = self.focus_handle {
+            root = root.track_focus(fh);
+        }
+
+        root.on_action(cx.listener(|_, _: &Quit, _, cx| {
+            cx.quit();
+        }))
+        .on_action(cx.listener(|this, _: &FocusBar, _, cx| {
+            focus_or_open_launcher(&this.desktop, cx);
+        }))
+        .on_action(cx.listener(|this, _: &Confirm, _, cx| {
+            this.confirm(cx);
+        }))
+        .on_action(cx.listener(|this, _: &ToggleActionsMenu, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.show_actions = !desktop.show_actions;
+                if desktop.show_actions {
+                    desktop.show_app_menu = false;
+                }
+                desktop.selected_action = 0;
+                desktop.changed(cx);
+            });
+        }))
+        .on_action(cx.listener(|this, _: &ClearQueryAction, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.set_query(String::new(), cx);
+            });
+        }))
+        .on_action(cx.listener(|this, _: &ToggleSettingsWindow, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(PluginAction::ToggleSettings, cx);
+            });
+        }))
+        .on_action(cx.listener(|this, _: &ToggleStatusBarAction, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.toggle_status_bar(cx);
+            });
+        }))
+        .on_action(cx.listener(|this, _: &CycleWindowModeAction, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(PluginAction::CycleWindowMode, cx);
+            });
+        }))
+        .on_action(cx.listener(|this, _: &ToggleTerminalPane, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(PluginAction::ToggleTerminal, cx);
+            });
+        }))
+        .on_action(cx.listener(|this, _: &SplitRow, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::SplitRow,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &SplitColumn, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::SplitColumn,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &FlipAxis, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::FlipAxis,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &ResetLayout, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::Reset,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &NudgeLeft, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::NudgeLeft,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &NudgeRight, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::NudgeRight,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &NudgeUp, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::NudgeUp,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &NudgeDown, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::NudgeDown,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &ExpandWindow, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::ExpandWindow,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &ContractWindow, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::ContractWindow,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &GrowPane, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::GrowFocused,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &ShrinkPane, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::ShrinkFocused,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &FocusNextPane, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::FocusNext,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &FocusPreviousPane, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::FocusPrevious,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &FocusFirstPane, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::FocusFirst,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &FocusLastPane, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::FocusLast,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &BalancePanesAction, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::BalancePanes,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &CenterFocusedAction, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::CenterFocused,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &MoveWindowLeft, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::MoveLeft,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &MoveWindowRight, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::MoveRight,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &MoveWindowUp, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::MoveUp,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &MoveWindowDown, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::MoveDown,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &ClosePane, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::CloseFocused,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &ToggleFloatPane, _, cx| {
+            this.desktop.update(cx, |desktop, cx| {
+                desktop.apply(
+                    PluginAction::Layout {
+                        action: layout::LayoutAction::ToggleFloat,
+                    },
+                    cx,
+                );
+            });
+        }))
+        .on_action(cx.listener(|this, _: &SelectResult1, _, cx| {
+            this.select_and_confirm(0, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SelectResult2, _, cx| {
+            this.select_and_confirm(1, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SelectResult3, _, cx| {
+            this.select_and_confirm(2, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SelectResult4, _, cx| {
+            this.select_and_confirm(3, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SelectResult5, _, cx| {
+            this.select_and_confirm(4, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SelectResult6, _, cx| {
+            this.select_and_confirm(5, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SelectResult7, _, cx| {
+            this.select_and_confirm(6, cx);
+        }))
+        .on_action(cx.listener(|this, _: &SelectResult8, _, cx| {
+            this.select_and_confirm(7, cx);
+        }))
+        .on_action(cx.listener(|this, _: &DefocusBar, window, cx| {
+            let mut should_close = false;
+            this.desktop.update(cx, |desktop, cx| {
+                if desktop.show_actions || desktop.show_app_menu {
+                    desktop.show_actions = false;
+                    desktop.show_app_menu = false;
+                    desktop.selected_action = 0;
+                    desktop.changed(cx);
+                } else if !desktop.query.is_empty() {
+                    desktop.set_query(String::new(), cx);
+                } else if desktop.view_mode.in_submenu() {
+                    desktop.set_view_mode(ViewMode::Main, cx);
+                } else if desktop.active_category != BarCategory::All {
+                    desktop.set_category(BarCategory::All, cx);
+                } else {
+                    desktop.launcher = None;
+                    desktop.changed(cx);
+                    should_close = true;
+                }
+            });
+            if should_close {
+                window.remove_window();
+            }
+        }))
+        .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+            let key = event.keystroke.key.as_str();
+            let mods = event.keystroke.modifiers;
+
+            // Paste from clipboard (Cmd+V or Ctrl+V)
+            if (mods.platform || mods.control) && key == "v" {
+                if let Some(item) = cx.read_from_clipboard() {
+                    if let Some(text) = item.text() {
+                        this.append(&text, cx);
+                        cx.stop_propagation();
+                        return;
+                    }
+                }
+            }
+
+            // Clear query (Cmd+Backspace)
+            if mods.platform && key == "backspace" {
+                this.desktop.update(cx, |desktop, cx| {
+                    desktop.set_query(String::new(), cx);
+                });
+                cx.stop_propagation();
+                return;
+            }
+
+            if key == "backspace" {
+                if mods.alt {
+                    this.delete_word(cx);
+                } else {
+                    this.backspace(cx);
+                }
+                cx.stop_propagation();
+                return;
+            }
+            if key == "up" {
+                this.select_previous(cx);
+                cx.stop_propagation();
+                return;
+            }
+            if key == "down" {
+                this.select_next(cx);
+                cx.stop_propagation();
+                return;
+            }
+            if key == "enter" {
+                this.confirm(cx);
+                cx.stop_propagation();
+                return;
+            }
+            if key == "tab" {
+                if mods.shift {
+                    this.desktop.update(cx, |desktop, cx| {
+                        let next = desktop.active_category.next();
+                        desktop.set_category(next, cx);
+                    });
+                    cx.stop_propagation();
+                    return;
+                }
+                let title = this
+                    .desktop
+                    .read(cx)
+                    .pills
+                    .get(this.desktop.read(cx).selected_pill)
+                    .map(|p| p.title.clone());
+                if let Some(title) = title {
+                    this.desktop.update(cx, |desktop, cx| {
+                        desktop.set_query(title, cx);
+                    });
+                    cx.stop_propagation();
+                    return;
+                }
+            }
+
+            let typed = if let Some(ch) = event.keystroke.key_char.as_deref() {
+                Some(ch.to_string())
+            } else if key == "space" {
+                Some(" ".to_string())
+            } else if key.chars().count() == 1 && !key.chars().all(|c| c.is_control()) {
+                Some(key.to_string())
+            } else {
+                None
+            };
+
+            if !mods.platform && !mods.control && !mods.alt {
+                if let Some(ch) = typed {
+                    this.append(&ch, cx);
+                    cx.stop_propagation();
+                }
+            }
+        }))
+        .child(
             div()
                 .size_full()
-                .bg(rgb(SURFACE))
-                .font(ui_font())
-                .key_context("alpenglowed")
-                .on_action(cx.listener(|this, _: &FocusBar, _, cx| {
-                    focus_or_open_launcher(&this.desktop, cx);
-                }))
-                .on_action(cx.listener(|this, _: &ToggleSettingsWindow, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(PluginAction::ToggleSettings, cx);
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &ToggleStatusBarAction, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.toggle_status_bar(cx);
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &SplitRow, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::SplitRow,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &SplitColumn, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::SplitColumn,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &FlipAxis, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::FlipAxis,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &ResetLayout, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::Reset,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &NudgeLeft, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::NudgeLeft,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &NudgeRight, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::NudgeRight,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &NudgeUp, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::NudgeUp,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &NudgeDown, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::NudgeDown,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &ExpandWindow, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::ExpandWindow,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &ContractWindow, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::ContractWindow,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &GrowPane, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::GrowFocused,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &ShrinkPane, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::ShrinkFocused,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &FocusNextPane, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::FocusNext,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &FocusPreviousPane, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::FocusPrevious,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &FocusFirstPane, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::FocusFirst,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &FocusLastPane, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::FocusLast,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &CycleWindowModeAction, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(PluginAction::CycleWindowMode, cx);
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &BalancePanesAction, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::BalancePanes,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &CenterFocusedAction, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::CenterFocused,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &MoveWindowLeft, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::MoveLeft,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &MoveWindowRight, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::MoveRight,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &MoveWindowUp, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::MoveUp,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &MoveWindowDown, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::MoveDown,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &ClosePane, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::CloseFocused,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &ToggleFloatPane, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(
-                            PluginAction::Layout {
-                                action: layout::LayoutAction::ToggleFloat,
-                            },
-                            cx,
-                        );
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &ToggleTerminalPane, _, cx| {
-                    this.desktop.update(cx, |desktop, cx| {
-                        desktop.apply(PluginAction::ToggleTerminal, cx);
-                    });
-                }))
-                .child(div().size_full().p(px(24.)).pt(px(top_inset)).child(
-                    Self::render_workspace(&self.desktop, &layout, &desktop.mode, cx),
-                ));
-
-        if status {
-            root = root.child(Self::render_status_bar(desktop));
-        }
-
-        if !desktop.notifications.active.is_empty() {
-            root = root.child(
-                div()
-                    .absolute()
-                    .bottom(px(24.))
-                    .right(px(24.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.))
-                    .children(
-                        desktop
-                            .notifications
-                            .active
-                            .iter()
-                            .enumerate()
-                            .map(|(i, n)| {
-                                Self::render_toast(&n.notification, desktop_entity.clone(), i)
-                            }),
-                    ),
-            );
-        }
-
-        if desktop.terminal_open {
-            root = root.child(Self::render_terminal_panel(desktop));
-        }
-
-        root
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .when(show_status, |col| {
+                    col.child(self.render_status_strip(self.desktop.read(cx)))
+                })
+                .child(
+                    div()
+                        .relative()
+                        .w(px(750.))
+                        .h(px(475.))
+                        .rounded(px(26.))
+                        .bg(rgb(TC_SCRIM))
+                        .border_1()
+                        .border_color(rgb(TC_PANEL_STROKE))
+                        .overflow_hidden()
+                        .flex()
+                        .flex_col()
+                        .justify_between()
+                        .child(
+                            div()
+                                .w_full()
+                                .flex_1()
+                                .pt(px(10.))
+                                .overflow_hidden()
+                                .flex()
+                                .flex_col()
+                                .child(self.render_bar(cx))
+                                .child(self.render_results(cx)),
+                        )
+                        .child(self.render_footer(self.desktop.read(cx)))
+                        .when(show_popover, |panel| {
+                            panel.child(self.render_actions_overlay(self.desktop.read(cx)))
+                        }),
+                )
+                .when(!active_notifs.is_empty(), |col| {
+                    col.child(
+                        div()
+                            .pt(px(6.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.))
+                            .children(active_notifs),
+                    )
+                }),
+        )
     }
 }
 
@@ -2881,25 +3730,12 @@ fn launcher_window_options(cx: &App) -> WindowOptions {
     WindowOptions {
         app_id: Some("alpenglowed-launcher".into()),
         titlebar: None,
-        window_bounds: Some(WindowBounds::centered(size(px(760.), px(260.)), cx)),
+        window_bounds: Some(WindowBounds::centered(size(px(750.), px(475.)), cx)),
         kind: WindowKind::PopUp,
         is_movable: false,
         is_resizable: false,
         is_minimizable: false,
         window_background: WindowBackgroundAppearance::Transparent,
-        window_decorations: Some(WindowDecorations::Client),
-        ..Default::default()
-    }
-}
-
-fn settings_window_options(cx: &App) -> WindowOptions {
-    WindowOptions {
-        app_id: Some("alpenglowed-settings".into()),
-        titlebar: None,
-        window_bounds: Some(WindowBounds::centered(size(px(900.), px(640.)), cx)),
-        kind: WindowKind::PopUp,
-        is_resizable: false,
-        window_background: WindowBackgroundAppearance::Opaque,
         window_decorations: Some(WindowDecorations::Client),
         ..Default::default()
     }
@@ -2918,34 +3754,11 @@ fn installer_window_options(cx: &App) -> WindowOptions {
     }
 }
 
-fn desktop_window_options(cx: &App) -> WindowOptions {
-    let display_bounds = cx
-        .primary_display()
-        .map(|display| display.bounds())
-        .unwrap_or_else(|| bounds(px(1440.), px(900.), cx));
-    WindowOptions {
-        app_id: Some("alpenglowed-desktop".into()),
-        titlebar: None,
-        window_bounds: Some(WindowBounds::Fullscreen(display_bounds)),
-        kind: WindowKind::Normal,
-        is_movable: false,
-        is_resizable: false,
-        is_minimizable: false,
-        window_background: WindowBackgroundAppearance::Opaque,
-        window_decorations: Some(WindowDecorations::Client),
-        ..Default::default()
-    }
-}
-
-fn bounds(width: Pixels, height: Pixels, cx: &App) -> gpui::Bounds<Pixels> {
-    WindowBounds::centered(size(width, height), cx).get_bounds()
-}
-
 fn open_launcher_window(desktop: &Entity<DesktopModel>, cx: &mut App) -> AnyWindowHandle {
     let desktop_entity = desktop.clone();
     let handle = cx
         .open_window(launcher_window_options(cx), move |window, cx| {
-            let view = cx.new(|cx| LauncherWindow::new(desktop_entity, cx));
+            let view = cx.new(|cx| LauncherWindow::new(desktop_entity, window, cx));
             window.activate_window();
             view
         })
@@ -2953,30 +3766,6 @@ fn open_launcher_window(desktop: &Entity<DesktopModel>, cx: &mut App) -> AnyWind
     let any_handle: AnyWindowHandle = handle.into();
     desktop.update(cx, |desktop, cx| {
         desktop.launcher = Some(any_handle);
-        desktop.changed(cx);
-    });
-    any_handle
-}
-
-fn open_desktop_window(desktop: &Entity<DesktopModel>, cx: &mut App) {
-    let desktop_entity = desktop.clone();
-    let _ = cx.open_window(desktop_window_options(cx), move |_window, cx| {
-        cx.new(|cx| DesktopWindow::new(desktop_entity, cx))
-    });
-}
-
-fn open_settings_window(desktop: &Entity<DesktopModel>, cx: &mut App) -> AnyWindowHandle {
-    let desktop_entity = desktop.clone();
-    let handle = cx
-        .open_window(settings_window_options(cx), move |window, cx| {
-            let view = cx.new(|cx| SettingsWindow::new(desktop_entity, cx));
-            window.activate_window();
-            view
-        })
-        .unwrap();
-    let any_handle: AnyWindowHandle = handle.into();
-    desktop.update(cx, |desktop, cx| {
-        desktop.settings = Some(any_handle);
         desktop.changed(cx);
     });
     any_handle
@@ -2996,12 +3785,25 @@ fn focus_or_open_launcher(desktop: &Entity<DesktopModel>, cx: &mut App) {
         return;
     };
 
-    if handle
-        .update(cx, |_, window, _| {
+    let mut closed = false;
+    let update_result = handle.update(cx, |_, window, _| {
+        if window.is_window_active() {
+            window.remove_window();
+            closed = true;
+        } else {
             window.activate_window();
-        })
-        .is_ok()
-    {
+        }
+    });
+
+    if closed {
+        desktop.update(cx, |desktop, cx| {
+            desktop.launcher = None;
+            desktop.changed(cx);
+        });
+        return;
+    }
+
+    if update_result.is_ok() {
         return;
     }
 
@@ -3012,33 +3814,103 @@ fn focus_or_open_launcher(desktop: &Entity<DesktopModel>, cx: &mut App) {
     open_launcher_window(desktop, cx);
 }
 
-fn open_or_focus_settings(desktop: &Entity<DesktopModel>, cx: &mut App) {
-    let Some(handle) = desktop.read(cx).settings else {
-        open_settings_window(desktop, cx);
-        return;
+fn handle_cli_subcommand(args: &[String]) -> Option<i32> {
+    let sub = args.first()?.as_str();
+    let rest = if args.len() > 1 {
+        args[1..].join(" ")
+    } else {
+        String::new()
     };
-
-    if handle
-        .update(cx, |_, window, _| {
-            window.activate_window();
-        })
-        .is_ok()
-    {
-        return;
+    match sub {
+        "open" => {
+            if rest.trim().is_empty() {
+                eprintln!("usage: alpenglowed open <url>");
+                return Some(2);
+            }
+            let url = if rest.starts_with("http://") || rest.starts_with("https://") {
+                rest
+            } else {
+                format!("https://{}", rest.trim())
+            };
+            let _ = Command::new("xdg-open").arg(&url).spawn();
+            println!("opened {url}");
+            Some(0)
+        }
+        "search" => {
+            if rest.trim().is_empty() {
+                eprintln!("usage: alpenglowed search <query>");
+                return Some(2);
+            }
+            let url = match plugin::parse_browser_command(&rest) {
+                Some(plugin::BrowserCommand::Search { engine_name, query }) => {
+                    plugin::browser_search_url(&engine_name, &query)
+                }
+                _ => plugin::browser_search_url("google", rest.trim()),
+            };
+            let _ = Command::new("xdg-open").arg(&url).spawn();
+            println!("searched {url}");
+            Some(0)
+        }
+        "launch" => {
+            if rest.trim().is_empty() {
+                eprintln!("usage: alpenglowed launch <app>");
+                return Some(2);
+            }
+            let _ = Command::new(rest.trim()).spawn();
+            println!("launched {}", rest.trim());
+            Some(0)
+        }
+        "run" => {
+            if rest.trim().is_empty() {
+                eprintln!("usage: alpenglowed run <command>");
+                return Some(2);
+            }
+            let status = Command::new("sh")
+                .arg("-c")
+                .arg(&rest)
+                .status()
+                .map(|s| s.code().unwrap_or(1))
+                .unwrap_or(1);
+            Some(status)
+        }
+        "niri" => {
+            let Some(action) = layout::LayoutAction::from_label(rest.trim()) else {
+                eprintln!("unknown niri action: {}", rest.trim());
+                return Some(2);
+            };
+            let _ = session::dispatch(&session::SessionRequest::Layout {
+                action: action.clone(),
+            });
+            println!("niri {}", action.label());
+            Some(0)
+        }
+        "mode" => {
+            let Some(mode) = WindowMode::from_label(rest.trim()) else {
+                eprintln!("unknown window mode: {}", rest.trim());
+                return Some(2);
+            };
+            let _ = session::dispatch(&session::SessionRequest::SetWindowMode { mode });
+            println!("mode {}", mode.label());
+            Some(0)
+        }
+        _ => None,
     }
-
-    desktop.update(cx, |desktop, cx| {
-        desktop.settings = None;
-        desktop.changed(cx);
-    });
-    open_settings_window(desktop, cx);
 }
 
 fn main() {
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(code) = handle_cli_subcommand(&raw_args) {
+        if code != 0 {
+            std::process::exit(code);
+        }
+        return;
+    }
+
     let options = UiOptions::from_env();
 
     if std::env::args().any(|arg| arg == "--help") {
-        eprintln!("alpenglowed — Alpenglow desktop shell");
+        eprintln!("alpenglowed — Alpenglow desktop launcher & window shell");
+        eprintln!("Subcommands: open <url> | search <q> | browser | launch <app> | run <cmd> | niri <action> | mode <mode>");
         eprintln!("Flags:");
         eprintln!("  ALPENGLOWED_ROLE  potato|desktop (potatoes is a deprecated alias for potato)");
         eprintln!("  --session-contract  Print the Alpenglow session contract as JSON");
@@ -3051,7 +3923,7 @@ fn main() {
         eprintln!("  --probe-actions   List available desktop actions");
         eprintln!("  --notify=msg      Send notification to daemon");
         eprintln!("  --smoke-wayland   Test Wayland connection");
-        eprintln!("  --open-settings   Open settings window at startup");
+        eprintln!("  --open-settings   Start launcher in System view");
         eprintln!("  --floating        Start in floating mode");
         eprintln!("  --demo-layout     Use demo layout with 4 panes");
         return;
@@ -3147,73 +4019,103 @@ fn main() {
         ensure_wayland_display();
     }
 
-    Application::new().run(move |cx: &mut App| {
-        let _ = cx
-            .text_system()
-            .add_fonts(vec![Cow::Borrowed(GEIST), Cow::Borrowed(GEIST_MONO)]);
+    Application::new()
+        .with_assets(icons::IconAssets)
+        .run(move |cx: &mut App| {
+            browser::bind_browser_keys(cx);
+            browser::ensure_regular_activation_policy();
 
-        cx.bind_keys([
-            KeyBinding::new("cmd-space", FocusBar, None),
-            KeyBinding::new("escape", DefocusBar, None),
-            KeyBinding::new("enter", Confirm, None),
-            KeyBinding::new("cmd-q", Quit, None),
-            KeyBinding::new("cmd-shift-]", FocusNextPane, None),
-            KeyBinding::new("cmd-shift-[", FocusPreviousPane, None),
-            KeyBinding::new("cmd-shift--", ClosePane, None),
-            KeyBinding::new("cmd-alt-f", ToggleFloatPane, None),
-            KeyBinding::new("cmd-alt-h", SplitRow, None),
-            KeyBinding::new("cmd-alt-v", SplitColumn, None),
-            KeyBinding::new("cmd-alt-x", FlipAxis, None),
-            KeyBinding::new("cmd-alt-r", ResetLayout, None),
-            KeyBinding::new("cmd-alt-left", NudgeLeft, None),
-            KeyBinding::new("cmd-alt-right", NudgeRight, None),
-            KeyBinding::new("cmd-alt-up", NudgeUp, None),
-            KeyBinding::new("cmd-alt-down", NudgeDown, None),
-            KeyBinding::new("cmd-alt-=", ExpandWindow, None),
-            KeyBinding::new("cmd-alt--", ContractWindow, None),
-            KeyBinding::new("cmd-alt-l", GrowPane, None),
-            KeyBinding::new("cmd-alt-j", ShrinkPane, None),
-            KeyBinding::new("cmd-alt-t", ToggleTerminalPane, None),
-            KeyBinding::new("cmd-,", ToggleSettingsWindow, None),
-            KeyBinding::new("cmd-b", ToggleStatusBarAction, None),
-            KeyBinding::new("cmd-alt-m", CycleWindowModeAction, None),
-            KeyBinding::new("cmd-k", ClearQueryAction, None),
-            KeyBinding::new("cmd-alt-b", BalancePanesAction, None),
-            KeyBinding::new("cmd-alt-c", CenterFocusedAction, None),
-            KeyBinding::new("cmd-shift-left", MoveWindowLeft, None),
-            KeyBinding::new("cmd-shift-right", MoveWindowRight, None),
-            KeyBinding::new("cmd-shift-up", MoveWindowUp, None),
-            KeyBinding::new("cmd-shift-down", MoveWindowDown, None),
-            KeyBinding::new("cmd-alt-1", FocusFirstPane, None),
-            KeyBinding::new("cmd-alt-9", FocusLastPane, None),
-            KeyBinding::new("cmd-1", SelectResult1, None),
-            KeyBinding::new("cmd-2", SelectResult2, None),
-            KeyBinding::new("cmd-3", SelectResult3, None),
-            KeyBinding::new("cmd-4", SelectResult4, None),
-            KeyBinding::new("cmd-5", SelectResult5, None),
-            KeyBinding::new("cmd-6", SelectResult6, None),
-            KeyBinding::new("cmd-7", SelectResult7, None),
-            KeyBinding::new("cmd-8", SelectResult8, None),
-        ]);
+            let _ = cx
+                .text_system()
+                .add_fonts(vec![Cow::Borrowed(GEIST), Cow::Borrowed(GEIST_MONO)]);
 
-        let desktop_options = options.clone();
-        #[cfg(feature = "compositor")]
-        let desktop =
-            cx.new(|_| DesktopModel::new(desktop_options, _compositor_rx, _compositor_tx));
-        #[cfg(not(feature = "compositor"))]
-        let desktop = cx.new(|_| DesktopModel::new(desktop_options));
-        open_desktop_window(&desktop, cx);
+            cx.bind_keys([
+                KeyBinding::new("cmd-space", FocusBar, None),
+                KeyBinding::new("escape", DefocusBar, None),
+                KeyBinding::new("enter", Confirm, None),
+                KeyBinding::new("cmd-k", ToggleActionsMenu, None),
+                KeyBinding::new("ctrl-k", ToggleActionsMenu, None),
+                KeyBinding::new("cmd-shift-k", ClearQueryAction, None),
+                KeyBinding::new("cmd-q", Quit, None),
+                KeyBinding::new("cmd-shift-]", FocusNextPane, None),
+                KeyBinding::new("cmd-shift-[", FocusPreviousPane, None),
+                KeyBinding::new("cmd-shift--", ClosePane, None),
+                KeyBinding::new("cmd-alt-f", ToggleFloatPane, None),
+                KeyBinding::new("cmd-alt-h", SplitRow, None),
+                KeyBinding::new("cmd-alt-v", SplitColumn, None),
+                KeyBinding::new("cmd-alt-x", FlipAxis, None),
+                KeyBinding::new("cmd-alt-r", ResetLayout, None),
+                KeyBinding::new("cmd-alt-left", NudgeLeft, None),
+                KeyBinding::new("cmd-alt-right", NudgeRight, None),
+                KeyBinding::new("cmd-alt-up", NudgeUp, None),
+                KeyBinding::new("cmd-alt-down", NudgeDown, None),
+                KeyBinding::new("cmd-alt-=", ExpandWindow, None),
+                KeyBinding::new("cmd-alt--", ContractWindow, None),
+                KeyBinding::new("cmd-alt-l", GrowPane, None),
+                KeyBinding::new("cmd-alt-j", ShrinkPane, None),
+                KeyBinding::new("cmd-alt-t", ToggleTerminalPane, None),
+                KeyBinding::new("cmd-,", ToggleSettingsWindow, None),
+                KeyBinding::new("cmd-b", ToggleStatusBarAction, None),
+                KeyBinding::new("cmd-alt-m", CycleWindowModeAction, None),
+                KeyBinding::new("cmd-alt-b", BalancePanesAction, None),
+                KeyBinding::new("cmd-alt-c", CenterFocusedAction, None),
+                KeyBinding::new("cmd-shift-left", MoveWindowLeft, None),
+                KeyBinding::new("cmd-shift-right", MoveWindowRight, None),
+                KeyBinding::new("cmd-shift-up", MoveWindowUp, None),
+                KeyBinding::new("cmd-shift-down", MoveWindowDown, None),
+                KeyBinding::new("cmd-alt-1", FocusFirstPane, None),
+                KeyBinding::new("cmd-alt-9", FocusLastPane, None),
+                KeyBinding::new("cmd-1", SelectResult1, None),
+                KeyBinding::new("cmd-2", SelectResult2, None),
+                KeyBinding::new("cmd-3", SelectResult3, None),
+                KeyBinding::new("cmd-4", SelectResult4, None),
+                KeyBinding::new("cmd-5", SelectResult5, None),
+                KeyBinding::new("cmd-6", SelectResult6, None),
+                KeyBinding::new("cmd-7", SelectResult7, None),
+                KeyBinding::new("cmd-8", SelectResult8, None),
+            ]);
 
-        let installer = installer_paths();
+            let desktop_options = options.clone();
+            #[cfg(feature = "compositor")]
+            let desktop =
+                cx.new(|_| DesktopModel::new(desktop_options, _compositor_rx, _compositor_tx));
+            #[cfg(not(feature = "compositor"))]
+            let desktop = cx.new(|_| DesktopModel::new(desktop_options));
 
-        if let Some((source, target)) = installer {
-            open_installer_window(source, target, cx);
-        } else if options.open_settings {
-            open_or_focus_settings(&desktop, cx);
-        } else {
-            focus_or_open_launcher(&desktop, cx);
-        }
-    });
+            status_item::setup_status_item();
+
+            let desktop_menu = desktop.clone();
+            let async_cx = cx.to_async();
+            cx.foreground_executor()
+                .spawn(async move {
+                    loop {
+                        async_cx
+                            .background_executor()
+                            .timer(std::time::Duration::from_millis(60))
+                            .await;
+                        if status_item::poll_menu_clicked() {
+                            let desktop = desktop_menu.clone();
+                            let _ = async_cx.update(|cx| {
+                                focus_or_open_launcher(&desktop, cx);
+                            });
+                        }
+                    }
+                })
+                .detach();
+
+            let installer = installer_paths();
+            if let Some((source, target)) = installer {
+                open_installer_window(source, target, cx);
+            } else if std::env::args().any(|arg| arg == "--standalone-terminal") {
+                terminal::open_standalone_terminal_window(cx);
+            } else if options.initial_view_mode == ViewMode::Browser
+                || std::env::args().any(|arg| arg == "browser" || arg == "--browser")
+            {
+                browser::open_browser_window(None, cx);
+            } else {
+                focus_or_open_launcher(&desktop, cx);
+            }
+        });
 }
 
 impl UiOptions {
@@ -3241,6 +4143,20 @@ impl UiOptions {
             || cfg.external_polybar.unwrap_or(false);
         let open_settings = std::env::args().any(|arg| arg == "--open-settings")
             || cfg.open_settings.unwrap_or(false);
+        let initial_view_mode = if std::env::args().any(|arg| arg == "browser") {
+            ViewMode::Browser
+        } else if std::env::args().any(|arg| arg == "terminal" || arg == "--terminal") {
+            ViewMode::Terminal
+        } else {
+            match std::env::var("ALPENGLOWED_VIEW").as_deref() {
+                Ok("windows" | "niri") => ViewMode::WindowControls,
+                Ok("browser") => ViewMode::Browser,
+                Ok("terminal") => ViewMode::Terminal,
+                Ok("clipboard") => ViewMode::ClipboardHistory,
+                Ok("files") => ViewMode::FileSearch,
+                _ => ViewMode::Main,
+            }
+        };
         let initial_query = std::env::args()
             .find_map(|arg| arg.strip_prefix("--query=").map(ToString::to_string))
             .or_else(|| std::env::var("ALPENGLOWED_QUERY").ok())
@@ -3273,6 +4189,7 @@ impl UiOptions {
             mode,
             demo_layout,
             role,
+            initial_view_mode,
         }
     }
 }
@@ -3345,8 +4262,15 @@ fn write_external_bar_state(desktop: &DesktopModel) {
 }
 
 fn external_bar_state() -> Option<ExternalBarState> {
-    let data = fs::read(external_bar_state_path()).ok()?;
-    serde_json::from_slice(&data).ok()
+    #[cfg(test)]
+    {
+        None
+    }
+    #[cfg(not(test))]
+    {
+        let data = fs::read(external_bar_state_path()).ok()?;
+        serde_json::from_slice(&data).ok()
+    }
 }
 
 #[cfg(test)]
@@ -3467,5 +4391,111 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), source_bytes);
         let _ = std::fs::remove_file(source);
         let _ = std::fs::remove_file(target);
+    }
+
+    #[test]
+    fn row_offsets_priority_pipeline_orders_terminal_url_calc_win_and_help() {
+        let term = RowOffsets::compute("> cargo test", ViewMode::Main, true);
+        assert!(term.has_terminal);
+        assert!(!term.has_url);
+        assert_eq!(term.command_offset, 1);
+
+        let bang = RowOffsets::compute("! ls -la", ViewMode::Main, true);
+        assert!(bang.has_terminal);
+
+        let macro_row = RowOffsets::compute("!shrug", ViewMode::Main, true);
+        assert!(macro_row.has_macro);
+        assert!(!macro_row.has_terminal);
+
+        let url = RowOffsets::compute("github.com/smithay", ViewMode::Main, true);
+        assert!(url.has_url);
+        assert!(url.command_offset >= 1);
+
+        let search_bang = RowOffsets::compute("!gh smithay", ViewMode::Main, true);
+        assert!(search_bang.has_url);
+        assert!(!search_bang.has_terminal);
+
+        let calc = RowOffsets::compute("24 * 7", ViewMode::Main, true);
+        assert!(calc.has_calc);
+
+        let win = RowOffsets::compute("niri cycle", ViewMode::Main, true);
+        assert!(win.has_win);
+
+        let help = RowOffsets::compute("help niri", ViewMode::Main, true);
+        assert!(help.has_help);
+    }
+
+    #[test]
+    fn query_history_navigates_with_prefix_matching() {
+        let mut hist = QueryHistory::new();
+        hist.record("g rust");
+        hist.record("niri cycle-width");
+        hist.record("niri focus-column-right");
+
+        assert_eq!(
+            hist.navigate_up("niri"),
+            Some("niri focus-column-right".to_string())
+        );
+        assert_eq!(
+            hist.navigate_up("niri"),
+            Some("niri cycle-width".to_string())
+        );
+        assert_eq!(hist.navigate_up("niri"), None);
+        assert_eq!(
+            hist.navigate_down(),
+            Some("niri focus-column-right".to_string())
+        );
+        assert_eq!(hist.navigate_down(), Some("niri".to_string()));
+    }
+
+    #[test]
+    fn view_mode_and_cli_subcommands_handle_niri_and_modes() {
+        assert!(!ViewMode::Main.in_submenu());
+        assert!(ViewMode::WindowControls.in_submenu());
+        assert!(ViewMode::Browser.in_submenu());
+        assert!(ViewMode::Terminal.in_submenu());
+
+        assert_eq!(
+            handle_cli_subcommand(&["niri".to_string(), "cycle-column-width".to_string()]),
+            Some(0)
+        );
+        assert_eq!(
+            handle_cli_subcommand(&["niri".to_string(), "room-focus".to_string()]),
+            Some(0)
+        );
+        assert_eq!(
+            handle_cli_subcommand(&["mode".to_string(), "niri".to_string()]),
+            Some(0)
+        );
+        assert_eq!(
+            handle_cli_subcommand(&["niri".to_string(), "invalid-action".to_string()]),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn tinycast_row_classifier_assigns_linux_keycaps_and_sections() {
+        let (sec, kind, glyph, _, _, keys) = classify_plugin_row(
+            "Switch Room",
+            &PluginAction::Layout {
+                action: layout::LayoutAction::CycleRoomLayout,
+            },
+            WindowMode::NiriStrip,
+        );
+        assert_eq!(sec, "Favorites");
+        assert_eq!(kind, "Window");
+        assert_eq!(glyph, "⊞");
+        assert_eq!(keys, vec!["Super", "Space"]);
+
+        let (sec_snap, kind_snap, _, _, _, keys_snap) = classify_plugin_row(
+            "Left Half",
+            &PluginAction::Layout {
+                action: layout::LayoutAction::SnapLeftHalf,
+            },
+            WindowMode::Floating,
+        );
+        assert_eq!(sec_snap, "Favorites");
+        assert_eq!(kind_snap, "Window");
+        assert_eq!(keys_snap, vec!["Ctrl", "Alt", "←"]);
     }
 }

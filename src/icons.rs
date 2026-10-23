@@ -57,6 +57,7 @@ pub enum SfSymbol {
     MoonFill,
     LockFill,
     Power,
+    Plus,
     PlusSquareOnSquare,
     MinusSquare,
     ArrowClockwise,
@@ -118,6 +119,7 @@ impl SfSymbol {
             Self::MoonFill => "moon.fill",
             Self::LockFill => "lock.fill",
             Self::Power => "power",
+            Self::Plus => "plus",
             Self::PlusSquareOnSquare => "plus.square.on.square",
             Self::MinusSquare => "minus.square",
             Self::ArrowClockwise => "arrow.clockwise",
@@ -164,6 +166,8 @@ impl SfSymbol {
             Self::Checkmark => "object-select-symbolic",
             Self::Xmark => "window-close-symbolic",
             Self::Clock => "preferences-system-time-symbolic",
+            Self::Plus => "list-add-symbolic",
+            Self::PlusSquareOnSquare => "list-add-symbolic",
             Self::Custom(name) => name,
             _ => "applications-system-symbolic",
         }
@@ -232,6 +236,7 @@ impl SfSymbol {
             "equal" => Self::Equal,
             "✓" | "checkmark" => Self::Checkmark,
             "✕" | "xmark" => Self::Xmark,
+            "+" | "plus" => Self::Plus,
             "＋" | "plus.square.on.square" => Self::PlusSquareOnSquare,
             "－" | "minus.square" => Self::MinusSquare,
             _ => Self::Sparkles,
@@ -769,6 +774,10 @@ pub const BUILTIN_SF_SYMBOLS: &[(&str, &str)] = &[
     (
         "power",
         r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M11.99 21.50C17.10 21.50 21.24 17.37 21.24 12.27C21.24 9.41 19.98 7.06 18.24 5.47C17.45 4.74 16.41 5.85 17.20 6.60C18.74 8.00 19.70 10.01 19.70 12.27C19.70 16.52 16.25 19.97 11.99 19.97C7.74 19.97 4.30 16.52 4.30 12.27C4.30 9.99 5.27 7.99 6.80 6.59C7.60 5.83 6.57 4.77 5.77 5.48C4.01 7.04 2.76 9.49 2.76 12.27C2.76 17.37 6.90 21.50 11.99 21.50ZM11.99 12.17C12.44 12.17 12.72 11.87 12.72 11.41L12.72 3.28C12.72 2.81 12.44 2.50 11.99 2.50C11.56 2.50 11.27 2.81 11.27 3.28L11.27 11.41C11.27 11.87 11.56 12.17 11.99 12.17Z"/></svg>"#,
+    ),
+    (
+        "plus",
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M12.00 4.00C12.55 4.00 13.00 4.45 13.00 5.00L13.00 11.00L19.00 11.00C19.55 11.00 20.00 11.45 20.00 12.00C20.00 12.55 19.55 13.00 19.00 13.00L13.00 13.00L13.00 19.00C13.00 19.55 12.55 20.00 12.00 20.00C11.45 20.00 11.00 19.55 11.00 19.00L11.00 13.00L5.00 13.00C4.45 13.00 4.00 12.55 4.00 12.00C4.00 11.45 4.45 11.00 5.00 11.00L11.00 11.00L11.00 5.00C11.00 4.45 11.45 4.00 12.00 4.00Z"/></svg>"#,
     ),
     (
         "plus.square.on.square",

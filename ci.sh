@@ -1,5 +1,17 @@
 #!/bin/sh
 set -eu
+
+export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
+
+if [ "$(uname)" = "Darwin" ]; then
+    export SDKROOT="${SDKROOT:-$(xcrun --show-sdk-path 2>/dev/null || true)}"
+    if [ -n "${SDKROOT:-}" ] && [ -z "${BINDGEN_EXTRA_CLANG_ARGS:-}" ]; then
+        export BINDGEN_EXTRA_CLANG_ARGS="-isysroot $SDKROOT"
+    fi
+    if [ -d "/opt/homebrew/lib" ]; then
+        export LIBRARY_PATH="${LIBRARY_PATH:-/opt/homebrew/lib}"
+    fi
+fi
 cargo fmt --check
 cargo check
 cargo test
