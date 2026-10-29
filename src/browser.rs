@@ -2558,7 +2558,12 @@ mod tests {
 
         let initial_zoom = win.zoom;
         win.zoom_in();
-        assert!(win.zoom > initial_zoom);
+        if NATIVE_WEBVIEW {
+            assert!(win.zoom > initial_zoom);
+        } else {
+            // Nothing renders the page, so zoom must not pretend to change.
+            assert!((win.zoom - initial_zoom).abs() < f64::EPSILON);
+        }
 
         win.zoom_out();
         assert!((win.zoom - initial_zoom).abs() < f64::EPSILON);
