@@ -118,7 +118,9 @@ impl Alpenglowed {
                     },
                 );
                 if let Some(cmd) = intercepted {
-                    self.handle_ipc_command(cmd);
+                    if let Err(error) = self.handle_ipc_command(cmd) {
+                        tracing::warn!(%error, "keybinding command failed");
+                    }
                 }
             }
             InputEvent::PointerMotionAbsolute { event } => {
