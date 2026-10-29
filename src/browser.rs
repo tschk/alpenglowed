@@ -888,9 +888,16 @@ pub fn detach_native_webview() {
     macos_webview::detach();
 }
 
+/// Pages are rendered only by the macOS WKWebView. Elsewhere the standalone
+/// browser shows a "not implemented" panel and disables navigation and zoom
+/// instead of offering controls that do nothing.
+pub const NATIVE_WEBVIEW: bool = cfg!(target_os = "macos");
+
 pub fn set_native_webview_hidden(hidden: bool) {
     #[cfg(target_os = "macos")]
     macos_webview::set_hidden(hidden);
+    #[cfg(not(target_os = "macos"))]
+    let _ = hidden; // no native web view to hide
 }
 
 pub fn browser_go_back() {
@@ -911,6 +918,8 @@ pub fn browser_reload() {
 pub fn browser_set_zoom(zoom: f64) {
     #[cfg(target_os = "macos")]
     macos_webview::set_zoom(zoom);
+    #[cfg(not(target_os = "macos"))]
+    let _ = zoom; // no native web view to zoom; callers check NATIVE_WEBVIEW
 }
 
 pub fn browser_current_title() -> Option<String> {
@@ -1177,31 +1186,45 @@ impl StandaloneBrowserWindow {
         }
     }
 
+    // Navigation and zoom act on the native web view, so they are disabled
+    // where there is none rather than changing state that nothing renders.
     pub fn go_back(&mut self) {
-        browser_go_back();
+        if NATIVE_WEBVIEW {
+            browser_go_back();
+        }
     }
 
     pub fn go_forward(&mut self) {
-        browser_go_forward();
+        if NATIVE_WEBVIEW {
+            browser_go_forward();
+        }
     }
 
     pub fn reload(&mut self) {
-        browser_reload();
+        if NATIVE_WEBVIEW {
+            browser_reload();
+        }
     }
 
     pub fn zoom_in(&mut self) {
-        self.zoom = (self.zoom + 0.1).min(2.5);
-        browser_set_zoom(self.zoom);
+        if NATIVE_WEBVIEW {
+            self.zoom = (self.zoom + 0.1).min(2.5);
+            browser_set_zoom(self.zoom);
+        }
     }
 
     pub fn zoom_out(&mut self) {
-        self.zoom = (self.zoom - 0.1).max(0.5);
-        browser_set_zoom(self.zoom);
+        if NATIVE_WEBVIEW {
+            self.zoom = (self.zoom - 0.1).max(0.5);
+            browser_set_zoom(self.zoom);
+        }
     }
 
     pub fn reset_zoom(&mut self) {
-        self.zoom = 1.0;
-        browser_set_zoom(1.0);
+        if NATIVE_WEBVIEW {
+            self.zoom = 1.0;
+            browser_set_zoom(1.0);
+        }
     }
 
     pub fn toggle_bookmark(&mut self) {
@@ -1861,11 +1884,15 @@ impl Render for StandaloneBrowserWindow {
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.go_back();
-                                        cx.notify();
-                                    }))
+                                    .when(NATIVE_WEBVIEW, |button| {
+                                        button.cursor_pointer().on_click(cx.listener(
+                                            |this, _, _, cx| {
+                                                this.go_back();
+                                                cx.notify();
+                                            },
+                                        ))
+                                    })
+                                    .when(!NATIVE_WEBVIEW, |button| button.opacity(0.35))
                                     .child(icons::sf_icon(SfSymbol::ChevronLeft, 10.5, TC_TEXT_DIM)),
                             )
                             // Nav Forward button
@@ -1881,11 +1908,15 @@ impl Render for StandaloneBrowserWindow {
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.go_forward();
-                                        cx.notify();
-                                    }))
+                                    .when(NATIVE_WEBVIEW, |button| {
+                                        button.cursor_pointer().on_click(cx.listener(
+                                            |this, _, _, cx| {
+                                                this.go_forward();
+                                                cx.notify();
+                                            },
+                                        ))
+                                    })
+                                    .when(!NATIVE_WEBVIEW, |button| button.opacity(0.35))
                                     .child(icons::sf_icon(SfSymbol::ChevronRight, 10.5, TC_TEXT_DIM)),
                             )
                             // Floating Tab Chips
@@ -1973,11 +2004,17 @@ impl Render for StandaloneBrowserWindow {
                                             .child(
                                                 div()
                                                     .id("active-tab-reload-button")
-                                                    .cursor_pointer()
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.reload();
-                                                        cx.notify();
-                                                    }))
+                                                    .when(NATIVE_WEBVIEW, |button| {
+                                                        button.cursor_pointer().on_click(
+                                                            cx.listener(|this, _, _, cx| {
+                                                                this.reload();
+                                                                cx.notify();
+                                                            }),
+                                                        )
+                                                    })
+                                                    .when(!NATIVE_WEBVIEW, |button| {
+                                                        button.opacity(0.35)
+                                                    })
                                                     .child(icons::sf_icon(
                                                         SfSymbol::ArrowUturnBackward,
                                                         9.5,
@@ -2168,7 +2205,31 @@ impl Render for StandaloneBrowserWindow {
                             .flex_col()
                             .justify_center()
                             .items_center()
-                            .when(self.command_bar_open, |canvas| {
+                            .when(!NATIVE_WEBVIEW, |canvas| {
+                                canvas.child(
+                                    div()
+                                        .id("browser-no-webview")
+                                        .flex()
+                                        .flex_col()
+                                        .items_center()
+                                        .gap(px(8.))
+                                        .child(icons::sf_icon(SfSymbol::Globe, 28.0, TC_TEXT_FAINT))
+                                        .child(
+                                            div()
+                                                .font(font("Geist Mono"))
+                                                .text_size(px(13.))
+                                                .text_color(rgb(TC_TEXT_DIM))
+                                                .child(active_url.clone()),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(11.))
+                                                .text_color(rgb(TC_TEXT_FAINT))
+                                                .child("Page rendering is not implemented on this platform"),
+                                        ),
+                                )
+                            })
+                            .when(NATIVE_WEBVIEW && self.command_bar_open, |canvas| {
                                 canvas.child(
                                     div()
                                         .flex()
