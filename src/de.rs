@@ -97,7 +97,14 @@ impl DesktopAction {
 
     pub fn commands(&self) -> &'static [(&'static str, &'static [&'static str])] {
         match self {
-            Self::Lock => &[("loginctl", &["lock-session"])],
+            // Run a real locker. `loginctl lock-session` only emits a logind
+            // signal, and nothing in an alpenglow session listens for it.
+            Self::Lock => &[
+                ("swaylock", &["-f"]),
+                ("waylock", &[]),
+                ("gtklock", &[]),
+                ("i3lock", &[]),
+            ],
             Self::Logout => &[("loginctl", &["terminate-user", "$USER"])],
             Self::Reboot => &[("loginctl", &["reboot"]), ("reboot", &[])],
             Self::Shutdown => &[("loginctl", &["poweroff"]), ("poweroff", &[])],
@@ -238,14 +245,26 @@ impl DesktopState {
 pub enum RunResult {
     Spawned(ResolvedCommand),
     MissingCommand,
+    SpawnFailed(ResolvedCommand, String),
+    Unsupported(&'static str),
 }
 
-pub fn run(action: &DesktopAction) -> RunResult {
+/// Runs `action` locally. `under_compositor` is true when the shell runs
+/// inside alpenglowed-comp, which has no ext-session-lock support, so every
+/// Wayland screen locker would fail to lock.
+pub fn run(action: &DesktopAction, under_compositor: bool) -> RunResult {
+    if under_compositor && *action == DesktopAction::Lock {
+        return RunResult::Unsupported(
+            "unavailable: alpenglowed-comp does not implement screen locking",
+        );
+    }
     let Some(command) = action.resolve() else {
         return RunResult::MissingCommand;
     };
-    let _ = Command::new(&command.program).args(&command.args).spawn();
-    RunResult::Spawned(command)
+    match Command::new(&command.program).args(&command.args).spawn() {
+        Ok(_) => RunResult::Spawned(command),
+        Err(error) => RunResult::SpawnFailed(command, error.to_string()),
+    }
 }
 
 pub fn probe_actions() -> Vec<String> {
@@ -415,6 +434,22 @@ mod tests {
         assert_eq!(DesktopAction::Reboot.commands()[0].0, "loginctl");
         assert_eq!(DesktopAction::Reboot.commands()[1].0, "reboot");
         assert_eq!(DesktopAction::Terminal.commands()[0].0, "foot");
+    }
+
+    #[test]
+    fn lock_should_run_a_screen_locker_not_a_logind_signal() {
+        assert!(DesktopAction::Lock
+            .commands()
+            .iter()
+            .all(|(program, _)| *program != "loginctl"));
+    }
+
+    #[test]
+    fn lock_under_compositor_should_report_unsupported() {
+        assert!(matches!(
+            run(&DesktopAction::Lock, true),
+            RunResult::Unsupported(_)
+        ));
     }
 
     #[test]

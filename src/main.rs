@@ -1616,26 +1616,26 @@ impl DesktopModel {
                 );
             }
             PluginAction::Desktop { action } => {
-                let resolved = action
-                    .resolve()
-                    .map(|command| command.display())
-                    .unwrap_or_else(|| "no command available".to_string());
+                // The compositor replies `ok` only for actions it really
+                // handles; everything else runs locally and reports its own
+                // outcome.
                 if session::dispatch(&session::SessionRequest::DesktopAction {
                     action: action.clone(),
                 })
                 .is_ok()
                 {
-                    self.set_last_action(action.title(), format!("session {resolved}"));
+                    self.set_last_action(action.title(), "handled by compositor");
                 } else {
-                    match de::run(&action) {
-                        de::RunResult::Spawned(command) => self.set_last_action(
-                            action.title(),
-                            format!("local {}", command.display()),
-                        ),
-                        de::RunResult::MissingCommand => {
-                            self.set_last_action(action.title(), "no command available")
+                    let under_compositor = std::env::var_os("ALPENGLOW_SESSION_CONTROL").is_some();
+                    let detail = match de::run(&action, under_compositor) {
+                        de::RunResult::Spawned(command) => format!("local {}", command.display()),
+                        de::RunResult::MissingCommand => "no command available".to_string(),
+                        de::RunResult::SpawnFailed(command, error) => {
+                            format!("{} failed: {error}", command.display())
                         }
-                    }
+                        de::RunResult::Unsupported(reason) => reason.to_string(),
+                    };
+                    self.set_last_action(action.title(), detail);
                 }
             }
             PluginAction::Launch { program } => {
@@ -2160,27 +2160,40 @@ fn battery_value() -> Option<String> {
     None
 }
 
+/// Cached temperature for the status pills. This runs on the UI thread, so it
+/// never touches the network itself: a stale cache starts one background
+/// `curl` (capped at 3 s) and returns whatever is cached meanwhile.
 #[cfg(feature = "full")]
 fn temp_value() -> Option<String> {
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
-    static CACHE: std::sync::OnceLock<Mutex<(Instant, String)>> = std::sync::OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new((Instant::now(), String::new())));
-    let mut guard = cache.lock().ok()?;
-    if guard.0.elapsed() < Duration::from_secs(300) {
-        return Some(guard.1.clone()).filter(|s| !s.is_empty());
+    static CACHE: Mutex<Option<(Instant, String)>> = Mutex::new(None);
+    static REFRESHING: AtomicBool = AtomicBool::new(false);
+
+    let cached = CACHE.lock().ok()?.clone();
+    let stale = cached
+        .as_ref()
+        .is_none_or(|(at, _)| at.elapsed() >= Duration::from_secs(300));
+    if stale && !REFRESHING.swap(true, Ordering::AcqRel) {
+        std::thread::spawn(|| {
+            let temp = Command::new("curl")
+                .args(["-s", "--max-time", "3", "wttr.in?format=%t"])
+                .stderr(std::process::Stdio::null())
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+                .unwrap_or_default();
+            // A failed fetch is cached too, so an offline machine retries
+            // every five minutes rather than on every repaint.
+            if let Ok(mut guard) = CACHE.lock() {
+                *guard = Some((Instant::now(), temp));
+            }
+            REFRESHING.store(false, Ordering::Release);
+        });
     }
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg("curl -s 'wttr.in?format=%t' 2>/dev/null")
-        .output()
-        .ok()?;
-    let temp = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if temp.is_empty() {
-        return None;
-    }
-    *guard = (Instant::now(), temp.clone());
-    Some(temp)
+    cached.map(|(_, temp)| temp).filter(|temp| !temp.is_empty())
 }
 
 #[cfg(not(feature = "full"))]
@@ -4276,6 +4289,30 @@ fn external_bar_state() -> Option<ExternalBarState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "full")]
+    #[test]
+    fn temp_value_should_not_block_on_a_slow_network() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::{Duration, Instant};
+
+        let dir =
+            std::env::temp_dir().join(format!("alpenglowed-slow-curl-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let curl = dir.join("curl");
+        fs::write(&curl, "#!/bin/sh\nsleep 5\necho 20C\n").unwrap();
+        fs::set_permissions(&curl, fs::Permissions::from_mode(0o755)).unwrap();
+        let path = std::env::var("PATH").unwrap_or_default();
+        std::env::set_var("PATH", format!("{}:{path}", dir.display()));
+
+        let started = Instant::now();
+        let value = temp_value();
+        let elapsed = started.elapsed();
+        std::env::set_var("PATH", path);
+
+        assert_eq!(value, None);
+        assert!(elapsed < Duration::from_secs(1), "blocked for {elapsed:?}");
+    }
 
     #[test]
     fn html_list_items_should_extract_li_text() {

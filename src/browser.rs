@@ -888,9 +888,9 @@ pub fn detach_native_webview() {
     macos_webview::detach();
 }
 
-pub fn set_native_webview_hidden(hidden: bool) {
+pub fn set_native_webview_hidden(_hidden: bool) {
     #[cfg(target_os = "macos")]
-    macos_webview::set_hidden(hidden);
+    macos_webview::set_hidden(_hidden);
 }
 
 pub fn browser_go_back() {
@@ -908,9 +908,9 @@ pub fn browser_reload() {
     macos_webview::reload();
 }
 
-pub fn browser_set_zoom(zoom: f64) {
+pub fn browser_set_zoom(_zoom: f64) {
     #[cfg(target_os = "macos")]
-    macos_webview::set_zoom(zoom);
+    macos_webview::set_zoom(_zoom);
 }
 
 pub fn browser_current_title() -> Option<String> {
@@ -1466,6 +1466,7 @@ pub enum OmnibarAction {
 
 impl Render for StandaloneBrowserWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(target_os = "macos")]
         let active_url = self.active_url();
         let is_bookmarked = self.is_bookmarked();
         let zoom_pct = (self.zoom * 100.0).round() as u32;

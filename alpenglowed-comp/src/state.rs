@@ -6,7 +6,11 @@
 //! infecting every `impl` with anvil's `<BackendData: Backend>`.
 
 use std::{
-    io::Read, os::unix::net::UnixListener, path::PathBuf, process::Command, sync::Arc,
+    io::{Read, Write},
+    os::unix::net::UnixListener,
+    path::PathBuf,
+    process::Command,
+    sync::Arc,
     time::Instant,
 };
 
@@ -1033,7 +1037,9 @@ impl Alpenglowed {
         }
     }
 
-    pub fn handle_ipc_command(&mut self, cmd: CompIpcCommand) {
+    /// Applies `cmd`. Returns an error for anything the compositor did not
+    /// actually do, so session clients never report a no-op as success.
+    pub fn handle_ipc_command(&mut self, cmd: CompIpcCommand) -> Result<(), String> {
         match cmd {
             CompIpcCommand::SetWindowMode(mode) => {
                 tracing::info!(mode = mode.label(), "compositor window mode updated");
@@ -1056,34 +1062,40 @@ impl Alpenglowed {
             CompIpcCommand::Layout(action) => {
                 self.apply_layout_action(action);
             }
-            CompIpcCommand::DesktopAction(action) => match action.as_str() {
-                "apps" => {
-                    self.spawn_tinycast_bar();
-                }
-                "terminal" => {
-                    let _ = Command::new("foot")
+            CompIpcCommand::DesktopAction(action) => {
+                return match action.as_str() {
+                    "apps" => self
+                        .spawn_tinycast_bar()
+                        .map_err(|error| format!("could not start launcher: {error}")),
+                    "terminal" => Command::new("foot")
                         .spawn()
                         .or_else(|_| Command::new("alacritty").spawn())
-                        .or_else(|_| Command::new("kitty").spawn());
-                }
-                "logout" => {
-                    self.loop_signal.stop();
-                }
-                _ => {
-                    tracing::debug!(action = %action, "received desktop action over IPC");
-                }
-            },
+                        .or_else(|_| Command::new("kitty").spawn())
+                        .map(drop)
+                        .map_err(|_| "no terminal (foot, alacritty, kitty) could start".into()),
+                    "logout" => {
+                        self.loop_signal.stop();
+                        Ok(())
+                    }
+                    // Power, lock and wifi are not compositor features; the
+                    // client runs them itself when it sees this error.
+                    _ => Err(format!(
+                        "alpenglowed-comp does not implement desktop action `{action}`"
+                    )),
+                };
+            }
         }
+        Ok(())
     }
 
-    pub fn spawn_tinycast_bar(&self) {
+    pub fn spawn_tinycast_bar(&self) -> std::io::Result<()> {
         let bin = std::env::var("ALPENGLOWED_BIN").unwrap_or_else(|_| "alpenglowed".to_string());
         let mut cmd = Command::new(bin);
         cmd.env("WAYLAND_DISPLAY", &self.socket_name);
         if let Some(ref ipc) = self.ipc_socket_path {
             cmd.env("ALPENGLOW_SESSION_CONTROL", ipc);
         }
-        let _ = cmd.spawn();
+        cmd.spawn().map(drop)
     }
 
     fn init_ipc_socket(event_loop: &mut EventLoop<'static, Self>) -> Option<PathBuf> {
@@ -1108,9 +1120,15 @@ impl Alpenglowed {
                 while let Ok((mut stream, _)) = listener.accept() {
                     let mut buf = String::new();
                     if stream.read_to_string(&mut buf).is_ok() {
-                        if let Some(cmd) = parse_ipc_json(&buf) {
-                            state.handle_ipc_command(cmd);
-                        }
+                        let result = match parse_ipc_json(&buf) {
+                            Some(cmd) => state.handle_ipc_command(cmd),
+                            None => Err("unrecognised session request".to_string()),
+                        };
+                        let reply = match result {
+                            Ok(()) => "ok\n".to_string(),
+                            Err(error) => format!("error: {error}\n"),
+                        };
+                        let _ = stream.write_all(reply.as_bytes());
                     }
                 }
                 Ok(PostAction::Continue)
