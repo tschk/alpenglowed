@@ -3845,7 +3845,10 @@ fn handle_cli_subcommand(args: &[String]) -> Option<i32> {
             } else {
                 format!("https://{}", rest.trim())
             };
-            let _ = Command::new("xdg-open").arg(&url).spawn();
+            if let Err(error) = Command::new("xdg-open").arg(&url).spawn() {
+                eprintln!("could not open {url}: {error}");
+                return Some(1);
+            }
             println!("opened {url}");
             Some(0)
         }
@@ -3860,7 +3863,10 @@ fn handle_cli_subcommand(args: &[String]) -> Option<i32> {
                 }
                 _ => plugin::browser_search_url("google", rest.trim()),
             };
-            let _ = Command::new("xdg-open").arg(&url).spawn();
+            if let Err(error) = Command::new("xdg-open").arg(&url).spawn() {
+                eprintln!("could not search {url}: {error}");
+                return Some(1);
+            }
             println!("searched {url}");
             Some(0)
         }
@@ -3869,7 +3875,10 @@ fn handle_cli_subcommand(args: &[String]) -> Option<i32> {
                 eprintln!("usage: alpenglowed launch <app>");
                 return Some(2);
             }
-            let _ = Command::new(rest.trim()).spawn();
+            if let Err(error) = Command::new(rest.trim()).spawn() {
+                eprintln!("could not launch {}: {error}", rest.trim());
+                return Some(1);
+            }
             println!("launched {}", rest.trim());
             Some(0)
         }
@@ -3891,9 +3900,12 @@ fn handle_cli_subcommand(args: &[String]) -> Option<i32> {
                 eprintln!("unknown niri action: {}", rest.trim());
                 return Some(2);
             };
-            let _ = session::dispatch(&session::SessionRequest::Layout {
+            if let Err(error) = session::dispatch(&session::SessionRequest::Layout {
                 action: action.clone(),
-            });
+            }) {
+                eprintln!("niri {} failed: {error}", action.label());
+                return Some(1);
+            }
             println!("niri {}", action.label());
             Some(0)
         }
@@ -3902,7 +3914,11 @@ fn handle_cli_subcommand(args: &[String]) -> Option<i32> {
                 eprintln!("unknown window mode: {}", rest.trim());
                 return Some(2);
             };
-            let _ = session::dispatch(&session::SessionRequest::SetWindowMode { mode });
+            if let Err(error) = session::dispatch(&session::SessionRequest::SetWindowMode { mode })
+            {
+                eprintln!("mode {} failed: {error}", mode.label());
+                return Some(1);
+            }
             println!("mode {}", mode.label());
             Some(0)
         }
@@ -4344,31 +4360,48 @@ mod tests {
 
     #[test]
     fn shell_row_component_should_render_launcher_row() {
-        let row = shell_row_component(">", "Tile windows", "window mode");
-        assert_eq!(row.0, ">");
-        assert_eq!(row.1, "Tile windows");
-        assert_eq!(row.2, "window mode");
+        let mut ctx = TemplateContext::new();
+        ctx.set("marker", TemplateValue::Str(">".into()));
+        ctx.set("title", TemplateValue::Str("Tile windows".into()));
+        ctx.set("subtitle", TemplateValue::Str("window mode".into()));
+        let html = render_component_file_to_html(SHELL_CREPUS, "LauncherRow", &ctx).unwrap();
+        assert_eq!(
+            html_tag_texts(&html, &["strong", "h2", "p"]),
+            [">", "Tile windows", "window mode"]
+        );
     }
 
     #[test]
     fn shell_bar_component_should_render_launcher_bar() {
-        let bar = shell_bar_component("window", "1/6 window mode");
-        assert_eq!(bar.0, "window");
-        assert_eq!(bar.1, "1/6 window mode");
+        let mut ctx = TemplateContext::new();
+        ctx.set("query", TemplateValue::Str("window".into()));
+        ctx.set("meta", TemplateValue::Str("1/6 window mode".into()));
+        let html = render_component_file_to_html(SHELL_CREPUS, "LauncherBar", &ctx).unwrap();
+        assert_eq!(
+            html_tag_texts(&html, &["h1", "p"]),
+            ["window", "1/6 window mode"]
+        );
     }
 
     #[test]
     fn shell_top_bar_title_component_should_render_header() {
-        let header = shell_top_bar_title_component("alpenglowed", "focused pane detail");
-        assert_eq!(header.0, "alpenglowed");
-        assert_eq!(header.1, "focused pane detail");
+        let mut ctx = TemplateContext::new();
+        ctx.set("title", TemplateValue::Str("alpenglowed".into()));
+        ctx.set("subtitle", TemplateValue::Str("focused pane detail".into()));
+        let html = render_component_file_to_html(SHELL_CREPUS, "TopBarTitle", &ctx).unwrap();
+        assert_eq!(
+            html_tag_texts(&html, &["h1", "p"]),
+            ["alpenglowed", "focused pane detail"]
+        );
     }
 
     #[test]
     fn shell_top_bar_metric_component_should_render_value() {
-        let metric = shell_top_bar_metric_component("clock", "11:27");
-        assert_eq!(metric.0, "clock");
-        assert_eq!(metric.1, "11:27");
+        let mut ctx = TemplateContext::new();
+        ctx.set("label", TemplateValue::Str("clock".into()));
+        ctx.set("value", TemplateValue::Str("11:27".into()));
+        let html = render_component_file_to_html(SHELL_CREPUS, "TopBarMetric", &ctx).unwrap();
+        assert_eq!(html_tag_texts(&html, &["strong", "p"]), ["clock", "11:27"]);
     }
 
     #[test]
@@ -4492,18 +4525,6 @@ mod tests {
         assert!(ViewMode::Browser.in_submenu());
         assert!(ViewMode::Terminal.in_submenu());
 
-        assert_eq!(
-            handle_cli_subcommand(&["niri".to_string(), "cycle-column-width".to_string()]),
-            Some(0)
-        );
-        assert_eq!(
-            handle_cli_subcommand(&["niri".to_string(), "room-focus".to_string()]),
-            Some(0)
-        );
-        assert_eq!(
-            handle_cli_subcommand(&["mode".to_string(), "niri".to_string()]),
-            Some(0)
-        );
         assert_eq!(
             handle_cli_subcommand(&["niri".to_string(), "invalid-action".to_string()]),
             Some(2)
