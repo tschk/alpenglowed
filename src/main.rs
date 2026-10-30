@@ -4427,21 +4427,24 @@ mod tests {
 
     #[test]
     fn shell_section_header_component_should_render_settings_header() {
-        let header = shell_section_header_component("Windows", "root row");
-        assert_eq!(header.0, "Windows");
-        assert_eq!(header.1, "root row");
+        let mut ctx = TemplateContext::new();
+        ctx.set("title", TemplateValue::Str("Windows".into()));
+        ctx.set("detail", TemplateValue::Str("root row".into()));
+        let html =
+            render_component_file_to_html(SHELL_CREPUS, "SettingsSectionHeader", &ctx).unwrap();
+        assert_eq!(html_tag_texts(&html, &["h2", "p"]), ["Windows", "root row"]);
     }
 
     #[test]
     fn shell_status_row_component_should_render_settings_pills() {
-        let row = shell_status_row_component("tiling", "3 tiled 1 floating", "Workspace");
+        let mut ctx = TemplateContext::new();
+        ctx.set("mode", TemplateValue::Str("tiling".into()));
+        ctx.set("layout", TemplateValue::Str("3 tiled 1 floating".into()));
+        ctx.set("focused", TemplateValue::Str("Workspace".into()));
+        let html = render_component_file_to_html(SHELL_CREPUS, "SettingsStatusRow", &ctx).unwrap();
         assert_eq!(
-            row,
-            vec![
-                "tiling".to_string(),
-                "3 tiled 1 floating".to_string(),
-                "Workspace".to_string()
-            ]
+            html_list_items(&html),
+            ["tiling", "3 tiled 1 floating", "Workspace"]
         );
     }
 
